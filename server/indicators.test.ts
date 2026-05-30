@@ -79,6 +79,25 @@ describe("transparent grading", () => {
     expect(result.rules.find((rule) => rule.id === "market-cap")?.passed).toBe(false);
   });
 
+  it("allows bundled-universe candidates when Schwab omits beta and market cap", () => {
+    const candles = demoCandles("AAPL");
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "AAPL",
+      candles,
+      fundamentals: {
+        symbol: "AAPL",
+        avgDollarVolume20d: 8_500_000_000
+      },
+      optionable: true,
+      options: demoOptions("AAPL", price),
+      strictFundamentals: false
+    });
+
+    expect(result.rules.find((rule) => rule.id === "beta")?.passed).toBe(true);
+    expect(result.rules.find((rule) => rule.id === "market-cap")?.passed).toBe(true);
+  });
+
   it("flags stocks that fail Schwab-driven universe filters", () => {
     const candles = demoCandles("LOWBETA");
     const price = candles[candles.length - 1].close;

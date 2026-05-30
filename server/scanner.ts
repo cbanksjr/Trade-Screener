@@ -59,7 +59,7 @@ export async function runScan(): Promise<ScanResponse> {
     let candlesSource: "schwab" | "demo" = "demo";
     let optionsSource: "schwab" | "demo" = "demo";
     let quote: SchwabQuote | undefined = quoteMap.get(symbol);
-    const allowDemoFallback = settings.useDemoDataWhenMissingApi && settings.scanMode !== "auto" && (!canUseLiveSchwab || settings.scanMode === "watchlist");
+    const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!canUseLiveSchwab || settings.scanMode === "watchlist");
 
     try {
       if (canUseLiveSchwab && !quote) {
@@ -81,12 +81,12 @@ export async function runScan(): Promise<ScanResponse> {
       }
 
       if (settings.scanMode === "auto") {
-        if (quote?.beta === undefined || quote.beta < settings.minBeta) {
-          scanWarnings.add(symbol + ": skipped because Schwab beta is missing or below " + settings.minBeta + ".");
+        if (quote?.beta !== undefined && quote.beta < settings.minBeta) {
+          scanWarnings.add(symbol + ": skipped because Schwab beta is below " + settings.minBeta + ".");
           continue;
         }
-        if (quote.marketCap === undefined || quote.marketCap < settings.minMarketCap) {
-          scanWarnings.add(symbol + ": skipped because Schwab market cap is missing or below " + formatMoney(settings.minMarketCap) + ".");
+        if (quote?.marketCap !== undefined && quote.marketCap < settings.minMarketCap) {
+          scanWarnings.add(symbol + ": skipped because Schwab market cap is below " + formatMoney(settings.minMarketCap) + ".");
           continue;
         }
       }
@@ -142,7 +142,7 @@ export async function runScan(): Promise<ScanResponse> {
         fundamentals: mergeFundamentals(fundamentals.get(symbol) ?? demoFundamental(symbol), symbol, quote),
         optionable,
         options,
-        strictFundamentals: settings.scanMode === "auto"
+        strictFundamentals: settings.scanMode === "auto" && (quote?.beta !== undefined || quote?.marketCap !== undefined)
       });
       result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
       result.warnings.push(...resultWarnings);
@@ -156,6 +156,7 @@ export async function runScan(): Promise<ScanResponse> {
         continue;
       }
       if (!allowDemoFallback) continue;
+      if (settings.scanMode === "auto" && !canUseLiveSchwab && !demoFundamental(symbol)) continue;
       const candles = demoCandles(symbol);
       const price = candles[candles.length - 1].close;
       const fallback = gradeSetup({
@@ -245,8 +246,6 @@ function shouldShowWarning(warning: string): boolean {
   const routineSkips = [
     "Schwab did not return a quote; skipped.",
     "skipped because Schwab quote price",
-    "skipped because Schwab beta",
-    "skipped because Schwab market cap",
     "skipped because Schwab average dollar volume"
   ];
   return !routineSkips.some((message) => warning.includes(message));

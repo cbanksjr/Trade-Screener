@@ -31,8 +31,8 @@ export function gradeSetup(input: {
   const commonRules: ScoreRule[] = [
     rule("optionable", "Optionable stock", input.optionable, 10, input.optionable ? "Options chain is available." : "No usable options chain was found."),
     rule("price", "Price above $20", price > defaultSettings.minPrice, 8, `Last close is $${price.toFixed(2)}.`),
-    rule("beta", "Beta >= 0.75", betaPassed, 8, beta !== undefined ? `Beta is ${beta.toFixed(2)}.` : input.strictFundamentals ? "Beta was not available from Schwab/fundamentals." : "Assumed prequalified by imported watchlist."),
-    rule("market-cap", "Market cap >= $2B", marketCapPassed, 8, marketCap !== undefined ? `Market cap is ${formatMoney(marketCap)}.` : input.strictFundamentals ? "Market cap was not available from Schwab/fundamentals." : "Assumed prequalified by imported watchlist."),
+    rule("beta", "Beta >= 0.75", betaPassed, 8, beta !== undefined ? `Beta is ${beta.toFixed(2)}.` : input.strictFundamentals ? "Beta was not available from Schwab/fundamentals." : "Assumed prequalified by the selected universe."),
+    rule("market-cap", "Market cap >= $2B", marketCapPassed, 8, marketCap !== undefined ? `Market cap is ${formatMoney(marketCap)}.` : input.strictFundamentals ? "Market cap was not available from Schwab/fundamentals." : "Assumed prequalified by the selected universe."),
     rule("dollar-volume", "20-day dollar volume >= $600M", avgDollarVolume20d >= defaultSettings.minAvgDollarVolume, 10, `20-day average dollar volume is ${formatMoney(avgDollarVolume20d)}.`)
   ];
   const candidates = [
