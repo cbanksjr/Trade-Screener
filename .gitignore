@@ -9,3 +9,4 @@ data/*.sqlite-wal
 data/*.sqlite-shm
 *.tsbuildinfo
 shared/types.js
+certs/*.pem

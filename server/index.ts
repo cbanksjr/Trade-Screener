@@ -1,3 +1,8 @@
+import { execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import http from "node:http";
+import https from "node:https";
 import cors from "cors";
 import express from "express";
 import cron from "node-cron";
@@ -92,6 +97,43 @@ cron.schedule("35 8 * * 1-5", () => {
   void runScan();
 }, { timezone: "America/Chicago" });
 
-app.listen(config.port, "127.0.0.1", () => {
-  console.log(`Options swing screener API running at http://127.0.0.1:${config.port}`);
+const server = config.httpsEnabled
+  ? https.createServer(loadHttpsCredentials(), app)
+  : http.createServer(app);
+
+server.listen(config.port, "127.0.0.1", () => {
+  const protocol = config.httpsEnabled ? "https" : "http";
+  console.log(`Options swing screener API running at ${protocol}://127.0.0.1:${config.port}`);
 });
+
+function loadHttpsCredentials() {
+  ensureLocalCertificate();
+  return {
+    key: readFileSync(config.httpsKeyPath),
+    cert: readFileSync(config.httpsCertPath)
+  };
+}
+
+function ensureLocalCertificate() {
+  if (existsSync(config.httpsKeyPath) && existsSync(config.httpsCertPath)) return;
+  mkdirSync(dirname(config.httpsKeyPath), { recursive: true });
+  mkdirSync(dirname(config.httpsCertPath), { recursive: true });
+  execFileSync("openssl", [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-sha256",
+    "-days",
+    "365",
+    "-subj",
+    "/CN=127.0.0.1",
+    "-addext",
+    "subjectAltName=IP:127.0.0.1,DNS:localhost",
+    "-keyout",
+    config.httpsKeyPath,
+    "-out",
+    config.httpsCertPath
+  ], { stdio: "ignore" });
+}
