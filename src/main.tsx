@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, BarChart3, CheckCircle2, Play, Settings as SettingsIcon, Upload, XCircle } from "lucide-react";
+import { Activity, BarChart3, CheckCircle2, Play, Settings as SettingsIcon, XCircle } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import type { BrokerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
@@ -12,23 +12,6 @@ const api = {
   },
   async scan(): Promise<ScanResponse> {
     const response = await fetch("/api/scan", { method: "POST" });
-    return response.json();
-  },
-  async settings(input: Partial<Settings>): Promise<Settings> {
-    const response = await fetch("/api/settings", {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(input)
-    });
-    return response.json();
-  },
-  async importFundamentals(csv: string): Promise<{ imported: number; skipped: number; errors: string[] }> {
-    const response = await fetch("/api/fundamentals/import", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ csv })
-    });
-    if (!response.ok) throw new Error((await response.json()).error ?? "CSV import failed.");
     return response.json();
   },
   async brokerStatus(): Promise<BrokerStatus> {
@@ -57,7 +40,7 @@ function App() {
     const schwabMessage = params.get("message");
 
     if (schwabResult === "connected") setMessage("Schwab connected. You can run a live scan now.");
-    if (schwabResult === "error") setMessage(schwabMessage ? `Schwab connection failed: ${schwabMessage}` : "Schwab connection failed.");
+    if (schwabResult === "error") setMessage(schwabMessage ? "Schwab connection failed: " + schwabMessage : "Schwab connection failed.");
     if (schwabResult) window.history.replaceState({}, document.title, window.location.pathname);
 
     api.results().then((data) => {
@@ -90,56 +73,9 @@ function App() {
       setMode(data.mode);
       setWarnings(data.warnings);
       api.brokerStatus().then(setBrokerStatus).catch(() => undefined);
-      setMessage(`Scan complete: ${data.results.length} symbols scored.`);
+      setMessage("Scan complete: " + data.results.length + " symbols scored.");
     } finally {
       setLoading(false);
-    }
-  }
-
-  async function saveSymbols(symbols: string) {
-    const next = await api.settings({ symbols: symbols.split(/[,\s]+/).filter(Boolean) });
-    setSettings(next);
-    setMessage("Watchlist saved.");
-  }
-
-  async function setScanMode(scanMode: Settings["scanMode"]) {
-    const next = await api.settings({ scanMode });
-    setSettings(next);
-    setMessage(scanMode === "auto" ? "Auto scan enabled." : scanMode === "imported" ? "Imported universe scan enabled." : "Watchlist scan enabled.");
-  }
-
-  async function importCsv(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setLoading(true);
-    setMessage("");
-    setWarnings([]);
-    try {
-      const csv = await file.text();
-      const response = await api.importFundamentals(csv);
-      const next = await api.settings({ scanMode: "imported" });
-      setSettings(next);
-      if (response.imported === 0) {
-        setResults([]);
-        setMessage("No rows imported. Check that your CSV has a Symbol or Ticker column.");
-        setWarnings(response.errors);
-        return;
-      }
-      const scan = await api.scan();
-      setResults(scan.results);
-      setSettings(scan.settings);
-      setSelected(scan.results[0]?.symbol ?? "");
-      setMode(scan.mode);
-      setWarnings([...response.errors, ...scan.warnings]);
-      setMessage(scan.results.length
-        ? `Imported ${response.imported} row(s), skipped ${response.skipped}, and found ${scan.results.length} matching setup(s).`
-        : `Imported ${response.imported} row(s), skipped ${response.skipped}, and found no matching setups right now.`
-      );
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "CSV import failed.");
-    } finally {
-      setLoading(false);
-      event.target.value = "";
     }
   }
 
@@ -148,7 +84,7 @@ function App() {
       <header className="topbar">
         <div>
           <h1>Options Swing Screener</h1>
-          <p>Squeeze Pro-style long and short setups graded with a transparent checklist.</p>
+          <p>Automatic S&amp;P 500 + Nasdaq 100 screening for long and short squeeze-style setups.</p>
         </div>
         <button className="primary" onClick={runScan} disabled={loading}>
           <Play size={18} />
@@ -179,8 +115,8 @@ function App() {
           </div>
           <div className="table">
             {results.map((result) => (
-              <button className={`row ${result.symbol === active?.symbol ? "active" : ""}`} key={result.symbol} onClick={() => setSelected(result.symbol)}>
-                <span className={`grade grade-${result.grade.replace("+", "plus")}`}>{result.grade}</span>
+              <button className={"row " + (result.symbol === active?.symbol ? "active" : "")} key={result.symbol} onClick={() => setSelected(result.symbol)}>
+                <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
                 <span>
                   <strong>{result.symbol}</strong>
                   <small>{result.setupDirection.toUpperCase()} · ${result.price.toFixed(2)} · {Math.round((result.score / result.maxScore) * 100)}% · {result.dataSource}</small>
@@ -195,7 +131,7 @@ function App() {
           {active ? <TickerDetail result={active} /> : <EmptyState runScan={runScan} />}
         </div>
 
-        <SettingsPanel settings={settings} brokerStatus={brokerStatus} setScanMode={setScanMode} saveSymbols={saveSymbols} importCsv={importCsv} />
+        <SettingsPanel settings={settings} brokerStatus={brokerStatus} />
       </section>
     </main>
   );
@@ -216,7 +152,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
     <>
       <section className="panel hero-panel">
         <div>
-          <span className={`grade large grade-${result.grade.replace("+", "plus")}`}>{result.grade}</span>
+          <span className={"grade large grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
           <h2>{result.symbol}</h2>
           <p>{result.setupDirection.toUpperCase()} · ${result.price.toFixed(2)} · Score {result.score}/{result.maxScore}</p>
         </div>
@@ -296,18 +232,10 @@ function EmptyState({ runScan }: { runScan: () => void }) {
   return <button className="empty" onClick={runScan}>Run the first scan</button>;
 }
 
-function SettingsPanel({ settings, brokerStatus, setScanMode, saveSymbols, importCsv }: {
+function SettingsPanel({ settings, brokerStatus }: {
   settings: Settings | null;
   brokerStatus: BrokerStatus | null;
-  setScanMode: (scanMode: Settings["scanMode"]) => void;
-  saveSymbols: (symbols: string) => void;
-  importCsv: (event: React.ChangeEvent<HTMLInputElement>) => void;
 }) {
-  const [symbols, setSymbols] = React.useState("");
-  React.useEffect(() => {
-    setSymbols(settings?.symbols.join(", ") ?? "");
-  }, [settings]);
-
   async function connectSchwab() {
     const response = await api.connectSchwab();
     window.location.href = response.loginUrl;
@@ -319,31 +247,14 @@ function SettingsPanel({ settings, brokerStatus, setScanMode, saveSymbols, impor
         <h2>Settings</h2>
         <SettingsIcon size={18} />
       </div>
-      <div className="segmented" aria-label="Scan mode">
-        <button className={settings?.scanMode === "auto" ? "selected" : ""} onClick={() => setScanMode("auto")}>Auto</button>
-        <button className={settings?.scanMode === "imported" ? "selected" : ""} onClick={() => setScanMode("imported")}>Imported</button>
-        <button className={settings?.scanMode === "watchlist" ? "selected" : ""} onClick={() => setScanMode("watchlist")}>Watchlist</button>
-      </div>
       <div className="settings-note mode-note">
-        Default universe: {settings?.defaultUniverseName ?? "S&P 500 + Nasdaq 100"} ({settings?.defaultUniverseCount ?? 0} symbols)
-        {settings?.defaultUniverseLastCheckedAt ? ` · refreshed ${new Date(settings.defaultUniverseLastCheckedAt).toLocaleDateString()}` : ""}
-        <br />
-        Imported rows: {settings?.importedUniverseCount ?? 0}
+        Automatic universe: {settings?.defaultUniverseName ?? "S&P 500 + Nasdaq 100"} ({settings?.defaultUniverseCount ?? 0} symbols)
+        {settings?.defaultUniverseLastCheckedAt ? " · refreshed " + new Date(settings.defaultUniverseLastCheckedAt).toLocaleDateString() : ""}
       </div>
-      <label>
-        Watchlist
-        <textarea value={symbols} onChange={(event) => setSymbols(event.target.value)} />
-      </label>
-      <button onClick={() => saveSymbols(symbols)}>Save Watchlist</button>
-      <label className="upload">
-        <Upload size={18} />
-        Import optional CSV
-        <input type="file" accept=".csv" onChange={importCsv} />
-      </label>
       <div className="settings-note">
-        CSV import is optional. Auto mode scans the built-in S&P 500 + Nasdaq 100 universe.
+        The screener automatically checks the default universe and applies the live Schwab checklist. There is no user-managed universe in this version.
       </div>
-      <div className={`api-status ${brokerStatus?.ok ? "connected" : ""}`}>
+      <div className={"api-status " + (brokerStatus?.ok ? "connected" : "")}>
         <strong>Schwab API</strong>
         <span>{brokerStatus?.message ?? "Checking connection..."}</span>
         <small>{settings?.brokerBaseUrl}</small>
@@ -355,9 +266,9 @@ function SettingsPanel({ settings, brokerStatus, setScanMode, saveSymbols, impor
 }
 
 function money(value: number): string {
-  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(0)}M`;
-  return `$${value.toFixed(0)}`;
+  if (value >= 1_000_000_000) return "$" + (value / 1_000_000_000).toFixed(1) + "B";
+  if (value >= 1_000_000) return "$" + (value / 1_000_000).toFixed(0) + "M";
+  return "$" + value.toFixed(0);
 }
 
 ReactDOM.createRoot(document.getElementById("root")!).render(<App />);

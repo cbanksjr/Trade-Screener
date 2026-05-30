@@ -7,13 +7,13 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { importFundamentalsCsv } from "./csv";
 import { runScan, readSettings, writeSettings } from "./scanner";
 import { getCachedResults, initDb } from "./sqlite";
 import { getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
-import { isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
+import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
 
 initDb();
+refreshUniverseIfNeeded();
 
 const app = express();
 app.use(cors({ origin: config.clientOrigin }));
@@ -75,14 +75,6 @@ app.post("/api/scan", async (_req, res, next) => {
   }
 });
 
-app.post("/api/fundamentals/import", (req, res, next) => {
-  try {
-    res.json(importFundamentalsCsv(String(req.body.csv ?? "")));
-  } catch (error) {
-    next(error);
-  }
-});
-
 function redirectToClient(res: express.Response, schwab: "connected" | "error", message?: string) {
   const url = new URL(config.clientOrigin);
   url.searchParams.set("schwab", schwab);
@@ -93,6 +85,13 @@ function redirectToClient(res: express.Response, schwab: "connected" | "error", 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error." });
 });
+
+function refreshUniverseIfNeeded() {
+  if (hasCachedDefaultUniverse()) return;
+  void refreshDefaultUniverse().catch((error) => {
+    console.warn("Default universe startup refresh failed:", error instanceof Error ? error.message : error);
+  });
+}
 
 cron.schedule("35 8 * * 1-5", () => {
   void runScan();

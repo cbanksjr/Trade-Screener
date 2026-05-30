@@ -15,7 +15,6 @@ body {
 }
 
 button,
-textarea,
 input {
   font: inherit;
 }
@@ -339,65 +338,11 @@ button {
   top: 16px;
 }
 
-.settings label {
-  color: #465154;
-  display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.segmented {
-  background: #f0f4f2;
-  border: 1px solid #dce2dd;
-  border-radius: 8px;
-  display: grid;
-  gap: 4px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  margin-bottom: 10px;
-  padding: 4px;
-}
-
-.segmented button {
-  background: transparent;
-  border-radius: 6px;
-  color: #465154;
-  min-height: 36px;
-}
-
-.segmented button.selected {
-  background: #113d48;
-  color: white;
-}
 
 .mode-note {
   margin-bottom: 12px;
 }
 
-textarea {
-  border: 1px solid #cbd5cf;
-  border-radius: 8px;
-  min-height: 130px;
-  padding: 10px;
-  resize: vertical;
-}
-
-.upload {
-  align-items: center;
-  background: #edf7f8;
-  border: 1px dashed #8ebfc8;
-  border-radius: 8px;
-  color: #113d48;
-  cursor: pointer;
-  display: flex !important;
-  flex-direction: row;
-  margin-top: 12px;
-  min-height: 52px;
-  padding: 12px;
-}
-
-.upload input {
-  display: none;
-}
 
 .settings-note {
   color: #667274;

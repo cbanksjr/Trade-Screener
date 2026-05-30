@@ -58,45 +58,11 @@ export function getCachedResults() {
   return rows.map((row) => JSON.parse(row.payload));
 }
 
-export function upsertFundamental(symbol: string, beta?: number, marketCap?: number, avgDollarVolume20d?: number) {
-  runSql(`
-    INSERT INTO fundamentals (symbol, beta, market_cap, avg_dollar_volume_20d, updated_at)
-    VALUES (${quote(symbol.toUpperCase())}, ${sqlNumber(beta)}, ${sqlNumber(marketCap)}, ${sqlNumber(avgDollarVolume20d)}, ${quote(new Date().toISOString())})
-    ON CONFLICT(symbol) DO UPDATE SET
-      beta = excluded.beta,
-      market_cap = excluded.market_cap,
-      avg_dollar_volume_20d = excluded.avg_dollar_volume_20d,
-      updated_at = excluded.updated_at;
-  `);
-}
-
-export function getFundamentals() {
-  const rows = JSON.parse(runSql("SELECT symbol, beta, market_cap, avg_dollar_volume_20d FROM fundamentals;") || "[]") as Array<{
-    symbol: string;
-    beta?: number | null;
-    market_cap?: number | null;
-    avg_dollar_volume_20d?: number;
-  }>;
-  return new Map(rows.map((row) => [row.symbol, {
-    symbol: row.symbol,
-    beta: row.beta ?? undefined,
-    marketCap: row.market_cap ?? undefined,
-    avgDollarVolume20d: row.avg_dollar_volume_20d
-  }]));
-}
-
-export function getFundamentalSymbols(): string[] {
-  const rows = JSON.parse(runSql("SELECT symbol FROM fundamentals ORDER BY symbol;") || "[]") as Array<{ symbol: string }>;
-  return rows.map((row) => row.symbol);
-}
 
 function quote(value: string): string {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-function sqlNumber(value: number | undefined): string {
-  return Number.isFinite(value) ? String(value) : "NULL";
-}
 
 function migrateNullableFundamentals() {
   const rows = JSON.parse(runSql("PRAGMA table_info(fundamentals);") || "[]") as Array<{ name: string; notnull: number }>;

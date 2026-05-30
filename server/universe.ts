@@ -1,7 +1,7 @@
 import { defaultUniverseName, defaultUniverseSymbols } from "./defaultUniverse";
 import { getSetting, setSetting } from "./sqlite";
 
-type UniverseCache = {
+export type UniverseCache = {
   symbols: string[];
   updatedAt: string;
   source: string;
@@ -17,9 +17,17 @@ export function getDefaultUniverseName(): string {
 }
 
 export function getDefaultUniverseSymbols(): string[] {
-  const cached = getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined);
+  return resolveDefaultUniverseSymbols(getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined));
+}
+
+export function resolveDefaultUniverseSymbols(cached?: UniverseCache): string[] {
   if (cached && cached.symbols.length >= MIN_REFRESHED_SYMBOLS) return cached.symbols;
   return defaultUniverseSymbols;
+}
+
+export function hasCachedDefaultUniverse(): boolean {
+  const cached = getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined);
+  return resolveDefaultUniverseSymbols(cached) === cached?.symbols;
 }
 
 export function getDefaultUniverseStatus() {

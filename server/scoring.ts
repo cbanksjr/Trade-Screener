@@ -2,8 +2,6 @@ import type { Candle, Fundamentals, Grade, OptionContract, ScanResult, ScoreRule
 import { latestIndicators, round } from "./indicators";
 
 export const defaultSettings = {
-  scanMode: "auto" as const,
-  symbols: ["AAPL", "MSFT", "NVDA", "META", "AMD", "AMZN", "GOOGL", "TSLA"],
   minPrice: 20,
   minBeta: 0.75,
   minMarketCap: 2_000_000_000,

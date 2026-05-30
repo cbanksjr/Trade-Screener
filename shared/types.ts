@@ -17,7 +17,6 @@ export type Fundamentals = {
   avgDollarVolume20d?: number;
 };
 
-export type ScanMode = "auto" | "imported" | "watchlist";
 
 export type OptionContract = {
   symbol: string;
@@ -85,8 +84,6 @@ export type ScanResult = {
 };
 
 export type Settings = {
-  scanMode: ScanMode;
-  symbols: string[];
   minPrice: number;
   minBeta: number;
   minMarketCap: number;
@@ -98,7 +95,6 @@ export type Settings = {
   defaultUniverseName: string;
   defaultUniverseCount: number;
   defaultUniverseLastCheckedAt?: string;
-  importedUniverseCount: number;
 };
 
 export type BrokerStatus = {
