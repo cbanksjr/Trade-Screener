@@ -19,7 +19,7 @@ SCHWAB_APP_SECRET=your_app_secret_here
 SCHWAB_CALLBACK_URL=http://127.0.0.1:4173/api/schwab/callback
 ```
 
-Then restart the dev server. The Settings panel will show whether Schwab is connected. If credentials are present but no token is stored, click **Connect Schwab** and complete the OAuth login. The scan uses Schwab for:
+Then restart the dev server. The Settings panel will show whether Schwab is connected. If credentials are present but no token is stored, click **Connect Schwab** and complete the OAuth login. Schwab must be configured with the exact same callback URL as `.env`; after approval, the callback stores the token locally and returns you to the screener. The scan uses Schwab for:
 
 - `/marketdata/v1/quotes` for quote/fundamental market data
 - `/marketdata/v1/pricehistory` for daily OHLCV history

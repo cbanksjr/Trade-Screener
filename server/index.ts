@@ -46,12 +46,18 @@ app.get("/api/schwab/login", (_req, res, next) => {
   }
 });
 
-app.get("/api/schwab/callback", async (req, res, next) => {
+app.get("/api/schwab/callback", async (req, res) => {
+  const schwabError = typeof req.query.error === "string" ? req.query.error : "";
+  if (schwabError) {
+    redirectToClient(res, "error", schwabError);
+    return;
+  }
+
   try {
     await handleSchwabCallback(String(req.query.code ?? ""));
-    res.send("<h1>Schwab connected</h1><p>You can close this window and return to Trade-Screener.</p>");
+    redirectToClient(res, "connected");
   } catch (error) {
-    next(error);
+    redirectToClient(res, "error", error instanceof Error ? error.message : "Schwab connection failed.");
   }
 });
 
@@ -70,6 +76,13 @@ app.post("/api/fundamentals/import", (req, res, next) => {
     next(error);
   }
 });
+
+function redirectToClient(res: express.Response, schwab: "connected" | "error", message?: string) {
+  const url = new URL(config.clientOrigin);
+  url.searchParams.set("schwab", schwab);
+  if (message) url.searchParams.set("message", message.slice(0, 180));
+  res.redirect(url.toString());
+}
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error." });

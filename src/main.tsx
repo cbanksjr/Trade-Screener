@@ -52,6 +52,14 @@ function App() {
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
 
   React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const schwabResult = params.get("schwab");
+    const schwabMessage = params.get("message");
+
+    if (schwabResult === "connected") setMessage("Schwab connected. You can run a live scan now.");
+    if (schwabResult === "error") setMessage(schwabMessage ? `Schwab connection failed: ${schwabMessage}` : "Schwab connection failed.");
+    if (schwabResult) window.history.replaceState({}, document.title, window.location.pathname);
+
     api.results().then((data) => {
       setResults(data.results ?? []);
       if (data.settings) setSettings(data.settings);
