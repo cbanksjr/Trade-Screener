@@ -62,7 +62,7 @@ export type ScoreRule = {
 export type ScanResult = {
   symbol: string;
   companyName?: string;
-  dataSource: "tradier" | "demo" | "mixed";
+  dataSource: "schwab" | "demo" | "mixed";
   price: number;
   beta: number | null;
   marketCap: number | null;
@@ -87,19 +87,21 @@ export type Settings = {
   minBeta: number;
   minMarketCap: number;
   minAvgDollarVolume: number;
-  tradierBaseUrl: string;
-  hasTradierToken: boolean;
+  brokerBaseUrl: string;
+  hasBrokerCredentials: boolean;
   useDemoDataWhenMissingApi: boolean;
   importedUniverseCount: number;
 };
 
-export type TradierStatus = {
+export type BrokerStatus = {
   configured: boolean;
   baseUrl: string;
   ok: boolean;
   checkedAt: string;
   sampleSymbol?: string;
   samplePrice?: number;
+  needsLogin?: boolean;
+  loginUrl?: string;
   message: string;
 };
 

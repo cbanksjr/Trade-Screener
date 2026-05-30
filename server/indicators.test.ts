@@ -34,7 +34,7 @@ describe("transparent grading", () => {
     expect(result.suggestedOptions.length).toBeGreaterThan(0);
   });
 
-  it("flags stocks that fail Tradier-driven universe filters", () => {
+  it("flags stocks that fail Schwab-driven universe filters", () => {
     const candles = demoCandles("LOWBETA");
     const price = candles[candles.length - 1].close;
     const result = gradeSetup({

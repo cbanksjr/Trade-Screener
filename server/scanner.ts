@@ -2,7 +2,7 @@ import type { Fundamentals, ScanResponse, ScanResult, Settings } from "../shared
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { defaultSettings, gradeSetup } from "./scoring";
-import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasTradierCredentials, type TradierQuote } from "./tradier";
+import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getFundamentals, getFundamentalSymbols, getSetting, saveScanResult, setSetting } from "./sqlite";
 
 export function readSettings(): Settings {
@@ -15,8 +15,8 @@ export function readSettings(): Settings {
     minBeta: stored.minBeta ?? defaultSettings.minBeta,
     minMarketCap: stored.minMarketCap ?? defaultSettings.minMarketCap,
     minAvgDollarVolume: stored.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
-    tradierBaseUrl: config.tradierBaseUrl,
-    hasTradierToken: hasTradierCredentials(),
+    brokerBaseUrl: config.schwabMarketDataBaseUrl,
+    hasBrokerCredentials: hasSchwabCredentials(),
     useDemoDataWhenMissingApi: stored.useDemoDataWhenMissingApi ?? defaultSettings.useDemoDataWhenMissingApi,
     importedUniverseCount
   };
@@ -38,7 +38,8 @@ export async function runScan(): Promise<ScanResponse> {
   let usedLive = false;
   let usedDemo = false;
   const symbolsToScan = resolveScanSymbols(settings, fundamentals);
-  const quoteMap = hasTradierCredentials() ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, TradierQuote>();
+  const canUseLiveSchwab = hasSchwabCredentials() && hasSchwabTokens();
+  const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
 
   if (settings.scanMode === "universe" && symbolsToScan.length === 0) {
     scanWarnings.add("No imported watchlist rows were found. Import a CSV with a Symbol or Ticker column, or switch to watchlist mode.");
@@ -46,42 +47,42 @@ export async function runScan(): Promise<ScanResponse> {
 
   for (const symbol of symbolsToScan) {
     const resultWarnings: string[] = [];
-    let candlesSource: "tradier" | "demo" = "demo";
-    let optionsSource: "tradier" | "demo" = "demo";
-    let quote: TradierQuote | undefined = quoteMap.get(symbol);
-    const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!hasTradierCredentials() || settings.scanMode === "watchlist");
+    let candlesSource: "schwab" | "demo" = "demo";
+    let optionsSource: "schwab" | "demo" = "demo";
+    let quote: SchwabQuote | undefined = quoteMap.get(symbol);
+    const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!canUseLiveSchwab || settings.scanMode === "watchlist");
 
     try {
-      if (hasTradierCredentials() && !quote) {
+      if (canUseLiveSchwab && !quote) {
         try {
           quote = await fetchQuote(symbol);
         } catch (error) {
-          resultWarnings.push(readError(error, "Tradier quote request failed."));
+          resultWarnings.push(readError(error, "Schwab quote request failed."));
         }
       }
 
-      if (hasTradierCredentials() && settings.scanMode === "universe" && !quote) {
-        scanWarnings.add(`${symbol}: Tradier did not return a quote; skipped.`);
+      if (canUseLiveSchwab && settings.scanMode === "universe" && !quote) {
+        scanWarnings.add(`${symbol}: Schwab did not return a quote; skipped.`);
         continue;
       }
 
       if (quote && quote.price <= settings.minPrice) {
-        scanWarnings.add(`${symbol}: skipped because Tradier quote price $${quote.price.toFixed(2)} is below $${settings.minPrice}.`);
+        scanWarnings.add(`${symbol}: skipped because Schwab quote price $${quote.price.toFixed(2)} is below $${settings.minPrice}.`);
         continue;
       }
 
       if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
-        scanWarnings.add(`${symbol}: skipped because Tradier average dollar volume is below ${formatMoney(settings.minAvgDollarVolume)}.`);
+        scanWarnings.add(`${symbol}: skipped because Schwab average dollar volume is below ${formatMoney(settings.minAvgDollarVolume)}.`);
         continue;
       }
 
-      let candles = hasTradierCredentials() ? await fetchHistory(symbol) : [];
+      let candles = canUseLiveSchwab ? await fetchHistory(symbol) : [];
       if (candles.length >= 50) {
-        candlesSource = "tradier";
+        candlesSource = "schwab";
         usedLive = true;
       }
       if (candles.length < 50 && allowDemoFallback) {
-        if (hasTradierCredentials()) resultWarnings.push("Tradier returned fewer than 50 historical candles; demo candles were used.");
+        if (canUseLiveSchwab) resultWarnings.push("Schwab returned fewer than 50 historical candles; demo candles were used.");
         candles = demoCandles(symbol);
         candlesSource = "demo";
         usedDemo = true;
@@ -94,20 +95,20 @@ export async function runScan(): Promise<ScanResponse> {
       }
 
       let options: Awaited<ReturnType<typeof fetchCallOptions>> = [];
-      if (hasTradierCredentials()) {
+      if (canUseLiveSchwab) {
         try {
           options = await fetchCallOptions(symbol, price);
           if (options.length) {
-            optionsSource = "tradier";
+            optionsSource = "schwab";
             usedLive = true;
           }
         } catch (error) {
-          resultWarnings.push(readError(error, "Tradier options request failed."));
+          resultWarnings.push(readError(error, "Schwab options request failed."));
         }
       }
 
       if (!options.length && allowDemoFallback) {
-        if (hasTradierCredentials()) resultWarnings.push("No live Tradier call options met the filters; demo contracts were used.");
+        if (canUseLiveSchwab) resultWarnings.push("No live Schwab call options met the filters; demo contracts were used.");
         options = demoOptions(symbol, price);
         optionsSource = "demo";
         usedDemo = true;
@@ -122,14 +123,14 @@ export async function runScan(): Promise<ScanResponse> {
         optionable,
         options
       });
-      result.dataSource = candlesSource === "tradier" && optionsSource === "tradier" ? "tradier" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
+      result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
       result.warnings.push(...resultWarnings);
       resultWarnings.forEach((warning) => scanWarnings.add(`${symbol}: ${warning}`));
       if (shouldIncludeResult(result, settings)) results.push(result);
       saveScanResult(symbol, result);
       await throttleIfLive();
     } catch (error) {
-      if (hasTradierCredentials() && settings.scanMode === "universe") {
+      if (canUseLiveSchwab && settings.scanMode === "universe") {
         scanWarnings.add(`${symbol}: ${error instanceof Error ? error.message : "Scan failed."}`);
         continue;
       }
@@ -178,11 +179,11 @@ function readError(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-async function loadQuoteMap(symbols: string[], warnings: Set<string>): Promise<Map<string, TradierQuote>> {
+async function loadQuoteMap(symbols: string[], warnings: Set<string>): Promise<Map<string, SchwabQuote>> {
   try {
     return await fetchQuotes(symbols);
   } catch (error) {
-    warnings.add(readError(error, "Tradier batch quote request failed."));
+    warnings.add(readError(error, "Schwab batch quote request failed."));
     return new Map();
   }
 }
@@ -190,7 +191,7 @@ async function loadQuoteMap(symbols: string[], warnings: Set<string>): Promise<M
 function mergeFundamentals(
   imported: Fundamentals | undefined,
   symbol: string,
-  quote?: TradierQuote
+  quote?: SchwabQuote
 ): Fundamentals {
   return {
     symbol,
@@ -208,15 +209,15 @@ function formatMoney(value: number): string {
 }
 
 async function throttleIfLive() {
-  if (!hasTradierCredentials()) return;
+  if (!hasSchwabCredentials() || !hasSchwabTokens()) return;
   await new Promise((resolve) => setTimeout(resolve, 120));
 }
 
 function shouldShowWarning(warning: string): boolean {
   const routineSkips = [
-    "Tradier did not return a quote; skipped.",
-    "skipped because Tradier quote price",
-    "skipped because Tradier average dollar volume"
+    "Schwab did not return a quote; skipped.",
+    "skipped because Schwab quote price",
+    "skipped because Schwab average dollar volume"
   ];
   return !routineSkips.some((message) => warning.includes(message));
 }

@@ -5,7 +5,7 @@ import { config } from "./config";
 import { importFundamentalsCsv } from "./csv";
 import { runScan, readSettings, writeSettings } from "./scanner";
 import { getCachedResults, initDb } from "./sqlite";
-import { getTradierStatus } from "./tradier";
+import { getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 
 initDb();
 
@@ -29,9 +29,27 @@ app.get("/api/results", (_req, res) => {
   res.json({ results: getCachedResults(), settings: readSettings(), warnings: [] });
 });
 
-app.get("/api/tradier/status", async (_req, res, next) => {
+app.get("/api/schwab/status", async (_req, res, next) => {
   try {
-    res.json(await getTradierStatus());
+    const status = await getSchwabStatus();
+    res.json(status.needsLogin && hasSchwabCredentials() ? { ...status, loginUrl: getSchwabLoginUrl() } : status);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/schwab/login", (_req, res, next) => {
+  try {
+    res.json({ loginUrl: getSchwabLoginUrl() });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/schwab/callback", async (req, res, next) => {
+  try {
+    await handleSchwabCallback(String(req.query.code ?? ""));
+    res.send("<h1>Schwab connected</h1><p>You can close this window and return to Trade-Screener.</p>");
   } catch (error) {
     next(error);
   }
