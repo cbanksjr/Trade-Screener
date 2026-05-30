@@ -183,7 +183,7 @@ function App() {
                 <span className={`grade grade-${result.grade.replace("+", "plus")}`}>{result.grade}</span>
                 <span>
                   <strong>{result.symbol}</strong>
-                  <small>${result.price.toFixed(2)} · {Math.round((result.score / result.maxScore) * 100)}% · {result.dataSource}</small>
+                  <small>{result.setupDirection.toUpperCase()} · ${result.price.toFixed(2)} · {Math.round((result.score / result.maxScore) * 100)}% · {result.dataSource}</small>
                 </span>
                 <span className={result.passesUniverse ? "pass" : "fail"}>{result.passesUniverse ? "Universe" : "Filtered"}</span>
               </button>
@@ -218,7 +218,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
         <div>
           <span className={`grade large grade-${result.grade.replace("+", "plus")}`}>{result.grade}</span>
           <h2>{result.symbol}</h2>
-          <p>${result.price.toFixed(2)} · Score {result.score}/{result.maxScore}</p>
+          <p>{result.setupDirection.toUpperCase()} · ${result.price.toFixed(2)} · Score {result.score}/{result.maxScore}</p>
         </div>
         <div className="indicator-grid">
           <Metric label="Squeeze" value={result.indicators.squeezeState} />
@@ -227,6 +227,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <Metric label="50 EMA" value={result.indicators.ema50.toFixed(2)} />
           <Metric label="ATR" value={result.indicators.atr14.toFixed(2)} />
           <Metric label="Dollar Vol" value={money(result.avgDollarVolume20d)} />
+          <Metric label="Direction" value={result.setupDirection.toUpperCase()} />
           <Metric label="Source" value={result.dataSource} />
         </div>
       </section>
@@ -269,13 +270,13 @@ function TickerDetail({ result }: { result: ScanResult }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Liquid Calls</h2>
+          <h2>{result.setupDirection === "long" ? "Liquid Calls" : "Liquid Puts"}</h2>
           <span>30-180 DTE target</span>
         </div>
         <div className="contracts">
           {result.suggestedOptions.map((contract) => (
             <div className="contract" key={contract.symbol}>
-              <strong>{contract.strike}C · {contract.expirationDate}</strong>
+              <strong>{contract.strike}{contract.optionType === "call" ? "C" : "P"} · {contract.expirationDate}</strong>
               <span>Bid/Ask ${contract.bid.toFixed(2)} / ${contract.ask.toFixed(2)}</span>
               <span>OI {contract.openInterest} · Vol {contract.volume} · Spread {contract.spreadPct.toFixed(1)}%</span>
               <b>{Math.round(contract.score)}</b>

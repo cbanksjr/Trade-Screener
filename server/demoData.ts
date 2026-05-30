@@ -42,26 +42,36 @@ export function demoCandles(symbol: string): Candle[] {
 }
 
 export function demoOptions(symbol: string, price: number): OptionContract[] {
-  return [0.98, 1.02, 1.05, 1.1, 1.15].map((multiplier, index) => {
+  return [
+    ...demoDirectionalOptions(symbol, price, "call", [0.98, 1.02, 1.05, 1.1, 1.15]),
+    ...demoDirectionalOptions(symbol, price, "put", [1.02, 0.98, 0.95, 0.9, 0.85])
+  ];
+}
+
+function demoDirectionalOptions(symbol: string, price: number, optionType: "call" | "put", multipliers: number[]): OptionContract[] {
+  return multipliers.map((multiplier, index) => {
     const expirationDate = dateBack(-60 - index * 25);
     const strike = Math.round((price * multiplier) / 5) * 5;
-    const bid = Math.max(0.35, (price - strike) * 0.25 + 4.5 - index * 0.35);
+    const intrinsic = optionType === "call" ? price - strike : strike - price;
+    const bid = Math.max(0.35, intrinsic * 0.25 + 4.5 - index * 0.35);
     const ask = bid * (1.04 + index * 0.015);
     const volume = 900 - index * 120;
     const openInterest = 3200 - index * 360;
     const spreadPct = ((ask - bid) / ((ask + bid) / 2)) * 100;
+    const optionCode = optionType === "call" ? "C" : "P";
+    const optionName = optionType === "call" ? "Call" : "Put";
     return {
-      symbol: `${symbol}${expirationDate.replaceAll("-", "").slice(2)}C${String(strike * 1000).padStart(8, "0")}`,
-      description: `${symbol} ${expirationDate} ${strike} Call`,
+      symbol: `${symbol}${expirationDate.replaceAll("-", "").slice(2)}${optionCode}${String(strike * 1000).padStart(8, "0")}`,
+      description: `${symbol} ${expirationDate} ${strike} ${optionName}`,
       expirationDate,
       strike,
-      optionType: "call",
+      optionType,
       bid: round(bid),
       ask: round(ask),
       last: round((bid + ask) / 2),
       volume,
       openInterest,
-      delta: round(0.62 - index * 0.07),
+      delta: round((optionType === "call" ? 0.62 : -0.62) + (optionType === "call" ? -index * 0.07 : index * 0.07)),
       spreadPct: round(spreadPct),
       score: Math.max(40, 95 - index * 8 - spreadPct)
     };

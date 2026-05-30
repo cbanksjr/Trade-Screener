@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabQuotes } from "./schwab";
+import { normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
 
 describe("Schwab response normalizers", () => {
   it("normalizes batch quote payloads and calculates average dollar volume", () => {
@@ -65,4 +65,39 @@ describe("Schwab response normalizers", () => {
     expect(contracts[0].spreadPct).toBeCloseTo(3.17);
     expect(contracts[0].score).toBeGreaterThan(0);
   });
+
+  it("normalizes put option chains into liquid-put-compatible contracts", () => {
+    const contracts = normalizeSchwabPutOptions({
+      putExpDateMap: {
+        "2026-07-17:49": {
+          "200.0": [{
+            symbol: "AAPL  260717P00200000",
+            description: "AAPL Jul 17 2026 200 Put",
+            expirationDate: "2026-07-17",
+            strikePrice: 200,
+            bid: 10.1,
+            ask: 10.5,
+            last: 10.3,
+            totalVolume: 85,
+            openInterest: 900,
+            delta: -0.48
+          }]
+        }
+      }
+    }, 205);
+
+    expect(contracts[0]).toMatchObject({
+      symbol: "AAPL  260717P00200000",
+      expirationDate: "2026-07-17",
+      optionType: "put",
+      strike: 200,
+      bid: 10.1,
+      ask: 10.5,
+      volume: 85,
+      openInterest: 900,
+      delta: -0.48
+    });
+    expect(contracts[0].score).toBeGreaterThan(0);
+  });
+
 });

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { Candle } from "../shared/types";
 import { demoCandles, demoOptions } from "./demoData";
 import { latestIndicators } from "./indicators";
 import { gradeSetup } from "./scoring";
@@ -34,6 +35,30 @@ describe("transparent grading", () => {
     expect(result.suggestedOptions.length).toBeGreaterThan(0);
   });
 
+
+  it("identifies bearish short setups when price is below the 21 EMA within -1 ATR", () => {
+    const candles = bearishCandles();
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "BEAR",
+      candles,
+      fundamentals: {
+        symbol: "BEAR",
+        beta: 1.2,
+        marketCap: 20_000_000_000,
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("BEAR", price)
+    });
+
+    expect(result.setupDirection).toBe("short");
+    expect(result.rules.find((rule) => rule.id === "ema-stack")?.passed).toBe(true);
+    expect(result.rules.find((rule) => rule.id === "price-side")?.passed).toBe(true);
+    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(true);
+    expect(result.suggestedOptions.every((contract) => contract.optionType === "put")).toBe(true);
+  });
+
   it("flags stocks that fail Schwab-driven universe filters", () => {
     const candles = demoCandles("LOWBETA");
     const price = candles[candles.length - 1].close;
@@ -54,3 +79,19 @@ describe("transparent grading", () => {
     expect(result.rules.find((rule) => rule.id === "dollar-volume")?.passed).toBe(false);
   });
 });
+
+function bearishCandles(): Candle[] {
+  const candles: Candle[] = [];
+  for (let index = 0; index < 180; index += 1) {
+    const close = 220 - index * 0.35 + Math.sin(index / 6) * 1.2;
+    candles.push({
+      date: `2026-01-${String(index + 1).padStart(2, "0")}`,
+      open: close + 0.4,
+      high: close + 2.4,
+      low: close - 2.4,
+      close,
+      volume: 25_000_000
+    });
+  }
+  return candles;
+}

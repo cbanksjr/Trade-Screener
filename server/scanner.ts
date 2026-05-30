@@ -2,7 +2,7 @@ import type { Fundamentals, ScanResponse, ScanResult, Settings } from "../shared
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { defaultSettings, gradeSetup } from "./scoring";
-import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
+import { fetchOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getFundamentals, getFundamentalSymbols, getSetting, saveScanResult, setSetting } from "./sqlite";
 
 export function readSettings(): Settings {
@@ -95,10 +95,10 @@ export async function runScan(): Promise<ScanResponse> {
         candles[candles.length - 1] = { ...candles[candles.length - 1], close: quote.price };
       }
 
-      let options: Awaited<ReturnType<typeof fetchCallOptions>> = [];
+      let options: Awaited<ReturnType<typeof fetchOptions>> = [];
       if (canUseLiveSchwab) {
         try {
-          options = await fetchCallOptions(symbol, price);
+          options = await fetchOptions(symbol, price);
           if (options.length) {
             optionsSource = "schwab";
             usedLive = true;
@@ -109,7 +109,7 @@ export async function runScan(): Promise<ScanResponse> {
       }
 
       if (!options.length && allowDemoFallback) {
-        if (canUseLiveSchwab) resultWarnings.push("No live Schwab call options met the filters; demo contracts were used.");
+        if (canUseLiveSchwab) resultWarnings.push("No live Schwab option contracts met the filters; demo contracts were used.");
         options = demoOptions(symbol, price);
         optionsSource = "demo";
         usedDemo = true;

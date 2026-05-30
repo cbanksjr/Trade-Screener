@@ -1,4 +1,5 @@
 export type Grade = "A+" | "A" | "B" | "C" | "D" | "F";
+export type TradeDirection = "long" | "short";
 
 export type Candle = {
   date: string;
@@ -62,6 +63,7 @@ export type ScoreRule = {
 export type ScanResult = {
   symbol: string;
   companyName?: string;
+  setupDirection: TradeDirection;
   dataSource: "schwab" | "demo" | "mixed";
   price: number;
   beta: number | null;

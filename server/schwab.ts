@@ -34,6 +34,7 @@ type SchwabPriceHistoryResponse = {
 
 type SchwabOptionChainResponse = {
   callExpDateMap?: Record<string, Record<string, Array<Record<string, unknown>>>>;
+  putExpDateMap?: Record<string, Record<string, Array<Record<string, unknown>>>>;
 };
 
 const TOKEN_SETTING = "schwabTokens";
@@ -138,20 +139,32 @@ export async function fetchHistory(symbol: string): Promise<Candle[]> {
   return normalizeSchwabHistory(data);
 }
 
+export async function fetchOptions(symbol: string, price: number): Promise<OptionContract[]> {
+  const [calls, puts] = await Promise.all([
+    fetchDirectionalOptions(symbol, price, "CALL"),
+    fetchDirectionalOptions(symbol, price, "PUT")
+  ]);
+  return [...calls, ...puts];
+}
+
 export async function fetchCallOptions(symbol: string, price: number): Promise<OptionContract[]> {
+  return fetchDirectionalOptions(symbol, price, "CALL");
+}
+
+async function fetchDirectionalOptions(symbol: string, price: number, contractType: "CALL" | "PUT"): Promise<OptionContract[]> {
   const fromDate = dateOffset(30);
   const toDate = dateOffset(180);
   const data = await schwabGet<SchwabOptionChainResponse>("/chains", {
     symbol,
-    contractType: "CALL",
+    contractType,
     strategy: "SINGLE",
     includeUnderlyingQuote: "false",
     fromDate,
     toDate
   });
-
-  return normalizeSchwabCallOptions(data, price)
-    .filter((item) => item.bid > 0 && item.ask > 0 && item.strike >= price * 0.95 && item.strike <= price * 1.15)
+  const options = contractType === "CALL" ? normalizeSchwabCallOptions(data, price) : normalizeSchwabPutOptions(data, price);
+  return options
+    .filter((item) => item.bid > 0 && item.ask > 0 && isStrikeNearPrice(item, price))
     .sort((a, b) => b.score - a.score)
     .slice(0, 8);
 }
@@ -196,12 +209,16 @@ export function normalizeSchwabHistory(data: SchwabPriceHistoryResponse): Candle
 }
 
 export function normalizeSchwabCallOptions(data: SchwabOptionChainResponse, price: number): OptionContract[] {
-  return flattenCalls(data).map((item) => normalizeOption(item, price));
+  return flattenOptions(data.callExpDateMap).map((item) => normalizeOption(item, price, "call"));
 }
 
-function flattenCalls(data: SchwabOptionChainResponse): Record<string, unknown>[] {
+export function normalizeSchwabPutOptions(data: SchwabOptionChainResponse, price: number): OptionContract[] {
+  return flattenOptions(data.putExpDateMap).map((item) => normalizeOption(item, price, "put"));
+}
+
+function flattenOptions(map: SchwabOptionChainResponse["callExpDateMap"]): Record<string, unknown>[] {
   const output: Record<string, unknown>[] = [];
-  for (const strikes of Object.values(data.callExpDateMap ?? {})) {
+  for (const strikes of Object.values(map ?? {})) {
     for (const contracts of Object.values(strikes)) {
       output.push(...contracts);
     }
@@ -209,7 +226,7 @@ function flattenCalls(data: SchwabOptionChainResponse): Record<string, unknown>[
   return output;
 }
 
-function normalizeOption(item: Record<string, unknown>, price: number): OptionContract {
+function normalizeOption(item: Record<string, unknown>, price: number, optionType: "call" | "put"): OptionContract {
   const bid = numberValue(item.bid);
   const ask = numberValue(item.ask);
   const spreadPct = ask > 0 && bid > 0 ? ((ask - bid) / ((ask + bid) / 2)) * 100 : 100;
@@ -221,13 +238,13 @@ function normalizeOption(item: Record<string, unknown>, price: number): OptionCo
     description: String(item.description ?? item.symbol ?? ""),
     expirationDate: String(item.expirationDate ?? ""),
     strike,
-    optionType: "call",
+    optionType,
     bid,
     ask,
     last: numberValue(item.last),
     volume,
     openInterest,
-    delta: firstNumber(item.delta),
+    delta: finiteNumber(item.delta),
     spreadPct: Number(spreadPct.toFixed(2)),
     score: optionScore(spreadPct, volume, openInterest, strike, price)
   };
@@ -308,6 +325,11 @@ function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens): Sch
   return next;
 }
 
+function isStrikeNearPrice(item: OptionContract, price: number): boolean {
+  if (item.optionType === "call") return item.strike >= price * 0.95 && item.strike <= price * 1.15;
+  return item.strike >= price * 0.85 && item.strike <= price * 1.05;
+}
+
 function optionScore(spreadPct: number, volume: number, openInterest: number, strike: number, price: number): number {
   const spreadScore = Math.max(0, 40 - spreadPct * 2);
   const volumeScore = Math.min(25, volume / 20);
@@ -337,6 +359,11 @@ function firstNumber(...values: unknown[]): number | undefined {
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
   }
   return undefined;
+}
+
+function finiteNumber(value: unknown): number | undefined {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function stringValue(value: unknown): string | undefined {
