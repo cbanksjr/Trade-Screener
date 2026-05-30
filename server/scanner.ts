@@ -16,6 +16,7 @@ export function readSettings(): Settings {
     minMarketCap: stored.minMarketCap ?? defaultSettings.minMarketCap,
     minAvgDollarVolume: stored.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
     brokerBaseUrl: config.schwabMarketDataBaseUrl,
+    brokerCallbackUrl: config.schwabCallbackUrl,
     hasBrokerCredentials: hasSchwabCredentials(),
     useDemoDataWhenMissingApi: stored.useDemoDataWhenMissingApi ?? defaultSettings.useDemoDataWhenMissingApi,
     importedUniverseCount

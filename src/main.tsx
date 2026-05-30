@@ -342,6 +342,7 @@ function SettingsPanel({ settings, brokerStatus, setScanMode, saveSymbols, impor
         <strong>Schwab API</strong>
         <span>{brokerStatus?.message ?? "Checking connection..."}</span>
         <small>{settings?.brokerBaseUrl}</small>
+        <small>Callback: {settings?.brokerCallbackUrl}</small>
         {brokerStatus?.needsLogin && settings?.hasBrokerCredentials && <button onClick={connectSchwab}>Connect Schwab</button>}
       </div>
     </aside>

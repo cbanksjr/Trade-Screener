@@ -88,6 +88,7 @@ export type Settings = {
   minMarketCap: number;
   minAvgDollarVolume: number;
   brokerBaseUrl: string;
+  brokerCallbackUrl: string;
   hasBrokerCredentials: boolean;
   useDemoDataWhenMissingApi: boolean;
   importedUniverseCount: number;
