@@ -11,27 +11,28 @@ npm run dev
 
 Open http://127.0.0.1:5173 and click **Run Scan**.
 
-The app works immediately with demo data. To use Tradier, copy `.env.example` to `.env` and add:
+The app works immediately with demo data. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
 ```bash
-TRADIER_TOKEN=your_token_here
+SCHWAB_APP_KEY=your_app_key_here
+SCHWAB_APP_SECRET=your_app_secret_here
+SCHWAB_CALLBACK_URL=http://127.0.0.1:4173/api/schwab/callback
 ```
 
-Then restart the dev server. The Settings panel will show whether Tradier is connected. The scan uses Tradier for:
+Then restart the dev server. The Settings panel will show whether Schwab is connected. If credentials are present but no token is stored, click **Connect Schwab** and complete the OAuth login. The scan uses Schwab for:
 
-- `/markets/quotes` for current price checks
-- `/markets/history` for daily OHLCV history
-- `/markets/options/expirations` for eligible option expirations
-- `/markets/options/chains` for call contracts and Greeks
+- `/marketdata/v1/quotes` for quote/fundamental market data
+- `/marketdata/v1/pricehistory` for daily OHLCV history
+- `/marketdata/v1/chains` for 30-180 DTE call chains and Greeks
 
-If Tradier is missing, rate-limited, or returns incomplete data, the dashboard shows warnings. In Universe mode with a live Tradier token, the app prefers real Tradier data and does not use demo contracts to qualify candidates.
+If Schwab is missing, rate-limited, or returns incomplete data, the dashboard shows warnings. In Universe mode with a live Schwab token, the app prefers real Schwab data and does not use demo contracts to qualify candidates.
 
 ## What It Scores
 
 - Optionable stock
 - Price above $20
 - Beta and market cap are treated as prequalified by your uploaded watchlist
-- Average dollar volume >= $600M, from Tradier `average_volume × last price` when available
+- Average dollar volume >= $600M, from Schwab `average volume x last price` when available
 - 21 EMA above 50 EMA
 - Price within 1 ATR of the 21 EMA
 - Squeeze Pro-style compression/release state
@@ -51,7 +52,7 @@ MSFT
 NVDA
 ```
 
-The importer also accepts optional columns like `Ticker`, `Beta`, `Market Cap`, `Price`, and `Avg Volume`. If `avg_dollar_volume_20d` is missing but `Price` and `Avg Volume` are present, the app stores that calculated dollar volume, but Tradier remains the preferred source during live scans.
+The importer also accepts optional columns like `Ticker`, `Beta`, `Market Cap`, `Price`, and `Avg Volume`. If `avg_dollar_volume_20d` is missing but `Price` and `Avg Volume` are present, the app stores that calculated dollar volume, but Schwab remains the preferred source during live scans.
 
 Thinkorswim watchlist/export files are supported too. Use exported columns such as:
 
@@ -77,8 +78,8 @@ Imported watchlist rows are stored in `data/screener.sqlite`.
 After importing a larger CSV, the app switches to **Universe** mode and starts a scan automatically. In Universe mode the scanner no longer limits itself to the starter watchlist. It:
 
 - Starts from every imported watchlist symbol
-- Uses Tradier batch quotes to prefilter price and average dollar volume
-- Uses Tradier daily candles to calculate EMA, ATR, squeeze state, and momentum
+- Uses Schwab batch quotes to prefilter price and average dollar volume
+- Uses Schwab daily candles to calculate EMA, ATR, squeeze state, and momentum
 - Checks optionability through call contracts
 - Scores the squeeze/trend checklist
 - Shows only candidates that pass the active checklist and avoid weak `D/F` grades

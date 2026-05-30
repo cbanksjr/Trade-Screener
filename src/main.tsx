@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, BarChart3, CheckCircle2, Play, Settings as SettingsIcon, Upload, XCircle } from "lucide-react";
 import { Area, AreaChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import type { ScanResponse, ScanResult, Settings, TradierStatus } from "../shared/types";
+import type { BrokerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
 
 const api = {
@@ -31,8 +31,12 @@ const api = {
     if (!response.ok) throw new Error((await response.json()).error ?? "CSV import failed.");
     return response.json();
   },
-  async tradierStatus(): Promise<TradierStatus> {
-    const response = await fetch("/api/tradier/status");
+  async brokerStatus(): Promise<BrokerStatus> {
+    const response = await fetch("/api/schwab/status");
+    return response.json();
+  },
+  async connectSchwab(): Promise<{ loginUrl: string }> {
+    const response = await fetch("/api/schwab/login");
     return response.json();
   }
 };
@@ -45,7 +49,7 @@ function App() {
   const [mode, setMode] = React.useState<string>("demo");
   const [message, setMessage] = React.useState("");
   const [warnings, setWarnings] = React.useState<string[]>([]);
-  const [tradierStatus, setTradierStatus] = React.useState<TradierStatus | null>(null);
+  const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
 
   React.useEffect(() => {
     api.results().then((data) => {
@@ -54,13 +58,13 @@ function App() {
       setSelected(data.results?.[0]?.symbol ?? "");
       setWarnings(data.warnings ?? []);
     });
-    api.tradierStatus().then(setTradierStatus).catch(() => {
-      setTradierStatus({
+    api.brokerStatus().then(setBrokerStatus).catch(() => {
+      setBrokerStatus({
         configured: false,
         baseUrl: "",
         ok: false,
         checkedAt: new Date().toISOString(),
-        message: "Unable to check Tradier status."
+        message: "Unable to check Schwab status."
       });
     });
   }, []);
@@ -77,7 +81,7 @@ function App() {
       setSelected(data.results[0]?.symbol ?? "");
       setMode(data.mode);
       setWarnings(data.warnings);
-      api.tradierStatus().then(setTradierStatus).catch(() => undefined);
+      api.brokerStatus().then(setBrokerStatus).catch(() => undefined);
       setMessage(`Scan complete: ${data.results.length} symbols scored.`);
     } finally {
       setLoading(false);
@@ -109,7 +113,7 @@ function App() {
       setSettings(next);
       if (response.imported === 0) {
         setResults([]);
-        setMessage("No rows imported. Check that your CSV has symbol, beta, and market cap columns.");
+        setMessage("No rows imported. Check that your CSV has a Symbol or Ticker column.");
         setWarnings(response.errors);
         return;
       }
@@ -148,7 +152,7 @@ function App() {
         <Stat icon={<Activity />} label="Mode" value={mode.toUpperCase()} />
         <Stat icon={<BarChart3 />} label="Symbols" value={String(results.length)} />
         <Stat icon={<CheckCircle2 />} label="Passing Universe" value={String(results.filter((item) => item.passesUniverse).length)} />
-        <Stat icon={<SettingsIcon />} label="Tradier" value={tradierStatus?.ok ? "Connected" : settings?.hasTradierToken ? "Check Failed" : "Demo Fallback"} />
+        <Stat icon={<SettingsIcon />} label="Schwab" value={brokerStatus?.ok ? "Connected" : settings?.hasBrokerCredentials ? "Connect" : "Setup Needed"} />
       </section>
 
       {message && <div className="notice">{message}</div>}
@@ -183,7 +187,7 @@ function App() {
           {active ? <TickerDetail result={active} /> : <EmptyState runScan={runScan} />}
         </div>
 
-        <SettingsPanel settings={settings} tradierStatus={tradierStatus} setScanMode={setScanMode} saveSymbols={saveSymbols} importCsv={importCsv} />
+        <SettingsPanel settings={settings} brokerStatus={brokerStatus} setScanMode={setScanMode} saveSymbols={saveSymbols} importCsv={importCsv} />
       </section>
     </main>
   );
@@ -283,9 +287,9 @@ function EmptyState({ runScan }: { runScan: () => void }) {
   return <button className="empty" onClick={runScan}>Run the first scan</button>;
 }
 
-function SettingsPanel({ settings, tradierStatus, setScanMode, saveSymbols, importCsv }: {
+function SettingsPanel({ settings, brokerStatus, setScanMode, saveSymbols, importCsv }: {
   settings: Settings | null;
-  tradierStatus: TradierStatus | null;
+  brokerStatus: BrokerStatus | null;
   setScanMode: (scanMode: Settings["scanMode"]) => void;
   saveSymbols: (symbols: string) => void;
   importCsv: (event: React.ChangeEvent<HTMLInputElement>) => void;
@@ -294,6 +298,11 @@ function SettingsPanel({ settings, tradierStatus, setScanMode, saveSymbols, impo
   React.useEffect(() => {
     setSymbols(settings?.symbols.join(", ") ?? "");
   }, [settings]);
+
+  async function connectSchwab() {
+    const response = await api.connectSchwab();
+    window.location.href = response.loginUrl;
+  }
 
   return (
     <aside className="panel settings">
@@ -319,12 +328,13 @@ function SettingsPanel({ settings, tradierStatus, setScanMode, saveSymbols, impo
         <input type="file" accept=".csv" onChange={importCsv} />
       </label>
       <div className="settings-note">
-        CSV columns: symbol, beta, market_cap, avg_dollar_volume_20d.
+        CSV columns: Symbol or Ticker required. Beta, market cap, price, and average volume are optional.
       </div>
-      <div className={`api-status ${tradierStatus?.ok ? "connected" : ""}`}>
-        <strong>Tradier API</strong>
-        <span>{tradierStatus?.message ?? "Checking connection..."}</span>
-        <small>{settings?.tradierBaseUrl}</small>
+      <div className={`api-status ${brokerStatus?.ok ? "connected" : ""}`}>
+        <strong>Schwab API</strong>
+        <span>{brokerStatus?.message ?? "Checking connection..."}</span>
+        <small>{settings?.brokerBaseUrl}</small>
+        {brokerStatus?.needsLogin && settings?.hasBrokerCredentials && <button onClick={connectSchwab}>Connect Schwab</button>}
       </div>
     </aside>
   );
