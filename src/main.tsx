@@ -148,7 +148,7 @@ function App() {
       <header className="topbar">
         <div>
           <h1>Options Swing Screener</h1>
-          <p>Squeeze Pro-style long setups graded with a transparent checklist.</p>
+          <p>Squeeze Pro-style long and short setups graded with a transparent checklist.</p>
         </div>
         <button className="primary" onClick={runScan} disabled={loading}>
           <Play size={18} />
