@@ -105,7 +105,7 @@ function App() {
   async function setScanMode(scanMode: Settings["scanMode"]) {
     const next = await api.settings({ scanMode });
     setSettings(next);
-    setMessage(scanMode === "universe" ? "Universe scan enabled." : "Watchlist scan enabled.");
+    setMessage(scanMode === "auto" ? "Auto scan enabled." : scanMode === "imported" ? "Imported universe scan enabled." : "Watchlist scan enabled.");
   }
 
   async function importCsv(event: React.ChangeEvent<HTMLInputElement>) {
@@ -117,7 +117,7 @@ function App() {
     try {
       const csv = await file.text();
       const response = await api.importFundamentals(csv);
-      const next = await api.settings({ scanMode: "universe" });
+      const next = await api.settings({ scanMode: "imported" });
       setSettings(next);
       if (response.imported === 0) {
         setResults([]);
@@ -185,7 +185,7 @@ function App() {
                   <strong>{result.symbol}</strong>
                   <small>{result.setupDirection.toUpperCase()} · ${result.price.toFixed(2)} · {Math.round((result.score / result.maxScore) * 100)}% · {result.dataSource}</small>
                 </span>
-                <span className={result.passesUniverse ? "pass" : "fail"}>{result.passesUniverse ? "Universe" : "Filtered"}</span>
+                <span className={result.passesUniverse ? "pass" : "fail"}>{result.passesUniverse ? "Qualified" : "Filtered"}</span>
               </button>
             ))}
           </div>
@@ -320,11 +320,15 @@ function SettingsPanel({ settings, brokerStatus, setScanMode, saveSymbols, impor
         <SettingsIcon size={18} />
       </div>
       <div className="segmented" aria-label="Scan mode">
-        <button className={settings?.scanMode === "universe" ? "selected" : ""} onClick={() => setScanMode("universe")}>Universe</button>
+        <button className={settings?.scanMode === "auto" ? "selected" : ""} onClick={() => setScanMode("auto")}>Auto</button>
+        <button className={settings?.scanMode === "imported" ? "selected" : ""} onClick={() => setScanMode("imported")}>Imported</button>
         <button className={settings?.scanMode === "watchlist" ? "selected" : ""} onClick={() => setScanMode("watchlist")}>Watchlist</button>
       </div>
       <div className="settings-note mode-note">
-        Universe rows imported: {settings?.importedUniverseCount ?? 0}
+        Default universe: {settings?.defaultUniverseName ?? "S&P 500 + Nasdaq 100"} ({settings?.defaultUniverseCount ?? 0} symbols)
+        {settings?.defaultUniverseLastCheckedAt ? ` · refreshed ${new Date(settings.defaultUniverseLastCheckedAt).toLocaleDateString()}` : ""}
+        <br />
+        Imported rows: {settings?.importedUniverseCount ?? 0}
       </div>
       <label>
         Watchlist
@@ -333,11 +337,11 @@ function SettingsPanel({ settings, brokerStatus, setScanMode, saveSymbols, impor
       <button onClick={() => saveSymbols(symbols)}>Save Watchlist</button>
       <label className="upload">
         <Upload size={18} />
-        Import fundamentals CSV
+        Import optional CSV
         <input type="file" accept=".csv" onChange={importCsv} />
       </label>
       <div className="settings-note">
-        CSV columns: Symbol or Ticker required. Beta, market cap, price, and average volume are optional.
+        CSV import is optional. Auto mode scans the built-in S&P 500 + Nasdaq 100 universe.
       </div>
       <div className={`api-status ${brokerStatus?.ok ? "connected" : ""}`}>
         <strong>Schwab API</strong>

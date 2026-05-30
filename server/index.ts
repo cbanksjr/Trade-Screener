@@ -11,6 +11,7 @@ import { importFundamentalsCsv } from "./csv";
 import { runScan, readSettings, writeSettings } from "./scanner";
 import { getCachedResults, initDb } from "./sqlite";
 import { getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
+import { isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
 
 initDb();
 
@@ -95,6 +96,13 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 
 cron.schedule("35 8 * * 1-5", () => {
   void runScan();
+}, { timezone: "America/Chicago" });
+
+cron.schedule("10 18 28-31 * *", () => {
+  if (!isLastDayOfMonth()) return;
+  void refreshDefaultUniverse().catch((error) => {
+    console.warn("Default universe refresh failed:", error instanceof Error ? error.message : error);
+  });
 }, { timezone: "America/Chicago" });
 
 const server = config.httpsEnabled

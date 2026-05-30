@@ -1,15 +1,17 @@
-import type { Fundamentals, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { Fundamentals, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { defaultSettings, gradeSetup } from "./scoring";
 import { fetchOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getFundamentals, getFundamentalSymbols, getSetting, saveScanResult, setSetting } from "./sqlite";
+import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
 
 export function readSettings(): Settings {
-  const stored = getSetting<Partial<Settings>>("settings", {});
+  const stored = getSetting<Partial<Settings> & { scanMode?: ScanMode | "universe" }>("settings", {});
   const importedUniverseCount = getFundamentalSymbols().length;
+  const defaultUniverse = getDefaultUniverseStatus();
   return {
-    scanMode: stored.scanMode ?? (importedUniverseCount > 0 ? defaultSettings.scanMode : "watchlist"),
+    scanMode: normalizeScanMode(stored.scanMode),
     symbols: stored.symbols?.length ? stored.symbols.map((item) => item.toUpperCase()) : defaultSettings.symbols,
     minPrice: stored.minPrice ?? defaultSettings.minPrice,
     minBeta: stored.minBeta ?? defaultSettings.minBeta,
@@ -19,6 +21,9 @@ export function readSettings(): Settings {
     brokerCallbackUrl: config.schwabCallbackUrl,
     hasBrokerCredentials: hasSchwabCredentials(),
     useDemoDataWhenMissingApi: stored.useDemoDataWhenMissingApi ?? defaultSettings.useDemoDataWhenMissingApi,
+    defaultUniverseName: defaultUniverse.name,
+    defaultUniverseCount: defaultUniverse.count,
+    defaultUniverseLastCheckedAt: defaultUniverse.lastCheckedAt,
     importedUniverseCount
   };
 }
@@ -26,7 +31,7 @@ export function readSettings(): Settings {
 export function writeSettings(input: Partial<Settings>): Settings {
   const next = { ...readSettings(), ...input };
   next.symbols = normalizeSymbols(next.symbols);
-  next.scanMode = next.scanMode === "watchlist" ? "watchlist" : "universe";
+  next.scanMode = normalizeScanMode(next.scanMode);
   setSetting("settings", next);
   return readSettings();
 }
@@ -42,8 +47,11 @@ export async function runScan(): Promise<ScanResponse> {
   const canUseLiveSchwab = hasSchwabCredentials() && hasSchwabTokens();
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
 
-  if (settings.scanMode === "universe" && symbolsToScan.length === 0) {
-    scanWarnings.add("No imported watchlist rows were found. Import a CSV with a Symbol or Ticker column, or switch to watchlist mode.");
+  if (settings.scanMode === "auto" && !canUseLiveSchwab) {
+    scanWarnings.add("Auto mode needs Schwab connected so it can screen the full default universe with live market data.");
+  }
+  if (settings.scanMode === "imported" && symbolsToScan.length === 0) {
+    scanWarnings.add("No imported watchlist rows were found. Import a CSV with a Symbol or Ticker column, or switch to Auto or Watchlist mode.");
   }
 
   for (const symbol of symbolsToScan) {
@@ -51,7 +59,7 @@ export async function runScan(): Promise<ScanResponse> {
     let candlesSource: "schwab" | "demo" = "demo";
     let optionsSource: "schwab" | "demo" = "demo";
     let quote: SchwabQuote | undefined = quoteMap.get(symbol);
-    const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!canUseLiveSchwab || settings.scanMode === "watchlist");
+    const allowDemoFallback = settings.useDemoDataWhenMissingApi && settings.scanMode !== "auto" && (!canUseLiveSchwab || settings.scanMode === "watchlist");
 
     try {
       if (canUseLiveSchwab && !quote) {
@@ -62,18 +70,29 @@ export async function runScan(): Promise<ScanResponse> {
         }
       }
 
-      if (canUseLiveSchwab && settings.scanMode === "universe" && !quote) {
-        scanWarnings.add(`${symbol}: Schwab did not return a quote; skipped.`);
+      if (canUseLiveSchwab && settings.scanMode !== "watchlist" && !quote) {
+        scanWarnings.add(symbol + ": Schwab did not return a quote; skipped.");
         continue;
       }
 
       if (quote && quote.price <= settings.minPrice) {
-        scanWarnings.add(`${symbol}: skipped because Schwab quote price $${quote.price.toFixed(2)} is below $${settings.minPrice}.`);
+        scanWarnings.add(symbol + ": skipped because Schwab quote price $" + quote.price.toFixed(2) + " is below $" + settings.minPrice + ".");
         continue;
       }
 
+      if (settings.scanMode === "auto") {
+        if (quote?.beta === undefined || quote.beta < settings.minBeta) {
+          scanWarnings.add(symbol + ": skipped because Schwab beta is missing or below " + settings.minBeta + ".");
+          continue;
+        }
+        if (quote.marketCap === undefined || quote.marketCap < settings.minMarketCap) {
+          scanWarnings.add(symbol + ": skipped because Schwab market cap is missing or below " + formatMoney(settings.minMarketCap) + ".");
+          continue;
+        }
+      }
+
       if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
-        scanWarnings.add(`${symbol}: skipped because Schwab average dollar volume is below ${formatMoney(settings.minAvgDollarVolume)}.`);
+        scanWarnings.add(symbol + ": skipped because Schwab average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
         continue;
       }
 
@@ -122,19 +141,21 @@ export async function runScan(): Promise<ScanResponse> {
         candles,
         fundamentals: mergeFundamentals(fundamentals.get(symbol) ?? demoFundamental(symbol), symbol, quote),
         optionable,
-        options
+        options,
+        strictFundamentals: settings.scanMode === "auto"
       });
       result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
       result.warnings.push(...resultWarnings);
-      resultWarnings.forEach((warning) => scanWarnings.add(`${symbol}: ${warning}`));
+      resultWarnings.forEach((warning) => scanWarnings.add(symbol + ": " + warning));
       if (shouldIncludeResult(result, settings)) results.push(result);
       saveScanResult(symbol, result);
       await throttleIfLive();
     } catch (error) {
-      if (canUseLiveSchwab && settings.scanMode === "universe") {
-        scanWarnings.add(`${symbol}: ${error instanceof Error ? error.message : "Scan failed."}`);
+      if (canUseLiveSchwab && settings.scanMode !== "watchlist") {
+        scanWarnings.add(symbol + ": " + (error instanceof Error ? error.message : "Scan failed."));
         continue;
       }
+      if (!allowDemoFallback) continue;
       const candles = demoCandles(symbol);
       const price = candles[candles.length - 1].close;
       const fallback = gradeSetup({
@@ -146,7 +167,7 @@ export async function runScan(): Promise<ScanResponse> {
       });
       fallback.dataSource = "demo";
       fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
-      fallback.warnings.forEach((warning) => scanWarnings.add(`${symbol}: ${warning}`));
+      fallback.warnings.forEach((warning) => scanWarnings.add(symbol + ": " + warning));
       if (shouldIncludeResult(fallback, settings)) results.push(fallback);
       saveScanResult(symbol, fallback);
       usedDemo = true;
@@ -165,10 +186,16 @@ function normalizeSymbols(symbols: string[]): string[] {
   return [...new Set(symbols.flatMap((item) => item.split(/[,\s]+/)).map((item) => item.trim().toUpperCase()).filter(Boolean))];
 }
 
-function resolveScanSymbols(settings: Settings, fundamentals: ReturnType<typeof getFundamentals>): string[] {
-  if (settings.scanMode === "watchlist") return settings.symbols;
+function normalizeScanMode(scanMode: ScanMode | "universe" | undefined): ScanMode {
+  if (scanMode === "watchlist") return "watchlist";
+  if (scanMode === "imported" || scanMode === "universe") return "imported";
+  return "auto";
+}
 
-  return [...fundamentals.values()].map((item) => item.symbol);
+export function resolveScanSymbols(settings: Settings, fundamentals: Map<string, Fundamentals>): string[] {
+  if (settings.scanMode === "watchlist") return settings.symbols;
+  if (settings.scanMode === "imported") return [...fundamentals.values()].map((item) => item.symbol);
+  return getDefaultUniverseSymbols();
 }
 
 function shouldIncludeResult(result: ScanResult, settings: Settings): boolean {
@@ -196,17 +223,17 @@ function mergeFundamentals(
 ): Fundamentals {
   return {
     symbol,
-    beta: imported?.beta,
-    marketCap: imported?.marketCap,
+    beta: quote?.beta ?? imported?.beta,
+    marketCap: quote?.marketCap ?? imported?.marketCap,
     avgDollarVolume20d: quote?.avgDollarVolume ?? imported?.avgDollarVolume20d
   };
 }
 
 function formatMoney(value: number): string {
-  if (value >= 1_000_000_000_000) return `$${(value / 1_000_000_000_000).toFixed(1)}T`;
-  if (value >= 1_000_000_000) return `$${(value / 1_000_000_000).toFixed(1)}B`;
-  if (value >= 1_000_000) return `$${(value / 1_000_000).toFixed(0)}M`;
-  return `$${value.toFixed(0)}`;
+  if (value >= 1_000_000_000_000) return "$" + (value / 1_000_000_000_000).toFixed(1) + "T";
+  if (value >= 1_000_000_000) return "$" + (value / 1_000_000_000).toFixed(1) + "B";
+  if (value >= 1_000_000) return "$" + (value / 1_000_000).toFixed(0) + "M";
+  return "$" + value.toFixed(0);
 }
 
 async function throttleIfLive() {
@@ -218,6 +245,8 @@ function shouldShowWarning(warning: string): boolean {
   const routineSkips = [
     "Schwab did not return a quote; skipped.",
     "skipped because Schwab quote price",
+    "skipped because Schwab beta",
+    "skipped because Schwab market cap",
     "skipped because Schwab average dollar volume"
   ];
   return !routineSkips.some((message) => warning.includes(message));

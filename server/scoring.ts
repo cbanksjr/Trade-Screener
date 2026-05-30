@@ -2,7 +2,7 @@ import type { Candle, Fundamentals, Grade, OptionContract, ScanResult, ScoreRule
 import { latestIndicators, round } from "./indicators";
 
 export const defaultSettings = {
-  scanMode: "universe" as const,
+  scanMode: "auto" as const,
   symbols: ["AAPL", "MSFT", "NVDA", "META", "AMD", "AMZN", "GOOGL", "TSLA"],
   minPrice: 20,
   minBeta: 0.75,
@@ -18,16 +18,21 @@ export function gradeSetup(input: {
   fundamentals?: Fundamentals;
   optionable: boolean;
   options: OptionContract[];
+  strictFundamentals?: boolean;
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
   const latest = input.candles[input.candles.length - 1];
   const price = latest.close;
+  const beta = input.fundamentals?.beta;
+  const marketCap = input.fundamentals?.marketCap;
   const avgDollarVolume20d = input.fundamentals?.avgDollarVolume20d ?? average(input.candles.slice(-20).map((candle) => candle.volume * candle.close));
+  const betaPassed = input.strictFundamentals ? beta !== undefined && beta >= defaultSettings.minBeta : true;
+  const marketCapPassed = input.strictFundamentals ? marketCap !== undefined && marketCap >= defaultSettings.minMarketCap : true;
   const commonRules: ScoreRule[] = [
     rule("optionable", "Optionable stock", input.optionable, 10, input.optionable ? "Options chain is available." : "No usable options chain was found."),
     rule("price", "Price above $20", price > defaultSettings.minPrice, 8, `Last close is $${price.toFixed(2)}.`),
-    rule("beta", "Beta prequalified", true, 8, input.fundamentals?.beta ? `Imported beta is ${input.fundamentals.beta.toFixed(2)}.` : "Assumed prequalified by imported watchlist."),
-    rule("market-cap", "Market cap prequalified", true, 8, input.fundamentals?.marketCap ? `Imported market cap is ${formatMoney(input.fundamentals.marketCap)}.` : "Assumed prequalified by imported watchlist."),
+    rule("beta", "Beta >= 0.75", betaPassed, 8, beta !== undefined ? `Beta is ${beta.toFixed(2)}.` : input.strictFundamentals ? "Beta was not available from Schwab/fundamentals." : "Assumed prequalified by imported watchlist."),
+    rule("market-cap", "Market cap >= $2B", marketCapPassed, 8, marketCap !== undefined ? `Market cap is ${formatMoney(marketCap)}.` : input.strictFundamentals ? "Market cap was not available from Schwab/fundamentals." : "Assumed prequalified by imported watchlist."),
     rule("dollar-volume", "20-day dollar volume >= $600M", avgDollarVolume20d >= defaultSettings.minAvgDollarVolume, 10, `20-day average dollar volume is ${formatMoney(avgDollarVolume20d)}.`)
   ];
   const candidates = [
@@ -43,8 +48,8 @@ export function gradeSetup(input: {
     setupDirection: selected.direction,
     dataSource: "demo",
     price,
-    beta: input.fundamentals?.beta ?? null,
-    marketCap: input.fundamentals?.marketCap ?? null,
+    beta: beta ?? null,
+    marketCap: marketCap ?? null,
     avgDollarVolume20d: round(avgDollarVolume20d, 0),
     optionable: input.optionable,
     passesUniverse,

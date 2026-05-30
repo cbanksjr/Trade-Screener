@@ -11,6 +11,8 @@ export type SchwabQuote = {
   averageVolume?: number;
   rootSymbols?: string[];
   avgDollarVolume?: number;
+  beta?: number;
+  marketCap?: number;
 };
 
 type SchwabTokens = {
@@ -192,7 +194,9 @@ export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
       volume: firstNumber(quote.totalVolume, quote.volume),
       averageVolume,
       rootSymbols: stringValue(reference.optionRoot)?.split(",").map((item) => item.trim()).filter(Boolean),
-      avgDollarVolume: averageVolume ? averageVolume * price : undefined
+      avgDollarVolume: averageVolume ? averageVolume * price : undefined,
+      beta: firstNumber(fundamental.beta, fundamental.betaCoefficient),
+      marketCap: firstNumber(fundamental.marketCap, fundamental.marketCapitalization, fundamental.marketCapFloat)
     }];
   });
 }

@@ -8,7 +8,7 @@ describe("Schwab response normalizers", () => {
         symbol: "AAPL",
         quote: { lastPrice: 210, totalVolume: 123456 },
         reference: { description: "APPLE INC", optionRoot: "AAPL" },
-        fundamental: { avg10DaysVolume: 5000000 }
+        fundamental: { avg10DaysVolume: 5000000, beta: 1.12, marketCap: 3200000000000 }
       }
     });
 
@@ -19,7 +19,9 @@ describe("Schwab response normalizers", () => {
       volume: 123456,
       averageVolume: 5000000,
       rootSymbols: ["AAPL"],
-      avgDollarVolume: 1050000000
+      avgDollarVolume: 1050000000,
+      beta: 1.12,
+      marketCap: 3200000000000
     }]);
   });
 

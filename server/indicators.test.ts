@@ -59,6 +59,26 @@ describe("transparent grading", () => {
     expect(result.suggestedOptions.every((contract) => contract.optionType === "put")).toBe(true);
   });
 
+  it("requires beta and market cap when strict fundamentals are enabled", () => {
+    const candles = demoCandles("MISS");
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "MISS",
+      candles,
+      fundamentals: {
+        symbol: "MISS",
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("MISS", price),
+      strictFundamentals: true
+    });
+
+    expect(result.passesUniverse).toBe(false);
+    expect(result.rules.find((rule) => rule.id === "beta")?.passed).toBe(false);
+    expect(result.rules.find((rule) => rule.id === "market-cap")?.passed).toBe(false);
+  });
+
   it("flags stocks that fail Schwab-driven universe filters", () => {
     const candles = demoCandles("LOWBETA");
     const price = candles[candles.length - 1].close;

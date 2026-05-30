@@ -17,6 +17,8 @@ export type Fundamentals = {
   avgDollarVolume20d?: number;
 };
 
+export type ScanMode = "auto" | "imported" | "watchlist";
+
 export type OptionContract = {
   symbol: string;
   description: string;
@@ -83,7 +85,7 @@ export type ScanResult = {
 };
 
 export type Settings = {
-  scanMode: "universe" | "watchlist";
+  scanMode: ScanMode;
   symbols: string[];
   minPrice: number;
   minBeta: number;
@@ -93,6 +95,9 @@ export type Settings = {
   brokerCallbackUrl: string;
   hasBrokerCredentials: boolean;
   useDemoDataWhenMissingApi: boolean;
+  defaultUniverseName: string;
+  defaultUniverseCount: number;
+  defaultUniverseLastCheckedAt?: string;
   importedUniverseCount: number;
 };
 
