@@ -11,12 +11,15 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
+The Dashboard grades candidates with Daily squeeze as a weighted checklist item instead of a hard filter. A stock must have an active Daily squeeze to earn `A+`, while Weekly, 4h, and 1h squeeze states are shown as context only and do not affect the grade.
+
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
 ```bash
 SCHWAB_APP_KEY=your_app_key_here
 SCHWAB_APP_SECRET=your_app_secret_here
 SCHWAB_CALLBACK_URL=https://127.0.0.1:4173/api/schwab/callback
+ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key_here
 API_HTTPS=true
 ```
 
@@ -27,6 +30,8 @@ The scan uses Schwab for:
 - `/marketdata/v1/quotes` for quote and fundamental market data
 - `/marketdata/v1/pricehistory` for daily OHLCV history plus 30-minute intraday candles for 1h/4h confluence
 - `/marketdata/v1/chains` for 30-180 DTE call and put chains with Greeks
+
+The **See More** fundamentals page uses Schwab first, then Alpha Vantage as a supplemental source when Schwab leaves overview fields blank. Alpha Vantage fills fields such as market cap, beta, EPS, P/E ratio, dividend amount, and dividend yield when available. The page shows the source under each value and explains why important missing fields are unavailable.
 
 ## Automatic Universe
 
@@ -46,7 +51,8 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Long setup: 21 EMA above 50 EMA, price above the 21 EMA and within +1.25 ATR
 - Short setup: 21 EMA below 50 EMA, price below the 21 EMA and within -1.25 ATR
 - 1h and 4h confluence: bullish for longs, bearish for shorts, using 21/50 EMA alignment and price vs 50 EMA
-- Daily and weekly active Squeeze Pro-style compression only (`low`, `mid`, or `high`); `released` and `none` are excluded
+- Daily active Squeeze Pro-style compression is a weighted checklist rule (`low`, `mid`, or `high`); `released` and `none` fail that rule, and stocks without Daily squeeze cannot grade `A+`
+- Weekly, 4h, and 1h squeeze states are displayed as context only
 - Momentum histogram above zero for longs or below zero for shorts
 - Liquid call candidates for longs or liquid put candidates for shorts
 

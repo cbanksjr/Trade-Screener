@@ -43,6 +43,7 @@ function buildContext(timeframe: "1h" | "4h", candles: Candle[]): LowerTimeframe
       price: null,
       ema21: null,
       ema50: null,
+      squeezeState: "none",
       detail: timeframe + " needs at least 50 candles; only " + candles.length + " were available."
     };
   }
@@ -56,6 +57,7 @@ function buildContext(timeframe: "1h" | "4h", candles: Candle[]): LowerTimeframe
     price,
     ema21: indicators.ema21,
     ema50: indicators.ema50,
+    squeezeState: indicators.squeezeState,
     detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", 21 EMA " + indicators.ema21 + ", 50 EMA " + indicators.ema50 + "."
   };
 }

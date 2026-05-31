@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
-import { getCachedResults, getScanMetadata, replaceScanResults, setScanMetadata } from "./sqlite";
+import { getCachedResults, getScanMetadata, initDb, replaceScanResults, setScanMetadata } from "./sqlite";
 import { __resetScanStateForTest, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
 
 describe("scan symbol resolution", () => {
@@ -65,6 +65,14 @@ describe("background scan refresh", () => {
     expect(response.isRefreshing).toBe(false);
   }));
 
+  it("does not hard-filter cached results by daily or weekly squeeze state", async () => withDbRestore(async () => {
+    replaceScanResults([
+      qualifyingResult("NOSQZ", indicator("none"), indicator("none"))
+    ]);
+
+    expect(readDisplayResults().map((result) => result.symbol)).toEqual(["NOSQZ"]);
+  }));
+
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
     replaceScanResults([qualifyingResult("STALE")]);
     expect(readDisplayResults().map((result) => result.symbol)).toEqual(["STALE"]);
@@ -89,6 +97,7 @@ describe("background scan refresh", () => {
 });
 
 async function withDbRestore(run: () => Promise<void>) {
+  initDb();
   const cached = getCachedResults() as Array<{ symbol: string }>;
   const metadata = getScanMetadata();
   try {
@@ -115,7 +124,7 @@ function fakeResponse(results: ScanResult[], warnings: string[] = []): ScanRespo
   };
 }
 
-function qualifyingResult(symbol: string): ScanResult {
+function qualifyingResult(symbol: string, daily = indicator("low"), weekly = indicator("mid")): ScanResult {
   return {
     symbol,
     dataSource: "demo",
@@ -129,8 +138,8 @@ function qualifyingResult(symbol: string): ScanResult {
     score: 95,
     maxScore: 100,
     setupDirection: "long",
-    indicators: indicator("low"),
-    weeklyIndicators: indicator("mid"),
+    indicators: daily,
+    weeklyIndicators: weekly,
     lowerTimeframes: undefined,
     rules: [],
     suggestedOptions: [],
@@ -140,7 +149,7 @@ function qualifyingResult(symbol: string): ScanResult {
   };
 }
 
-function indicator(squeezeState: "low" | "mid") {
+function indicator(squeezeState: "none" | "low" | "mid" | "released") {
   return {
     ema21: 100,
     ema50: 95,

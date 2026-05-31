@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
+import { mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
 
 describe("Schwab response normalizers", () => {
   it("normalizes batch quote payloads and calculates average dollar volume", () => {
@@ -21,8 +21,200 @@ describe("Schwab response normalizers", () => {
       rootSymbols: ["AAPL"],
       avgDollarVolume: 1050000000,
       beta: 1.12,
-      marketCap: 3200000000000
+      marketCap: 3200000000000,
+      dividendAmount: undefined,
+      dividendExDate: undefined,
+      dividendFrequency: undefined,
+      dividendPayAmount: undefined,
+      dividendPayDate: undefined,
+      dividendYield: undefined,
+      eps: undefined,
+      explicitZeroDividend: false,
+      lastEarningsDate: undefined,
+      peRatio: undefined
     }]);
+  });
+
+  it("normalizes compact fundamental analysis fields", () => {
+    const [quote] = normalizeSchwabQuotes({
+      MSFT: {
+        symbol: "MSFT",
+        quote: { lastPrice: 410, totalVolume: 20000000 },
+        reference: { description: "MICROSOFT CORP" },
+        fundamental: {
+          avg10DaysVolume: 18000000,
+          beta: 0.91,
+          marketCap: 3050000000000,
+          eps: 12.34,
+          peRatio: 33.2,
+          dividendAmount: 3.32,
+          dividendYield: 0.81,
+          dividendFrequency: "Quarterly",
+          dividendPayDate: "2026-06-11",
+          dividendExDate: "2026-05-15",
+          lastEarningsDate: "2026-04-24"
+        }
+      }
+    });
+
+    expect(normalizeFundamentalAnalysis(quote)).toMatchObject({
+      symbol: "MSFT",
+      companyName: "MICROSOFT CORP",
+      price: 410,
+      volume: 20000000,
+      averageVolume: 18000000,
+      avgDollarVolume: 7380000000,
+      marketCap: 3050000000000,
+      beta: 0.91,
+      eps: 12.34,
+      peRatio: 33.2,
+      dividendAmount: 3.32,
+      dividendYield: 0.81,
+      dividendFrequency: "Quarterly",
+      dividendPayDate: "2026-06-11",
+      dividendExDate: "2026-05-15",
+      lastEarningsDate: "2026-04-24",
+      sourceStatus: "live"
+    });
+    expect(normalizeFundamentalAnalysis(quote).dividendStatus).toBe("pays");
+  });
+
+  it("normalizes missing fundamental fields as unavailable values", () => {
+    const analysis = normalizeFundamentalAnalysis({ symbol: "MISS", price: 25 });
+
+    expect(analysis).toMatchObject({
+      symbol: "MISS",
+      price: 25,
+      volume: null,
+      marketCap: null,
+      beta: null,
+      eps: null,
+      peRatio: null,
+      dividendAmount: null,
+      sourceStatus: "live",
+      dividendStatus: "unknown",
+      warnings: []
+    });
+    expect(analysis.sources.price).toBe("Schwab");
+    expect(analysis.missingReasons.marketCap).toContain("Not provided");
+  });
+
+  it("merges Schwab, Alpha Vantage, and cached scan fundamentals by priority", () => {
+    const analysis = mergeFundamentalAnalysis({
+      symbol: "GAP",
+      schwab: { symbol: "GAP", price: 50, beta: 1.2 },
+      alphaVantage: {
+        symbol: "GAP",
+        companyName: "Gap Filler Inc",
+        beta: 2.4,
+        marketCap: 5000000000,
+        eps: 4.25,
+        peRatio: 18.3
+      },
+      nextEarningsDate: "2099-01-25",
+      scanResult: {
+        symbol: "GAP",
+        setupDirection: "long",
+        dataSource: "schwab",
+        price: 51,
+        beta: null,
+        marketCap: null,
+        avgDollarVolume20d: 750000000,
+        optionable: true,
+        passesUniverse: true,
+        grade: "A",
+        score: 95,
+        maxScore: 120,
+        indicators: {
+          ema21: 1,
+          ema50: 1,
+          atr14: 1,
+          bbUpper: 1,
+          bbLower: 1,
+          kcLowUpper: 1,
+          kcLowLower: 1,
+          kcMidUpper: 1,
+          kcMidLower: 1,
+          kcHighUpper: 1,
+          kcHighLower: 1,
+          momentum: 1,
+          squeezeState: "low"
+        },
+        rules: [],
+        suggestedOptions: [],
+        candles: [],
+        lastUpdated: "2026-05-31T00:00:00.000Z",
+        warnings: []
+      },
+      providerWarnings: []
+    });
+
+    expect(analysis.beta).toBe(1.2);
+    expect(analysis.sources.beta).toBe("Schwab");
+    expect(analysis.marketCap).toBe(5000000000);
+    expect(analysis.sources.marketCap).toBe("Alpha Vantage");
+    expect(analysis.avgDollarVolume).toBe(750000000);
+    expect(analysis.sources.avgDollarVolume).toBe("Cached scan");
+    expect(analysis.nextEarningsDate).toBe("2099-01-25");
+    expect(analysis.sources.nextEarningsDate).toBe("Alpha Vantage");
+    expect(analysis.scanContext?.grade).toBe("A");
+  });
+
+  it("marks explicit zero dividend values as does not pay", () => {
+    const [quote] = normalizeSchwabQuotes({
+      TSLA: {
+        symbol: "TSLA",
+        quote: { lastPrice: 250 },
+        reference: { description: "TESLA INC" },
+        fundamental: {
+          dividendAmount: 0,
+          dividendYield: 0
+        }
+      }
+    });
+
+    const analysis = mergeFundamentalAnalysis({
+      symbol: "TSLA",
+      schwab: quote,
+      alphaVantage: {
+        symbol: "TSLA",
+        dividendAmount: 0,
+        dividendYield: 0,
+        explicitZeroDividend: true
+      },
+      providerWarnings: []
+    });
+
+    expect(analysis.dividendAmount).toBe(0);
+    expect(analysis.dividendYield).toBe(0);
+    expect(analysis.dividendStatus).toBe("does_not_pay");
+  });
+
+  it("marks positive dividend values as pays", () => {
+    const analysis = mergeFundamentalAnalysis({
+      symbol: "DIV",
+      alphaVantage: {
+        symbol: "DIV",
+        dividendAmount: 1.2,
+        dividendYield: 2.4
+      },
+      providerWarnings: []
+    });
+
+    expect(analysis.dividendStatus).toBe("pays");
+  });
+
+  it("marks missing dividend values as unknown", () => {
+    const analysis = mergeFundamentalAnalysis({
+      symbol: "UNK",
+      alphaVantage: {
+        symbol: "UNK",
+        marketCap: 10000000000
+      },
+      providerWarnings: []
+    });
+
+    expect(analysis.dividendStatus).toBe("unknown");
   });
 
   it("normalizes price history candles", () => {

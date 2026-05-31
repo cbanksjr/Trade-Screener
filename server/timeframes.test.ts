@@ -12,7 +12,9 @@ describe("lower-timeframe confluence", () => {
     expect(oneHour.length).toBe(120);
     expect(fourHour.length).toBe(30);
     expect(context.oneHour.bias).toBe("bullish");
+    expect(["none", "low", "mid", "high", "released"]).toContain(context.oneHour.squeezeState);
     expect(context.fourHour.bias).toBe("unavailable");
+    expect(context.fourHour.squeezeState).toBe("none");
   });
 
   it("aggregates daily candles into weekly candles", () => {
@@ -33,6 +35,13 @@ describe("lower-timeframe confluence", () => {
 
     expect(context.oneHour.bias).toBe("bearish");
     expect(context.fourHour.bias).toBe("bearish");
+  });
+
+  it("aggregates intraday candles for chart timeframes", () => {
+    const candles = intradayCandles("up", 2);
+
+    expect(aggregateSequentialCandles(candles, 2)).toHaveLength(8);
+    expect(aggregateSequentialCandles(candles, 8)).toHaveLength(2);
   });
 });
 

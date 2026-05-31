@@ -7,7 +7,7 @@ const dbPath = resolve("data/screener.sqlite");
 
 function runSql(sql: string): string {
   mkdirSync(dirname(dbPath), { recursive: true });
-  return execFileSync("sqlite3", ["-json", dbPath, sql], { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 });
+  return execFileSync("sqlite3", ["-json", "-cmd", ".timeout 5000", dbPath, sql], { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 });
 }
 
 export function initDb() {

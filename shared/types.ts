@@ -2,6 +2,7 @@ export type Grade = "A+" | "A" | "B" | "C" | "D" | "F";
 export type TradeDirection = "long" | "short";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
+export type ChartTimeframe = "1h" | "4h" | "1d" | "1w";
 
 export type Candle = {
   date: string;
@@ -10,6 +11,13 @@ export type Candle = {
   low: number;
   close: number;
   volume: number;
+};
+
+export type ChartDataResponse = {
+  symbol: string;
+  timeframe: ChartTimeframe;
+  candles: Candle[];
+  warnings: string[];
 };
 
 export type Fundamentals = {
@@ -45,6 +53,7 @@ export type LowerTimeframeContext = {
   price: number | null;
   ema21: number | null;
   ema50: number | null;
+  squeezeState?: SqueezeState;
   detail: string;
 };
 
@@ -126,6 +135,45 @@ export type BrokerStatus = {
   needsLogin?: boolean;
   loginUrl?: string;
   message: string;
+};
+
+export type FundamentalAnalysis = {
+  symbol: string;
+  companyName?: string;
+  price: number | null;
+  volume: number | null;
+  averageVolume: number | null;
+  avgDollarVolume: number | null;
+  marketCap: number | null;
+  beta: number | null;
+  eps: number | null;
+  peRatio: number | null;
+  dividendAmount: number | null;
+  dividendYield: number | null;
+  dividendFrequency?: string;
+  dividendPayAmount: number | null;
+  dividendPayDate?: string;
+  dividendExDate?: string;
+  lastEarningsDate?: string;
+  nextEarningsDate?: string;
+  sourceStatus: "live" | "unavailable";
+  dividendStatus: "pays" | "does_not_pay" | "unknown";
+  warnings: string[];
+  sources: Record<string, string>;
+  missingReasons: Record<string, string>;
+  providerWarnings: string[];
+  scanContext?: {
+    grade: Grade;
+    direction: TradeDirection;
+    score: number;
+    maxScore: number;
+    dailySqueeze: SqueezeState;
+    weeklySqueeze?: SqueezeState;
+    oneHourSqueeze?: SqueezeState;
+    fourHourSqueeze?: SqueezeState;
+    optionable: boolean;
+    suggestedOptionCount: number;
+  };
 };
 
 export type ScanMetadata = {

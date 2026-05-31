@@ -2,7 +2,7 @@ import type { LowerTimeframeConfluence, ScanMetadata, ScanMode, ScanResponse, Sc
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { latestIndicators } from "./indicators";
-import { defaultSettings, gradeSetup, isSqueezeActive } from "./scoring";
+import { defaultSettings, gradeSetup } from "./scoring";
 import { fetchOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks, buildLowerTimeframeConfluence } from "./timeframes";
@@ -70,7 +70,7 @@ export function readCachedScanResponse(): ScanResponse {
     mode: metadata.lastScanMode ?? "demo",
     results: readDisplayResults(),
     settings: readSettings(),
-    warnings: metadata.lastScanWarnings ?? [],
+    warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
     ...metadata,
     scanStatus: activeScan ? "running" : metadata.scanStatus,
     isRefreshing: Boolean(activeScan)
@@ -84,7 +84,7 @@ export function readScanMetadata(): ScanMetadata {
     lastScanStartedAt: stored.lastScanStartedAt,
     lastScanFinishedAt: stored.lastScanFinishedAt,
     lastScanMode: stored.lastScanMode,
-    lastScanWarnings: stored.lastScanWarnings ?? [],
+    lastScanWarnings: (stored.lastScanWarnings ?? []).filter(shouldShowWarning),
     nextRefreshAt: stored.nextRefreshAt,
     isRefreshing: Boolean(activeScan)
   };
@@ -123,14 +123,15 @@ export async function runFullScan(): Promise<ScanResponse> {
 
   for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
-    if (outcome.result) results.push(outcome.result);
+    if (outcome.result && shouldIncludeResult(outcome.result)) results.push(outcome.result);
     if (outcome.usedLive) usedLive = true;
     if (outcome.usedDemo) usedDemo = true;
   }
 
+  const sortByScore = (a: ScanResult, b: ScanResult) => b.score / b.maxScore - a.score / a.maxScore;
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
-    results: results.sort((a, b) => b.score / b.maxScore - a.score / a.maxScore),
+    results: results.sort(sortByScore),
     settings,
     warnings: [...scanWarnings].filter(shouldShowWarning)
   });
@@ -170,7 +171,7 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
       scanStatus: "failed",
       lastScanStartedAt: startedAt,
       lastScanFinishedAt: finishedAt,
-      lastScanWarnings: [readError(error, "Scan failed.")],
+      lastScanWarnings: [readError(error, "Scan failed.")].filter(shouldShowWarning),
       nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
       isRefreshing: false
     });
@@ -275,9 +276,12 @@ async function scanSymbol(input: {
       weeklySqueezeWarning: weekly.warning
     });
     result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
-    result.warnings.push(...warnings.filter((warning) => warning.startsWith(symbol + ": ")).map((warning) => warning.slice(symbol.length + 2)));
+    result.warnings.push(...warnings
+      .filter((warning) => warning.startsWith(symbol + ": "))
+      .map((warning) => warning.slice(symbol.length + 2))
+      .filter(shouldShowWarning));
     await throttleIfLive();
-    return { result: shouldIncludeResult(result) ? result : undefined, warnings, usedLive, usedDemo };
+    return { result, warnings, usedLive, usedDemo };
   } catch (error) {
     if (canUseLiveSchwab) {
       warnings.push(symbol + ": " + (error instanceof Error ? error.message : "Scan failed."));
@@ -299,16 +303,14 @@ async function scanSymbol(input: {
     fallback.dataSource = "demo";
     fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
     warnings.push(...fallback.warnings.map((warning) => symbol + ": " + warning));
-    return { result: shouldIncludeResult(fallback) ? fallback : undefined, warnings, usedLive, usedDemo: true };
+    return { result: fallback, warnings, usedLive, usedDemo: true };
   }
 }
 
 function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.grade !== "D"
-    && result.grade !== "F"
-    && isSqueezeActive(result.indicators?.squeezeState)
-    && isSqueezeActive(result.weeklyIndicators?.squeezeState);
+    && result.grade !== "F";
 }
 
 function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>>): { indicators?: ReturnType<typeof latestIndicators>; warning?: string } {
@@ -392,10 +394,18 @@ async function throttleIfLive() {
 }
 
 function shouldShowWarning(warning: string): boolean {
+  const internalMessages = [
+    "database is locked",
+    "screener.sqlite",
+    "Command failed: sqlite3",
+    "SELECT value FROM settings",
+    "schwabTokens"
+  ];
   const routineSkips = [
     "Schwab did not return a quote; skipped.",
     "skipped because Schwab quote price",
     "skipped because Schwab average dollar volume"
   ];
+  if (internalMessages.some((message) => warning.includes(message))) return false;
   return !routineSkips.some((message) => warning.includes(message));
 }

@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
+import { fetchAlphaVantageEarningsCalendar, fetchAlphaVantageOverview, type AlphaVantageOverview } from "./alphaVantage";
 import { getSetting, setSetting } from "./sqlite";
-import type { BrokerStatus, Candle, OptionContract } from "../shared/types";
+import type { BrokerStatus, Candle, FundamentalAnalysis, OptionContract, ScanResult } from "../shared/types";
 
 export type SchwabQuote = {
   symbol: string;
@@ -13,6 +14,16 @@ export type SchwabQuote = {
   avgDollarVolume?: number;
   beta?: number;
   marketCap?: number;
+  eps?: number;
+  peRatio?: number;
+  dividendAmount?: number;
+  dividendYield?: number;
+  dividendFrequency?: string;
+  dividendPayAmount?: number;
+  explicitZeroDividend?: boolean;
+  dividendPayDate?: string;
+  dividendExDate?: string;
+  lastEarningsDate?: string;
 };
 
 type SchwabTokens = {
@@ -40,6 +51,7 @@ type SchwabOptionChainResponse = {
 };
 
 const TOKEN_SETTING = "schwabTokens";
+let tokenCache: SchwabTokens | undefined | null = null;
 
 export function hasSchwabCredentials(): boolean {
   return Boolean(config.schwabAppKey && config.schwabAppSecret && config.schwabCallbackUrl);
@@ -114,6 +126,34 @@ export async function fetchQuote(symbol: string): Promise<SchwabQuote | undefine
   return (await fetchQuotes([symbol])).get(symbol.toUpperCase());
 }
 
+export async function fetchFundamentalAnalysis(symbol: string, scanResult?: ScanResult): Promise<FundamentalAnalysis> {
+  const upperSymbol = symbol.trim().toUpperCase();
+  let quote: SchwabQuote | undefined;
+  const providerWarnings: string[] = [];
+
+  try {
+    quote = await fetchQuote(upperSymbol);
+  } catch (error) {
+    providerWarnings.push(error instanceof Error ? error.message : "Schwab fundamentals request failed.");
+  }
+
+  if (!quote) providerWarnings.push("Schwab did not return fundamentals for " + upperSymbol + ".");
+
+  const alphaVantage = await fetchAlphaVantageOverview(upperSymbol);
+  if (alphaVantage.warning) providerWarnings.push(alphaVantage.warning);
+  const earningsCalendar = await fetchAlphaVantageEarningsCalendar(upperSymbol);
+  if (earningsCalendar.warning) providerWarnings.push(earningsCalendar.warning);
+
+  return mergeFundamentalAnalysis({
+    symbol: upperSymbol,
+    schwab: quote,
+    alphaVantage: alphaVantage.overview,
+    nextEarningsDate: earningsCalendar.nextEarningsDate,
+    scanResult,
+    providerWarnings
+  });
+}
+
 export async function fetchQuotes(symbols: string[]): Promise<Map<string, SchwabQuote>> {
   const output = new Map<string, SchwabQuote>();
   const uniqueSymbols = [...new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean))];
@@ -130,10 +170,21 @@ export async function fetchQuotes(symbols: string[]): Promise<Map<string, Schwab
 }
 
 export async function fetchHistory(symbol: string): Promise<Candle[]> {
+  return fetchDailyHistory(symbol, 370);
+}
+
+export async function fetchChartHistory(symbol: string): Promise<Candle[]> {
+  return fetchDailyHistory(symbol, 5 * 366);
+}
+
+async function fetchDailyHistory(symbol: string, lookbackDays: number): Promise<Candle[]> {
+  const endDate = Date.now();
+  const startDate = endDate - lookbackDays * 24 * 60 * 60 * 1000;
   const data = await schwabGet<SchwabPriceHistoryResponse>("/pricehistory", {
     symbol,
     periodType: "year",
-    period: "1",
+    startDate,
+    endDate,
     frequencyType: "daily",
     frequency: "1",
     needExtendedHoursData: "false"
@@ -211,9 +262,150 @@ export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
       rootSymbols: stringValue(reference.optionRoot)?.split(",").map((item) => item.trim()).filter(Boolean),
       avgDollarVolume: averageVolume ? averageVolume * price : undefined,
       beta: firstNumber(fundamental.beta, fundamental.betaCoefficient),
-      marketCap: firstNumber(fundamental.marketCap, fundamental.marketCapitalization, fundamental.marketCapFloat)
+      marketCap: firstNumber(fundamental.marketCap, fundamental.marketCapitalization, fundamental.marketCapFloat),
+      eps: firstNumber(fundamental.eps, fundamental.epsTTM, fundamental.epsTrailingTwelveMonths),
+      peRatio: firstNumber(fundamental.peRatio, fundamental.peRatioTTM, fundamental.pERatio),
+      dividendAmount: firstNonNegativeNumber(fundamental.dividendAmount, fundamental.divAmount, fundamental.annualDividend),
+      dividendYield: firstNonNegativeNumber(fundamental.dividendYield, fundamental.divYield),
+      dividendFrequency: stringValue(fundamental.dividendFrequency, fundamental.divFreq),
+      dividendPayAmount: firstNonNegativeNumber(fundamental.dividendPayAmount, fundamental.divPayAmount),
+      explicitZeroDividend: hasExplicitZero(fundamental.dividendAmount, fundamental.divAmount, fundamental.annualDividend)
+        && hasExplicitZero(fundamental.dividendYield, fundamental.divYield),
+      dividendPayDate: dateStringValue(fundamental.dividendPayDate, fundamental.divPayDate),
+      dividendExDate: dateStringValue(fundamental.dividendExDate, fundamental.divExDate),
+      lastEarningsDate: dateStringValue(fundamental.lastEarningsDate, fundamental.earningsDate)
     }];
   });
+}
+
+export function normalizeFundamentalAnalysis(quote: SchwabQuote, scanResult?: ScanResult): FundamentalAnalysis {
+  return mergeFundamentalAnalysis({ symbol: quote.symbol, schwab: quote, scanResult, providerWarnings: [] });
+}
+
+export function mergeFundamentalAnalysis(input: {
+  symbol: string;
+  schwab?: SchwabQuote;
+  alphaVantage?: AlphaVantageOverview;
+  nextEarningsDate?: string;
+  scanResult?: ScanResult;
+  providerWarnings: string[];
+}): FundamentalAnalysis {
+  const sources: Record<string, string> = {};
+  const missingReasons: Record<string, string> = {};
+  const providerWarnings = [...new Set(input.providerWarnings.filter(Boolean))];
+  const sourceStatus = input.schwab || input.alphaVantage ? "live" : "unavailable";
+  const symbol = input.schwab?.symbol ?? input.alphaVantage?.symbol ?? input.symbol;
+  const companyName = pickField("companyName", [
+    ["Schwab", input.schwab?.companyName],
+    ["Alpha Vantage", input.alphaVantage?.companyName],
+    ["Cached scan", input.scanResult?.companyName]
+  ], sources);
+
+  const analysis: FundamentalAnalysis = {
+    symbol,
+    companyName,
+    price: pickField("price", [["Schwab", input.schwab?.price], ["Cached scan", input.scanResult?.price]], sources) ?? null,
+    volume: pickField("volume", [["Schwab", input.schwab?.volume]], sources) ?? null,
+    averageVolume: pickField("averageVolume", [["Schwab", input.schwab?.averageVolume]], sources) ?? null,
+    avgDollarVolume: pickField("avgDollarVolume", [["Schwab", input.schwab?.avgDollarVolume], ["Cached scan", input.scanResult?.avgDollarVolume20d]], sources) ?? null,
+    marketCap: pickField("marketCap", [["Schwab", input.schwab?.marketCap], ["Alpha Vantage", input.alphaVantage?.marketCap], ["Cached scan", input.scanResult?.marketCap ?? undefined]], sources) ?? null,
+    beta: pickField("beta", [["Schwab", input.schwab?.beta], ["Alpha Vantage", input.alphaVantage?.beta], ["Cached scan", input.scanResult?.beta ?? undefined]], sources) ?? null,
+    eps: pickField("eps", [["Schwab", input.schwab?.eps], ["Alpha Vantage", input.alphaVantage?.eps]], sources) ?? null,
+    peRatio: pickField("peRatio", [["Schwab", input.schwab?.peRatio], ["Alpha Vantage", input.alphaVantage?.peRatio]], sources) ?? null,
+    dividendAmount: pickField("dividendAmount", [["Schwab", input.schwab?.dividendAmount], ["Alpha Vantage", input.alphaVantage?.dividendAmount]], sources) ?? null,
+    dividendYield: pickField("dividendYield", [["Schwab", input.schwab?.dividendYield], ["Alpha Vantage", input.alphaVantage?.dividendYield]], sources) ?? null,
+    dividendFrequency: pickField("dividendFrequency", [["Schwab", input.schwab?.dividendFrequency]], sources),
+    dividendPayAmount: pickField("dividendPayAmount", [["Schwab", input.schwab?.dividendPayAmount]], sources) ?? null,
+    dividendPayDate: pickField("dividendPayDate", [["Schwab", input.schwab?.dividendPayDate], ["Alpha Vantage", input.alphaVantage?.dividendPayDate]], sources),
+    dividendExDate: pickField("dividendExDate", [["Schwab", input.schwab?.dividendExDate], ["Alpha Vantage", input.alphaVantage?.dividendExDate]], sources),
+    lastEarningsDate: pickField("lastEarningsDate", [["Schwab", input.schwab?.lastEarningsDate]], sources),
+    nextEarningsDate: pickField("nextEarningsDate", [["Alpha Vantage", input.nextEarningsDate]], sources),
+    sourceStatus,
+    dividendStatus: dividendStatus(input),
+    warnings: providerWarnings,
+    sources,
+    missingReasons,
+    providerWarnings,
+    scanContext: input.scanResult ? scanContext(input.scanResult) : undefined
+  };
+
+  addMissingReasons(analysis, input);
+  return analysis;
+}
+
+function pickField<T>(field: string, candidates: Array<[string, T | null | undefined]>, sources: Record<string, string>): T | undefined {
+  for (const [source, value] of candidates) {
+    if (value !== null && value !== undefined && value !== "") {
+      sources[field] = source;
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function addMissingReasons(analysis: FundamentalAnalysis, input: {
+  schwab?: SchwabQuote;
+  alphaVantage?: AlphaVantageOverview;
+  scanResult?: ScanResult;
+  providerWarnings: string[];
+}) {
+  const schwabAvailable = Boolean(input.schwab);
+  const alphaAvailable = Boolean(input.alphaVantage);
+  const reason = missingReason(schwabAvailable, alphaAvailable, input.providerWarnings);
+
+  for (const field of [
+    "price",
+    "volume",
+    "averageVolume",
+    "avgDollarVolume",
+    "marketCap",
+    "beta",
+    "eps",
+    "peRatio",
+    "dividendAmount",
+    "dividendYield",
+    "dividendFrequency",
+    "dividendPayAmount",
+    "dividendPayDate",
+    "dividendExDate",
+    "lastEarningsDate",
+    "nextEarningsDate"
+  ]) {
+    if (analysis.sources[field]) continue;
+    analysis.missingReasons[field] = dividendField(field)
+      ? "No dividend or earnings value was reported by the connected fundamentals sources."
+      : reason;
+  }
+}
+
+function dividendStatus(input: {
+  schwab?: SchwabQuote;
+  alphaVantage?: AlphaVantageOverview;
+}): FundamentalAnalysis["dividendStatus"] {
+  const amount = input.schwab?.dividendAmount ?? input.alphaVantage?.dividendAmount;
+  const yieldValue = input.schwab?.dividendYield ?? input.alphaVantage?.dividendYield;
+  const hasDividendDate = Boolean(input.schwab?.dividendPayDate || input.alphaVantage?.dividendPayDate || input.schwab?.dividendExDate || input.alphaVantage?.dividendExDate);
+
+  if ((amount !== undefined && amount > 0) || (yieldValue !== undefined && yieldValue > 0) || hasDividendDate) return "pays";
+  if (input.schwab?.explicitZeroDividend || input.alphaVantage?.explicitZeroDividend) return "does_not_pay";
+  return "unknown";
+}
+
+function missingReason(schwabAvailable: boolean, alphaAvailable: boolean, warnings: string[]): string {
+  if (!schwabAvailable && !alphaAvailable) {
+    return warnings.length ? "Neither Schwab nor Alpha Vantage returned this value." : "No fundamentals source returned this value.";
+  }
+  if (!alphaAvailable && warnings.some((warning) => warning.includes("Alpha Vantage API key is missing"))) {
+    return "Schwab did not provide this value, and Alpha Vantage is not configured.";
+  }
+  if (!alphaAvailable && warnings.some((warning) => warning.includes("Alpha Vantage"))) {
+    return "Schwab did not provide this value, and Alpha Vantage could not fill it.";
+  }
+  return "Not provided by Schwab or Alpha Vantage for this symbol.";
+}
+
+function dividendField(field: string): boolean {
+  return field.startsWith("dividend") || field === "lastEarningsDate" || field === "nextEarningsDate";
 }
 
 export function normalizeSchwabHistory(data: SchwabPriceHistoryResponse, options: { includeTime?: boolean } = {}): Candle[] {
@@ -332,7 +524,9 @@ async function getAccessToken(): Promise<string> {
 }
 
 function readTokens(): SchwabTokens | undefined {
-  return getSetting<SchwabTokens | undefined>(TOKEN_SETTING, undefined);
+  if (tokenCache !== null) return tokenCache;
+  tokenCache = getSetting<SchwabTokens | undefined>(TOKEN_SETTING, undefined);
+  return tokenCache;
 }
 
 function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens): SchwabTokens {
@@ -343,6 +537,7 @@ function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens): Sch
     accessTokenExpiresAt: new Date(Date.now() + expiresIn * 1000).toISOString(),
     refreshTokenIssuedAt: response.refresh_token ? new Date().toISOString() : previous?.refreshTokenIssuedAt
   };
+  tokenCache = next;
   setSetting(TOKEN_SETTING, next);
   return next;
 }
@@ -383,13 +578,41 @@ function firstNumber(...values: unknown[]): number | undefined {
   return undefined;
 }
 
+function firstNonNegativeNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+  }
+  return undefined;
+}
+
+function hasExplicitZero(...values: unknown[]): boolean {
+  return values.some((value) => {
+    if (value === 0) return true;
+    if (typeof value !== "string") return false;
+    const parsed = Number(value);
+    return value.trim() !== "" && Number.isFinite(parsed) && parsed === 0;
+  });
+}
+
 function finiteNumber(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function stringValue(value: unknown): string | undefined {
-  return typeof value === "string" && value ? value : undefined;
+function stringValue(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value) return value;
+  }
+  return undefined;
+}
+
+function dateStringValue(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value) return value;
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) return new Date(value).toISOString().slice(0, 10);
+  }
+  return undefined;
 }
 
 function chunks<T>(values: T[], size: number): T[][] {
@@ -398,4 +621,29 @@ function chunks<T>(values: T[], size: number): T[][] {
     output.push(values.slice(index, index + size));
   }
   return output;
+}
+
+function unavailableFundamentals(symbol: string, scanResult: ScanResult | undefined, warning: string): FundamentalAnalysis {
+  const analysis = mergeFundamentalAnalysis({
+    symbol,
+    scanResult,
+    providerWarnings: [warning]
+  });
+  analysis.warnings = [warning];
+  return analysis;
+}
+
+function scanContext(result: ScanResult): FundamentalAnalysis["scanContext"] {
+  return {
+    grade: result.grade,
+    direction: result.setupDirection,
+    score: result.score,
+    maxScore: result.maxScore,
+    dailySqueeze: result.indicators.squeezeState,
+    weeklySqueeze: result.weeklyIndicators?.squeezeState,
+    oneHourSqueeze: result.lowerTimeframes?.oneHour.squeezeState,
+    fourHourSqueeze: result.lowerTimeframes?.fourHour.squeezeState,
+    optionable: result.optionable,
+    suggestedOptionCount: result.suggestedOptions.length
+  };
 }
