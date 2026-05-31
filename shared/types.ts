@@ -91,6 +91,7 @@ export type ScanResult = {
   score: number;
   maxScore: number;
   indicators: IndicatorSnapshot;
+  weeklyIndicators?: IndicatorSnapshot;
   lowerTimeframes?: LowerTimeframeConfluence;
   rules: ScoreRule[];
   suggestedOptions: OptionContract[];

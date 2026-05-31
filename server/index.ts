@@ -7,8 +7,8 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { runScan, readSettings, writeSettings } from "./scanner";
-import { getCachedResults, initDb } from "./sqlite";
+import { readDisplayResults, runScan, readSettings, writeSettings } from "./scanner";
+import { initDb } from "./sqlite";
 import { getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
 
@@ -32,7 +32,7 @@ app.put("/api/settings", (req, res) => {
 });
 
 app.get("/api/results", (_req, res) => {
-  res.json({ results: getCachedResults(), settings: readSettings(), warnings: [] });
+  res.json({ results: readDisplayResults(), settings: readSettings(), warnings: [] });
 });
 
 app.get("/api/schwab/status", async (_req, res, next) => {

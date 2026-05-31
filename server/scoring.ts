@@ -1,7 +1,8 @@
-import type { Candle, Fundamentals, Grade, LowerTimeframeConfluence, LowerTimeframeContext, OptionContract, ScanResult, ScoreRule, TradeDirection } from "../shared/types";
+import type { Candle, Fundamentals, Grade, IndicatorSnapshot, LowerTimeframeConfluence, LowerTimeframeContext, OptionContract, ScanResult, ScoreRule, SqueezeState, TradeDirection } from "../shared/types";
 import { latestIndicators, round } from "./indicators";
 
 const ATR_DISTANCE_LIMIT = 1.25;
+const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high", "released"];
 
 export const defaultSettings = {
   minPrice: 20,
@@ -20,6 +21,8 @@ export function gradeSetup(input: {
   options: OptionContract[];
   lowerTimeframes?: LowerTimeframeConfluence;
   lowerTimeframeWarnings?: string[];
+  weeklyIndicators?: IndicatorSnapshot;
+  weeklySqueezeWarning?: string;
   strictFundamentals?: boolean;
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
@@ -31,6 +34,7 @@ export function gradeSetup(input: {
   const betaPassed = input.strictFundamentals ? beta !== undefined && beta >= defaultSettings.minBeta : true;
   const marketCapPassed = input.strictFundamentals ? marketCap !== undefined && marketCap >= defaultSettings.minMarketCap : true;
   const lowerTimeframes = input.lowerTimeframes ?? unavailableLowerTimeframes();
+  const weeklyIndicators = input.weeklyIndicators;
   const commonRules: ScoreRule[] = [
     rule("optionable", "Optionable stock", input.optionable, 10, input.optionable ? "Options chain is available." : "No usable options chain was found."),
     rule("price", "Price above $20", price > defaultSettings.minPrice, 8, "Last close is $" + price.toFixed(2) + "."),
@@ -39,12 +43,13 @@ export function gradeSetup(input: {
     rule("dollar-volume", "20-day dollar volume >= $600M", avgDollarVolume20d >= defaultSettings.minAvgDollarVolume, 10, "20-day average dollar volume is " + formatMoney(avgDollarVolume20d) + ".")
   ];
   const candidates = [
-    directionalCandidate("long", commonRules, input.options, price, indicators, lowerTimeframes),
-    directionalCandidate("short", commonRules, input.options, price, indicators, lowerTimeframes)
+    directionalCandidate("long", commonRules, input.options, price, indicators, lowerTimeframes, weeklyIndicators),
+    directionalCandidate("short", commonRules, input.options, price, indicators, lowerTimeframes, weeklyIndicators)
   ];
   const selected = candidates.sort((a, b) => b.score / b.maxScore - a.score / a.maxScore)[0];
   const passesUniverse = commonRules.every((item) => item.passed);
   const warnings = input.lowerTimeframeWarnings ?? (input.lowerTimeframes ? [] : ["Lower-timeframe confluence unavailable; 1h/4h rules were not scored."]);
+  if (input.weeklySqueezeWarning) warnings.push(input.weeklySqueezeWarning);
 
   return {
     symbol: input.symbol,
@@ -61,6 +66,7 @@ export function gradeSetup(input: {
     score: selected.score,
     maxScore: selected.maxScore,
     indicators,
+    weeklyIndicators,
     lowerTimeframes,
     rules: selected.rules,
     suggestedOptions: selected.options.slice(0, 5),
@@ -76,7 +82,8 @@ function directionalCandidate(
   options: OptionContract[],
   price: number,
   indicators: ReturnType<typeof latestIndicators>,
-  lowerTimeframes: LowerTimeframeConfluence
+  lowerTimeframes: LowerTimeframeConfluence,
+  weeklyIndicators: IndicatorSnapshot | undefined
 ): { direction: TradeDirection; rules: ScoreRule[]; options: OptionContract[]; score: number; maxScore: number } {
   const isLong = direction === "long";
   const directionalOptions = options.filter((contract) => contract.optionType === (isLong ? "call" : "put"));
@@ -110,7 +117,8 @@ function directionalCandidate(
     ),
     confluenceRule("1h-confluence", "1h confluence", direction, lowerTimeframes.oneHour),
     confluenceRule("4h-confluence", "4h confluence", direction, lowerTimeframes.fourHour),
-    rule("squeeze", "Squeeze active or releasing", ["low", "mid", "high", "released"].includes(indicators.squeezeState), 12, "Current squeeze state is " + indicators.squeezeState + "."),
+    rule("daily-squeeze", "Daily squeeze active or releasing", isSqueezeActive(indicators.squeezeState), 12, "Daily squeeze state is " + indicators.squeezeState + "."),
+    rule("weekly-squeeze", "Weekly squeeze active or releasing", Boolean(weeklyIndicators && isSqueezeActive(weeklyIndicators.squeezeState)), 12, weeklyIndicators ? "Weekly squeeze state is " + weeklyIndicators.squeezeState + "." : "Weekly squeeze could not be calculated."),
     rule(
       "momentum",
       isLong ? "Squeeze histogram above zero" : "Squeeze histogram below zero",
@@ -129,6 +137,10 @@ function directionalCandidate(
   const maxScore = rules.reduce((sum, item) => sum + item.maxPoints, 0);
   const score = rules.reduce((sum, item) => sum + item.points, 0);
   return { direction, rules, options: directionalOptions.sort((a, b) => b.score - a.score), score, maxScore };
+}
+
+export function isSqueezeActive(state: SqueezeState | undefined): boolean {
+  return Boolean(state && SQUEEZE_STATES.includes(state));
 }
 
 function confluenceRule(id: string, label: string, direction: TradeDirection, context: LowerTimeframeContext): ScoreRule {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Candle, LowerTimeframeConfluence } from "../shared/types";
+import type { Candle, IndicatorSnapshot, LowerTimeframeConfluence } from "../shared/types";
 import { demoCandles, demoOptions } from "./demoData";
 import { latestIndicators } from "./indicators";
 import { gradeSetup } from "./scoring";
@@ -158,6 +158,39 @@ describe("transparent grading", () => {
     expect(result.rules.find((rule) => rule.id === "4h-confluence")?.passed).toBe(true);
   });
 
+  it("adds a weekly squeeze rule when weekly indicators are provided", () => {
+    const candles = candlesAtSignedAtr(bullishCandles(), 0.6);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "WEEKLYSQZ",
+      candles,
+      fundamentals: strongFundamentals("WEEKLYSQZ"),
+      optionable: true,
+      options: demoOptions("WEEKLYSQZ", price),
+      lowerTimeframes: bullishConfluence(),
+      weeklyIndicators: indicatorWithSqueeze("mid")
+    });
+
+    expect(result.weeklyIndicators?.squeezeState).toBe("mid");
+    expect(result.rules.find((rule) => rule.id === "weekly-squeeze")?.passed).toBe(true);
+  });
+
+  it("fails the weekly squeeze rule when the weekly squeeze state is none", () => {
+    const candles = candlesAtSignedAtr(bullishCandles(), 0.6);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "NOWEEKLYSQZ",
+      candles,
+      fundamentals: strongFundamentals("NOWEEKLYSQZ"),
+      optionable: true,
+      options: demoOptions("NOWEEKLYSQZ", price),
+      lowerTimeframes: bullishConfluence(),
+      weeklyIndicators: indicatorWithSqueeze("none")
+    });
+
+    expect(result.rules.find((rule) => rule.id === "weekly-squeeze")?.passed).toBe(false);
+  });
+
   it("fails missing lower-timeframe confluence rules without failing the universe", () => {
     const candles = candlesAtSignedAtr(bullishCandles(), 0.6);
     const price = candles[candles.length - 1].close;
@@ -304,5 +337,12 @@ function bearishConfluence(): LowerTimeframeConfluence {
   return {
     oneHour: { timeframe: "1h", bias: "bearish", price: 90, ema21: 94, ema50: 100, detail: "1h is bearish." },
     fourHour: { timeframe: "4h", bias: "bearish", price: 88, ema21: 93, ema50: 101, detail: "4h is bearish." }
+  };
+}
+
+function indicatorWithSqueeze(squeezeState: IndicatorSnapshot["squeezeState"]): IndicatorSnapshot {
+  return {
+    ...latestIndicators(bullishCandles()),
+    squeezeState
   };
 }

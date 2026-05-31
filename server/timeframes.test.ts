@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Candle } from "../shared/types";
-import { aggregateSequentialCandles, buildLowerTimeframeConfluence } from "./timeframes";
+import { aggregateDailyCandlesToWeeks, aggregateSequentialCandles, buildLowerTimeframeConfluence } from "./timeframes";
 
 describe("lower-timeframe confluence", () => {
   it("aggregates 30-minute candles into 1h and 4h confluence contexts", () => {
@@ -13,6 +13,19 @@ describe("lower-timeframe confluence", () => {
     expect(fourHour.length).toBe(30);
     expect(context.oneHour.bias).toBe("bullish");
     expect(context.fourHour.bias).toBe("unavailable");
+  });
+
+  it("aggregates daily candles into weekly candles", () => {
+    const candles: Candle[] = [
+      { date: "2026-01-05", open: 10, high: 12, low: 9, close: 11, volume: 100 },
+      { date: "2026-01-06", open: 11, high: 14, low: 10, close: 13, volume: 200 },
+      { date: "2026-01-12", open: 13, high: 15, low: 12, close: 14, volume: 300 }
+    ];
+
+    expect(aggregateDailyCandlesToWeeks(candles)).toEqual([
+      { date: "2026-01-05", open: 10, high: 14, low: 9, close: 13, volume: 300 },
+      { date: "2026-01-12", open: 13, high: 15, low: 12, close: 14, volume: 300 }
+    ]);
   });
 
   it("detects bearish 1h and 4h confluence when enough intraday history is available", () => {

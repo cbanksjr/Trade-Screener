@@ -1,10 +1,11 @@
 import type { LowerTimeframeConfluence, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
-import { defaultSettings, gradeSetup } from "./scoring";
+import { defaultSettings, gradeSetup, isSqueezeActive } from "./scoring";
 import { fetchOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
-import { getSetting, saveScanResult, setSetting } from "./sqlite";
-import { buildLowerTimeframeConfluence } from "./timeframes";
+import { latestIndicators } from "./indicators";
+import { getCachedResults, getSetting, saveScanResult, setSetting } from "./sqlite";
+import { aggregateDailyCandlesToWeeks, buildLowerTimeframeConfluence } from "./timeframes";
 import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
 
 export function readSettings(): Settings {
@@ -111,6 +112,8 @@ export async function runScan(): Promise<ScanResponse> {
         candles[candles.length - 1] = { ...candles[candles.length - 1], close: quote.price };
       }
 
+      const weekly = weeklySqueezeFromDaily(candles);
+
       const lowerTimeframeWarnings: string[] = [];
       const lowerTimeframes = canUseLiveSchwab
         ? await loadLowerTimeframeConfluence(symbol, lowerTimeframeWarnings)
@@ -145,7 +148,9 @@ export async function runScan(): Promise<ScanResponse> {
         fundamentals: mergeFundamentals(symbol, quote),
         optionable,
         options,
-        lowerTimeframes
+        lowerTimeframes,
+        weeklyIndicators: weekly.indicators,
+        weeklySqueezeWarning: weekly.warning
       });
       result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
       result.warnings.push(...resultWarnings);
@@ -161,12 +166,15 @@ export async function runScan(): Promise<ScanResponse> {
       if (!allowDemoFallback || !demoFundamental(symbol)) continue;
       const candles = demoCandles(symbol);
       const price = candles[candles.length - 1].close;
+      const weekly = weeklySqueezeFromDaily(candles);
       const fallback = gradeSetup({
         symbol,
         candles,
         fundamentals: demoFundamental(symbol),
         optionable: settings.useDemoDataWhenMissingApi,
-        options: settings.useDemoDataWhenMissingApi ? demoOptions(symbol, price) : []
+        options: settings.useDemoDataWhenMissingApi ? demoOptions(symbol, price) : [],
+        weeklyIndicators: weekly.indicators,
+        weeklySqueezeWarning: weekly.warning
       });
       fallback.dataSource = "demo";
       fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
@@ -189,8 +197,24 @@ export function resolveScanSymbols(): string[] {
   return getDefaultUniverseSymbols();
 }
 
+export function readDisplayResults(): ScanResult[] {
+  return getCachedResults().filter((result): result is ScanResult => shouldIncludeResult(result as ScanResult));
+}
+
 function shouldIncludeResult(result: ScanResult): boolean {
-  return result.passesUniverse && result.grade !== "D" && result.grade !== "F";
+  return result.passesUniverse
+    && result.grade !== "D"
+    && result.grade !== "F"
+    && isSqueezeActive(result.indicators?.squeezeState)
+    && isSqueezeActive(result.weeklyIndicators?.squeezeState);
+}
+
+function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>>): { indicators?: ReturnType<typeof latestIndicators>; warning?: string } {
+  try {
+    return { indicators: latestIndicators(aggregateDailyCandlesToWeeks(candles)) };
+  } catch (error) {
+    return { warning: readError(error, "Weekly squeeze could not be calculated.") };
+  }
 }
 
 function readError(error: unknown, fallback: string): string {

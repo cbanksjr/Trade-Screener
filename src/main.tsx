@@ -157,7 +157,8 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <p>{result.setupDirection.toUpperCase()} · ${result.price.toFixed(2)} · Score {result.score}/{result.maxScore}</p>
         </div>
         <div className="indicator-grid">
-          <Metric label="Squeeze" value={result.indicators.squeezeState} />
+          <Metric label="Daily Sqz" value={result.indicators.squeezeState} />
+          <Metric label="Weekly Sqz" value={result.weeklyIndicators?.squeezeState ?? "unavailable"} />
           <Metric label="Momentum" value={result.indicators.momentum.toFixed(2)} />
           <Metric label="21 EMA" value={result.indicators.ema21.toFixed(2)} />
           <Metric label="50 EMA" value={result.indicators.ema50.toFixed(2)} />
