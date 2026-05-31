@@ -374,7 +374,7 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
         <div className="contracts">
           {result.suggestedOptions.map((contract) => (
             <div className="contract" key={contract.symbol}>
-              <strong>{contract.strike}{contract.optionType === "call" ? "C" : "P"} · {contract.expirationDate}</strong>
+              <strong>{contract.strike}{contract.optionType === "call" ? "C" : "P"} · {dateOrUnavailable(contract.expirationDate)}</strong>
               <span>Bid/Ask ${contract.bid.toFixed(2)} / ${contract.ask.toFixed(2)}</span>
               <span>OI {contract.openInterest} · Vol {contract.volume} · Spread {contract.spreadPct.toFixed(1)}%</span>
               <b>{Math.round(contract.score)}</b>
@@ -445,13 +445,14 @@ function LightweightPriceChart({ candles, theme }: { candles: Candle[]; theme: T
       height: chartHeight,
       layout: {
         background: { type: ColorType.Solid, color: colors.background },
+        fontSize: 11,
         textColor: colors.text
       },
       grid: {
         vertLines: { color: colors.grid },
         horzLines: { color: colors.grid }
       },
-      rightPriceScale: { borderColor: colors.border },
+      rightPriceScale: { borderColor: colors.border, minimumWidth: 48 },
       timeScale: { borderColor: colors.border },
       localization: { priceFormatter: (price: number) => money(price) }
     });
@@ -489,10 +490,7 @@ function LightweightPriceChart({ candles, theme }: { candles: Candle[]; theme: T
     ema50Series.setData(emaLineData(candles, 50));
     chart.timeScale().fitContent();
     const resizeObserver = new ResizeObserver(() => {
-      chart.applyOptions({
-        width: Math.max(1, container.clientWidth),
-        height: Math.max(1, container.clientHeight)
-      });
+      chart.resize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight), true);
     });
     resizeObserver.observe(container);
 
@@ -645,8 +643,7 @@ function dividendFundamentalItems(analysis: FundamentalAnalysis | null): Fundame
       { label: "Dividend Frequency", value: "N/A - no dividend" },
       { label: "Dividend Pay Date", value: "N/A - no dividend" },
       { label: "Ex-Dividend Date", value: "N/A - no dividend" },
-      fundamentalItem(analysis, "lastEarningsDate", "Last Earnings", dateOrUnavailable(analysis.lastEarningsDate)),
-      fundamentalItem(analysis, "nextEarningsDate", "Next Earnings", dateOrUnavailable(analysis.nextEarningsDate))
+      fundamentalItem(analysis, "lastEarningsDate", "Last Earnings", dateOrUnavailable(analysis.lastEarningsDate))
     ];
   }
 
@@ -656,8 +653,7 @@ function dividendFundamentalItems(analysis: FundamentalAnalysis | null): Fundame
     fundamentalItem(analysis, "dividendFrequency", "Dividend Frequency", textOrUnavailable(analysis?.dividendFrequency)),
     fundamentalItem(analysis, "dividendPayDate", "Dividend Pay Date", dateOrUnavailable(analysis?.dividendPayDate)),
     fundamentalItem(analysis, "dividendExDate", "Ex-Dividend Date", dateOrUnavailable(analysis?.dividendExDate)),
-    fundamentalItem(analysis, "lastEarningsDate", "Last Earnings", dateOrUnavailable(analysis?.lastEarningsDate)),
-    fundamentalItem(analysis, "nextEarningsDate", "Next Earnings", dateOrUnavailable(analysis?.nextEarningsDate))
+    fundamentalItem(analysis, "lastEarningsDate", "Last Earnings", dateOrUnavailable(analysis?.lastEarningsDate))
   ];
 }
 
