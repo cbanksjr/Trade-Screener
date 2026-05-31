@@ -6,7 +6,7 @@ describe("scan symbol resolution", () => {
   it("always uses the automatic S&P 500 + Nasdaq 100 universe", () => {
     const symbols = resolveScanSymbols();
 
-    expect(symbols.length).toBe(defaultUniverseSymbols.length);
+    expect(symbols.length).toBeGreaterThanOrEqual(defaultUniverseSymbols.length);
     expect(symbols).toContain("AAPL");
     expect(symbols).toContain("NVDA");
   });

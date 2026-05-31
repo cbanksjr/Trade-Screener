@@ -1,0 +1,44 @@
+import { describe, expect, it } from "vitest";
+import type { Candle } from "../shared/types";
+import { aggregateSequentialCandles, buildLowerTimeframeConfluence } from "./timeframes";
+
+describe("lower-timeframe confluence", () => {
+  it("aggregates 30-minute candles into 1h and 4h confluence contexts", () => {
+    const candles = intradayCandles("up");
+    const oneHour = aggregateSequentialCandles(candles, 2);
+    const fourHour = aggregateSequentialCandles(candles, 8);
+    const context = buildLowerTimeframeConfluence(candles);
+
+    expect(oneHour.length).toBe(120);
+    expect(fourHour.length).toBe(30);
+    expect(context.oneHour.bias).toBe("bullish");
+    expect(context.fourHour.bias).toBe("unavailable");
+  });
+
+  it("detects bearish 1h and 4h confluence when enough intraday history is available", () => {
+    const context = buildLowerTimeframeConfluence(intradayCandles("down", 60));
+
+    expect(context.oneHour.bias).toBe("bearish");
+    expect(context.fourHour.bias).toBe("bearish");
+  });
+});
+
+function intradayCandles(direction: "up" | "down", days = 30): Candle[] {
+  const candles: Candle[] = [];
+  const start = Date.UTC(2026, 0, 5, 14, 30);
+  for (let day = 0; day < days; day += 1) {
+    for (let slot = 0; slot < 8; slot += 1) {
+      const index = day * 8 + slot;
+      const close = direction === "up" ? 100 + index * 0.35 : 220 - index * 0.35;
+      candles.push({
+        date: new Date(start + day * 24 * 60 * 60 * 1000 + slot * 30 * 60 * 1000).toISOString(),
+        open: close - 0.15,
+        high: close + 0.8,
+        low: close - 0.8,
+        close,
+        volume: 1_000_000
+      });
+    }
+  }
+  return candles;
+}

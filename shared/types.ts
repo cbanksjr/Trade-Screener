@@ -35,6 +35,21 @@ export type OptionContract = {
 };
 
 export type SqueezeState = "none" | "low" | "mid" | "high" | "released";
+export type TimeframeBias = "bullish" | "bearish" | "neutral" | "unavailable";
+
+export type LowerTimeframeContext = {
+  timeframe: "1h" | "4h";
+  bias: TimeframeBias;
+  price: number | null;
+  ema21: number | null;
+  ema50: number | null;
+  detail: string;
+};
+
+export type LowerTimeframeConfluence = {
+  oneHour: LowerTimeframeContext;
+  fourHour: LowerTimeframeContext;
+};
 
 export type IndicatorSnapshot = {
   ema21: number;
@@ -76,6 +91,7 @@ export type ScanResult = {
   score: number;
   maxScore: number;
   indicators: IndicatorSnapshot;
+  lowerTimeframes?: LowerTimeframeConfluence;
   rules: ScoreRule[];
   suggestedOptions: OptionContract[];
   candles: Candle[];

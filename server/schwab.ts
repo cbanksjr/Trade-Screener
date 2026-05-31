@@ -141,6 +141,21 @@ export async function fetchHistory(symbol: string): Promise<Candle[]> {
   return normalizeSchwabHistory(data);
 }
 
+export async function fetchIntradayHistory(symbol: string): Promise<Candle[]> {
+  const endDate = Date.now();
+  const startDate = endDate - 90 * 24 * 60 * 60 * 1000;
+  const data = await schwabGet<SchwabPriceHistoryResponse>("/pricehistory", {
+    symbol,
+    startDate,
+    endDate,
+    frequencyType: "minute",
+    frequency: "30",
+    needExtendedHoursData: "false",
+    needPreviousClose: "false"
+  });
+  return normalizeSchwabHistory(data, { includeTime: true });
+}
+
 export async function fetchOptions(symbol: string, price: number): Promise<OptionContract[]> {
   const [calls, puts] = await Promise.all([
     fetchDirectionalOptions(symbol, price, "CALL"),
@@ -201,15 +216,18 @@ export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
   });
 }
 
-export function normalizeSchwabHistory(data: SchwabPriceHistoryResponse): Candle[] {
-  return (data.candles ?? []).map((candle) => ({
-    date: new Date(candle.datetime).toISOString().slice(0, 10),
-    open: Number(candle.open),
-    high: Number(candle.high),
-    low: Number(candle.low),
-    close: Number(candle.close),
-    volume: Number(candle.volume)
-  })).filter((day) => Number.isFinite(day.close) && Number.isFinite(day.volume));
+export function normalizeSchwabHistory(data: SchwabPriceHistoryResponse, options: { includeTime?: boolean } = {}): Candle[] {
+  return (data.candles ?? []).map((candle) => {
+    const timestamp = new Date(candle.datetime).toISOString();
+    return {
+      date: options.includeTime ? timestamp : timestamp.slice(0, 10),
+      open: Number(candle.open),
+      high: Number(candle.high),
+      low: Number(candle.low),
+      close: Number(candle.close),
+      volume: Number(candle.volume)
+    };
+  }).filter((day) => Number.isFinite(day.close) && Number.isFinite(day.volume));
 }
 
 export function normalizeSchwabCallOptions(data: SchwabOptionChainResponse, price: number): OptionContract[] {

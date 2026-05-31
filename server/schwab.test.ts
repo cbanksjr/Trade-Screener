@@ -33,6 +33,14 @@ describe("Schwab response normalizers", () => {
     expect(candles).toEqual([{ date: "2026-05-29", open: 10, high: 12, low: 9, close: 11, volume: 1000 }]);
   });
 
+  it("preserves intraday timestamps when requested", () => {
+    const candles = normalizeSchwabHistory({
+      candles: [{ datetime: Date.UTC(2026, 4, 29, 14, 30), open: 10, high: 12, low: 9, close: 11, volume: 1000 }]
+    }, { includeTime: true });
+
+    expect(candles[0].date).toBe("2026-05-29T14:30:00.000Z");
+  });
+
   it("normalizes call option chains into liquid-call-compatible contracts", () => {
     const contracts = normalizeSchwabCallOptions({
       callExpDateMap: {

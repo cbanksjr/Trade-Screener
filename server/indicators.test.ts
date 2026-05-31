@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Candle } from "../shared/types";
+import type { Candle, LowerTimeframeConfluence } from "../shared/types";
 import { demoCandles, demoOptions } from "./demoData";
 import { latestIndicators } from "./indicators";
 import { gradeSetup } from "./scoring";
@@ -36,7 +36,7 @@ describe("transparent grading", () => {
   });
 
 
-  it("identifies bearish short setups when price is below the 21 EMA within -1 ATR", () => {
+  it("identifies bearish short setups when price is below the 21 EMA within -1.25 ATR", () => {
     const candles = bearishCandles();
     const price = candles[candles.length - 1].close;
     const result = gradeSetup({
@@ -57,6 +57,122 @@ describe("transparent grading", () => {
     expect(result.rules.find((rule) => rule.id === "price-side")?.passed).toBe(true);
     expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(true);
     expect(result.suggestedOptions.every((contract) => contract.optionType === "put")).toBe(true);
+  });
+
+
+  it("passes long ATR distance when price is within +1.25 ATR of the 21 EMA", () => {
+    const candles = candlesAtSignedAtr(bullishCandles(), 1.22);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "LONGATR",
+      candles,
+      fundamentals: strongFundamentals("LONGATR"),
+      optionable: true,
+      options: demoOptions("LONGATR", price),
+      lowerTimeframes: bullishConfluence()
+    });
+
+    expect(result.setupDirection).toBe("long");
+    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(true);
+  });
+
+  it("fails long ATR distance when price is beyond +1.25 ATR of the 21 EMA", () => {
+    const candles = candlesAtSignedAtr(bullishCandles(), 1.35);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "LONGFAR",
+      candles,
+      fundamentals: strongFundamentals("LONGFAR"),
+      optionable: true,
+      options: demoOptions("LONGFAR", price),
+      lowerTimeframes: bullishConfluence()
+    });
+
+    expect(result.setupDirection).toBe("long");
+    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(false);
+  });
+
+  it("passes short ATR distance when price is within -1.25 ATR of the 21 EMA", () => {
+    const candles = candlesAtSignedAtr(bearishCandles(), -1.22);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "SHORTATR",
+      candles,
+      fundamentals: strongFundamentals("SHORTATR"),
+      optionable: true,
+      options: demoOptions("SHORTATR", price),
+      lowerTimeframes: bearishConfluence()
+    });
+
+    expect(result.setupDirection).toBe("short");
+    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(true);
+  });
+
+  it("fails short ATR distance when price is beyond -1.25 ATR of the 21 EMA", () => {
+    const candles = candlesAtSignedAtr(bearishCandles(), -1.35);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "SHORTFAR",
+      candles,
+      fundamentals: strongFundamentals("SHORTFAR"),
+      optionable: true,
+      options: demoOptions("SHORTFAR", price),
+      lowerTimeframes: bearishConfluence()
+    });
+
+    expect(result.setupDirection).toBe("short");
+    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(false);
+  });
+
+  it("adds weighted bullish 1h and 4h confluence to long setups", () => {
+    const candles = candlesAtSignedAtr(bullishCandles(), 0.6);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "BULLCONF",
+      candles,
+      fundamentals: strongFundamentals("BULLCONF"),
+      optionable: true,
+      options: demoOptions("BULLCONF", price),
+      lowerTimeframes: bullishConfluence()
+    });
+
+    expect(result.setupDirection).toBe("long");
+    expect(result.rules.find((rule) => rule.id === "1h-confluence")?.passed).toBe(true);
+    expect(result.rules.find((rule) => rule.id === "4h-confluence")?.passed).toBe(true);
+  });
+
+  it("adds weighted bearish 1h and 4h confluence to short setups", () => {
+    const candles = candlesAtSignedAtr(bearishCandles(), -0.6);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "BEARCONF",
+      candles,
+      fundamentals: strongFundamentals("BEARCONF"),
+      optionable: true,
+      options: demoOptions("BEARCONF", price),
+      lowerTimeframes: bearishConfluence()
+    });
+
+    expect(result.setupDirection).toBe("short");
+    expect(result.rules.find((rule) => rule.id === "1h-confluence")?.passed).toBe(true);
+    expect(result.rules.find((rule) => rule.id === "4h-confluence")?.passed).toBe(true);
+  });
+
+  it("fails missing lower-timeframe confluence rules without failing the universe", () => {
+    const candles = candlesAtSignedAtr(bullishCandles(), 0.6);
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "NOCONF",
+      candles,
+      fundamentals: strongFundamentals("NOCONF"),
+      optionable: true,
+      options: demoOptions("NOCONF", price)
+    });
+
+    expect(result.passesUniverse).toBe(true);
+    expect(result.rules.find((rule) => rule.id === "1h-confluence")?.passed).toBe(false);
+    expect(result.rules.find((rule) => rule.id === "4h-confluence")?.passed).toBe(false);
+    expect(result.warnings).toContain("Lower-timeframe confluence unavailable; 1h/4h rules were not scored.");
   });
 
   it("requires beta and market cap when strict fundamentals are enabled", () => {
@@ -133,4 +249,60 @@ function bearishCandles(): Candle[] {
     });
   }
   return candles;
+}
+
+function bullishCandles(): Candle[] {
+  const candles: Candle[] = [];
+  for (let index = 0; index < 180; index += 1) {
+    const close = 90 + index * 0.45 + Math.sin(index / 6) * 1.2;
+    candles.push({
+      date: "2026-02-" + String(index + 1).padStart(2, "0"),
+      open: close - 0.4,
+      high: close + 2.4,
+      low: close - 2.4,
+      close,
+      volume: 25_000_000
+    });
+  }
+  return candles;
+}
+
+function candlesAtSignedAtr(candles: Candle[], signedAtrDistance: number): Candle[] {
+  const adjusted = candles.map((candle) => ({ ...candle }));
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const indicators = latestIndicators(adjusted);
+    const target = indicators.ema21 + indicators.atr14 * signedAtrDistance;
+    const lastIndex = adjusted.length - 1;
+    adjusted[lastIndex] = {
+      ...adjusted[lastIndex],
+      open: target,
+      high: target + 2.4,
+      low: target - 2.4,
+      close: target
+    };
+  }
+  return adjusted;
+}
+
+function strongFundamentals(symbol: string) {
+  return {
+    symbol,
+    beta: 1.2,
+    marketCap: 20_000_000_000,
+    avgDollarVolume20d: 900_000_000
+  };
+}
+
+function bullishConfluence(): LowerTimeframeConfluence {
+  return {
+    oneHour: { timeframe: "1h", bias: "bullish", price: 110, ema21: 106, ema50: 100, detail: "1h is bullish." },
+    fourHour: { timeframe: "4h", bias: "bullish", price: 112, ema21: 107, ema50: 101, detail: "4h is bullish." }
+  };
+}
+
+function bearishConfluence(): LowerTimeframeConfluence {
+  return {
+    oneHour: { timeframe: "1h", bias: "bearish", price: 90, ema21: 94, ema50: 100, detail: "1h is bearish." },
+    fourHour: { timeframe: "4h", bias: "bearish", price: 88, ema21: 93, ema50: 101, detail: "4h is bearish." }
+  };
 }

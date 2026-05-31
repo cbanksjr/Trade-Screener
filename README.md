@@ -25,7 +25,7 @@ Then restart the dev server. The local API runs HTTPS by default for Schwab OAut
 The scan uses Schwab for:
 
 - `/marketdata/v1/quotes` for quote and fundamental market data
-- `/marketdata/v1/pricehistory` for daily OHLCV history
+- `/marketdata/v1/pricehistory` for daily OHLCV history plus 30-minute intraday candles for 1h/4h confluence
 - `/marketdata/v1/chains` for 30-180 DTE call and put chains with Greeks
 
 ## Automatic Universe
@@ -43,8 +43,9 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Beta >= 0.75 when Schwab provides beta
 - Market cap >= $2B when Schwab provides market cap
 - Average dollar volume >= $600M, from Schwab `average volume x last price` when available
-- Long setup: 21 EMA above 50 EMA, price above the 21 EMA and within +1 ATR
-- Short setup: 21 EMA below 50 EMA, price below the 21 EMA and within -1 ATR
+- Long setup: 21 EMA above 50 EMA, price above the 21 EMA and within +1.25 ATR
+- Short setup: 21 EMA below 50 EMA, price below the 21 EMA and within -1.25 ATR
+- 1h and 4h confluence: bullish for longs, bearish for shorts, using 21/50 EMA alignment and price vs 50 EMA
 - Squeeze Pro-style compression/release state
 - Momentum histogram above zero for longs or below zero for shorts
 - Liquid call candidates for longs or liquid put candidates for shorts

@@ -1,9 +1,10 @@
-import type { ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { LowerTimeframeConfluence, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { defaultSettings, gradeSetup } from "./scoring";
-import { fetchOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
+import { fetchOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getSetting, saveScanResult, setSetting } from "./sqlite";
+import { buildLowerTimeframeConfluence } from "./timeframes";
 import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
 
 export function readSettings(): Settings {
@@ -110,6 +111,12 @@ export async function runScan(): Promise<ScanResponse> {
         candles[candles.length - 1] = { ...candles[candles.length - 1], close: quote.price };
       }
 
+      const lowerTimeframeWarnings: string[] = [];
+      const lowerTimeframes = canUseLiveSchwab
+        ? await loadLowerTimeframeConfluence(symbol, lowerTimeframeWarnings)
+        : undefined;
+      resultWarnings.push(...lowerTimeframeWarnings);
+
       let options: Awaited<ReturnType<typeof fetchOptions>> = [];
       if (canUseLiveSchwab) {
         try {
@@ -137,7 +144,8 @@ export async function runScan(): Promise<ScanResponse> {
         candles,
         fundamentals: mergeFundamentals(symbol, quote),
         optionable,
-        options
+        options,
+        lowerTimeframes
       });
       result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
       result.warnings.push(...resultWarnings);
@@ -195,6 +203,19 @@ async function loadQuoteMap(symbols: string[], warnings: Set<string>): Promise<M
   } catch (error) {
     warnings.add(readError(error, "Schwab batch quote request failed."));
     return new Map();
+  }
+}
+
+async function loadLowerTimeframeConfluence(symbol: string, warnings: string[]): Promise<LowerTimeframeConfluence | undefined> {
+  try {
+    const intradayCandles = await fetchIntradayHistory(symbol);
+    const confluence = buildLowerTimeframeConfluence(intradayCandles);
+    if (confluence.oneHour.bias === "unavailable") warnings.push("1h confluence unavailable: " + confluence.oneHour.detail);
+    if (confluence.fourHour.bias === "unavailable") warnings.push("4h confluence unavailable: " + confluence.fourHour.detail);
+    return confluence;
+  } catch (error) {
+    warnings.push(readError(error, "Schwab intraday history request failed."));
+    return undefined;
   }
 }
 

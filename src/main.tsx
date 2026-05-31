@@ -164,6 +164,8 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <Metric label="ATR" value={result.indicators.atr14.toFixed(2)} />
           <Metric label="Dollar Vol" value={money(result.avgDollarVolume20d)} />
           <Metric label="Direction" value={result.setupDirection.toUpperCase()} />
+          <Metric label="1h" value={timeframeLabel(result.lowerTimeframes?.oneHour?.bias)} />
+          <Metric label="4h" value={timeframeLabel(result.lowerTimeframes?.fourHour?.bias)} />
           <Metric label="Source" value={result.dataSource} />
         </div>
       </section>
@@ -263,6 +265,11 @@ function SettingsPanel({ settings, brokerStatus }: {
       </div>
     </aside>
   );
+}
+
+function timeframeLabel(value: string | undefined): string {
+  if (!value) return "Unavailable";
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function money(value: number): string {
