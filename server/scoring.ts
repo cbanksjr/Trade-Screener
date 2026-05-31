@@ -2,7 +2,7 @@ import type { Candle, Fundamentals, Grade, IndicatorSnapshot, LowerTimeframeConf
 import { latestIndicators, round } from "./indicators";
 
 const ATR_DISTANCE_LIMIT = 1.25;
-const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high", "released"];
+const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
 
 export const defaultSettings = {
   minPrice: 20,
@@ -117,8 +117,8 @@ function directionalCandidate(
     ),
     confluenceRule("1h-confluence", "1h confluence", direction, lowerTimeframes.oneHour),
     confluenceRule("4h-confluence", "4h confluence", direction, lowerTimeframes.fourHour),
-    rule("daily-squeeze", "Daily squeeze active or releasing", isSqueezeActive(indicators.squeezeState), 12, "Daily squeeze state is " + indicators.squeezeState + "."),
-    rule("weekly-squeeze", "Weekly squeeze active or releasing", Boolean(weeklyIndicators && isSqueezeActive(weeklyIndicators.squeezeState)), 12, weeklyIndicators ? "Weekly squeeze state is " + weeklyIndicators.squeezeState + "." : "Weekly squeeze could not be calculated."),
+    rule("daily-squeeze", "Daily squeeze active", isSqueezeActive(indicators.squeezeState), 12, "Daily squeeze state is " + indicators.squeezeState + "."),
+    rule("weekly-squeeze", "Weekly squeeze active", Boolean(weeklyIndicators && isSqueezeActive(weeklyIndicators.squeezeState)), 12, weeklyIndicators ? "Weekly squeeze state is " + weeklyIndicators.squeezeState + "." : "Weekly squeeze could not be calculated."),
     rule(
       "momentum",
       isLong ? "Squeeze histogram above zero" : "Squeeze histogram below zero",

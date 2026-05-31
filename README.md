@@ -46,7 +46,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Long setup: 21 EMA above 50 EMA, price above the 21 EMA and within +1.25 ATR
 - Short setup: 21 EMA below 50 EMA, price below the 21 EMA and within -1.25 ATR
 - 1h and 4h confluence: bullish for longs, bearish for shorts, using 21/50 EMA alignment and price vs 50 EMA
-- Daily and weekly Squeeze Pro-style compression/release state; symbols without both are excluded
+- Daily and weekly active Squeeze Pro-style compression only (`low`, `mid`, or `high`); `released` and `none` are excluded
 - Momentum histogram above zero for longs or below zero for shorts
 - Liquid call candidates for longs or liquid put candidates for shorts
 

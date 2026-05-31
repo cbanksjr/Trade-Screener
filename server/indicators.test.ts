@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Candle, IndicatorSnapshot, LowerTimeframeConfluence } from "../shared/types";
 import { demoCandles, demoOptions } from "./demoData";
 import { latestIndicators } from "./indicators";
-import { gradeSetup } from "./scoring";
+import { gradeSetup, isSqueezeActive } from "./scoring";
 
 describe("indicator calculations", () => {
   it("calculates the core swing indicators from candle history", () => {
@@ -15,6 +15,14 @@ describe("indicator calculations", () => {
 });
 
 describe("transparent grading", () => {
+  it("treats only low, mid, and high as qualifying squeeze states", () => {
+    expect(isSqueezeActive("low")).toBe(true);
+    expect(isSqueezeActive("mid")).toBe(true);
+    expect(isSqueezeActive("high")).toBe(true);
+    expect(isSqueezeActive("released")).toBe(false);
+    expect(isSqueezeActive("none")).toBe(false);
+  });
+
   it("returns a grade, score breakdown, and option suggestions", () => {
     const candles = demoCandles("NVDA");
     const price = candles[candles.length - 1].close;
