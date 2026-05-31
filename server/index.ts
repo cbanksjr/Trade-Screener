@@ -7,7 +7,7 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { readDisplayResults, runScan, readSettings, writeSettings } from "./scanner";
+import { readCachedScanResponse, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
 import { initDb } from "./sqlite";
 import { getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -32,7 +32,9 @@ app.put("/api/settings", (req, res) => {
 });
 
 app.get("/api/results", (_req, res) => {
-  res.json({ results: readDisplayResults(), settings: readSettings(), warnings: [] });
+  const response = readCachedScanResponse();
+  if (shouldAutoRefresh()) startScanRefresh();
+  res.json(response);
 });
 
 app.get("/api/schwab/status", async (_req, res, next) => {
@@ -75,6 +77,10 @@ app.post("/api/scan", async (_req, res, next) => {
   }
 });
 
+app.get("/api/scan/status", (_req, res) => {
+  res.json(readCachedScanResponse());
+});
+
 function redirectToClient(res: express.Response, schwab: "connected" | "error", message?: string) {
   const url = new URL(config.clientOrigin);
   url.searchParams.set("schwab", schwab);
@@ -94,7 +100,7 @@ function refreshUniverseIfNeeded() {
 }
 
 cron.schedule("35 8 * * 1-5", () => {
-  void runScan();
+  startScanRefresh();
 }, { timezone: "America/Chicago" });
 
 cron.schedule("10 18 28-31 * *", () => {

@@ -14,6 +14,10 @@ const api = {
     const response = await fetch("/api/scan", { method: "POST" });
     return response.json();
   },
+  async scanStatus(): Promise<ScanResponse> {
+    const response = await fetch("/api/scan/status");
+    return response.json();
+  },
   async brokerStatus(): Promise<BrokerStatus> {
     const response = await fetch("/api/schwab/status");
     return response.json();
@@ -33,6 +37,9 @@ function App() {
   const [message, setMessage] = React.useState("");
   const [warnings, setWarnings] = React.useState<string[]>([]);
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
+  const [scanStatus, setScanStatus] = React.useState<string>("idle");
+  const [lastRefreshedAt, setLastRefreshedAt] = React.useState<string>("");
+  const [nextRefreshAt, setNextRefreshAt] = React.useState<string>("");
 
   React.useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -44,38 +51,69 @@ function App() {
     if (schwabResult) window.history.replaceState({}, document.title, window.location.pathname);
 
     api.results().then((data) => {
-      setResults(data.results ?? []);
-      if (data.settings) setSettings(data.settings);
-      setSelected(data.results?.[0]?.symbol ?? "");
-      setWarnings(data.warnings ?? []);
-    });
-    api.brokerStatus().then(setBrokerStatus).catch(() => {
-      setBrokerStatus({
-        configured: false,
-        baseUrl: "",
-        ok: false,
-        checkedAt: new Date().toISOString(),
-        message: "Unable to check Schwab status."
+      applyScanResponse(data);
+      api.brokerStatus().then((status) => {
+        setBrokerStatus(status);
+        if (status.ok && shouldRefresh(data)) void startRefresh(false);
+      }).catch(() => {
+        setBrokerStatus({
+          configured: false,
+          baseUrl: "",
+          ok: false,
+          checkedAt: new Date().toISOString(),
+          message: "Unable to check Schwab status."
+        });
       });
     });
+
   }, []);
 
   const active = results.find((item) => item.symbol === selected) ?? results[0];
+
+  React.useEffect(() => {
+    if (!loading && scanStatus !== "running") return;
+    const interval = window.setInterval(() => {
+      api.scanStatus().then((data) => {
+        applyScanResponse(data);
+        if (!data.isRefreshing) setLoading(false);
+      }).catch(() => setLoading(false));
+    }, 3000);
+    return () => window.clearInterval(interval);
+  }, [loading, scanStatus]);
+
+  function applyScanResponse(data: Partial<ScanResponse>) {
+    setResults(data.results ?? []);
+    if (data.settings) setSettings(data.settings);
+    setSelected((current) => current && data.results?.some((item) => item.symbol === current) ? current : data.results?.[0]?.symbol ?? "");
+    setMode(data.mode ?? "demo");
+    setWarnings(data.warnings ?? []);
+    setScanStatus(data.scanStatus ?? "idle");
+    setLastRefreshedAt(data.lastScanFinishedAt ?? "");
+    setNextRefreshAt(data.nextRefreshAt ?? "");
+    setLoading(Boolean(data.isRefreshing));
+  }
+
+  function shouldRefresh(data: Partial<ScanResponse>) {
+    if (data.isRefreshing) return false;
+    if (!data.results?.length) return true;
+    if (!data.nextRefreshAt) return true;
+    return new Date(data.nextRefreshAt).getTime() <= Date.now();
+  }
+
+  async function startRefresh(showMessage: boolean) {
+    const data = await api.scan();
+    applyScanResponse(data);
+    if (showMessage) setMessage(data.isRefreshing ? "Refresh started. Cached results will stay visible while Schwab updates." : "Results are already current.");
+    api.brokerStatus().then(setBrokerStatus).catch(() => undefined);
+  }
 
   async function runScan() {
     setLoading(true);
     setMessage("");
     try {
-      const data = await api.scan();
-      setResults(data.results);
-      setSettings(data.settings);
-      setSelected(data.results[0]?.symbol ?? "");
-      setMode(data.mode);
-      setWarnings(data.warnings);
-      api.brokerStatus().then(setBrokerStatus).catch(() => undefined);
-      setMessage("Scan complete: " + data.results.length + " symbols scored.");
+      await startRefresh(true);
     } finally {
-      setLoading(false);
+      // Polling owns the final loading state while a refresh is running.
     }
   }
 
@@ -93,13 +131,14 @@ function App() {
       </header>
 
       <section className="status-strip">
-        <Stat icon={<Activity />} label="Mode" value={mode.toUpperCase()} />
+        <Stat icon={<Activity />} label="Scan" value={loading || scanStatus === "running" ? "REFRESHING" : scanStatus.toUpperCase()} />
         <Stat icon={<BarChart3 />} label="Symbols" value={String(results.length)} />
         <Stat icon={<CheckCircle2 />} label="Passing Universe" value={String(results.filter((item) => item.passesUniverse).length)} />
         <Stat icon={<SettingsIcon />} label="Schwab" value={brokerStatus?.ok ? "Connected" : settings?.hasBrokerCredentials ? "Connect" : "Setup Needed"} />
       </section>
 
       {message && <div className="notice">{message}</div>}
+      {(lastRefreshedAt || nextRefreshAt || loading) && <div className="notice">{loading ? "Refreshing in background... " : ""}{lastRefreshedAt ? "Last refreshed " + new Date(lastRefreshedAt).toLocaleTimeString() : "No completed scan yet"}{nextRefreshAt ? " · Next refresh " + new Date(nextRefreshAt).toLocaleTimeString() : ""}</div>}
       {warnings.length > 0 && (
         <section className="warning-strip">
           {warnings.slice(0, 4).map((warning) => <span key={warning}>{warning}</span>)}

@@ -1,5 +1,7 @@
 export type Grade = "A+" | "A" | "B" | "C" | "D" | "F";
 export type TradeDirection = "long" | "short";
+export type ScanMode = "live" | "demo" | "mixed";
+export type ScanStatus = "idle" | "running" | "complete" | "failed";
 
 export type Candle = {
   date: string;
@@ -126,8 +128,18 @@ export type BrokerStatus = {
   message: string;
 };
 
-export type ScanResponse = {
-  mode: "live" | "demo" | "mixed";
+export type ScanMetadata = {
+  scanStatus: ScanStatus;
+  lastScanStartedAt?: string;
+  lastScanFinishedAt?: string;
+  lastScanMode?: ScanMode;
+  lastScanWarnings?: string[];
+  nextRefreshAt?: string;
+  isRefreshing?: boolean;
+};
+
+export type ScanResponse = ScanMetadata & {
+  mode: ScanMode;
   results: ScanResult[];
   settings: Settings;
   warnings: string[];

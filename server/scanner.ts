@@ -1,12 +1,16 @@
-import type { LowerTimeframeConfluence, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { LowerTimeframeConfluence, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
+import { latestIndicators } from "./indicators";
 import { defaultSettings, gradeSetup, isSqueezeActive } from "./scoring";
 import { fetchOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
-import { latestIndicators } from "./indicators";
-import { getCachedResults, getSetting, saveScanResult, setSetting } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks, buildLowerTimeframeConfluence } from "./timeframes";
 import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
+
+const AUTO_REFRESH_MS = 15 * 60 * 1000;
+const SCAN_CONCURRENCY = 4;
+let activeScan: Promise<void> | null = null;
 
 export function readSettings(): Settings {
   const stored = getSetting<Partial<Settings>>("settings", {});
@@ -41,6 +45,62 @@ export function writeSettings(input: Partial<Settings>): Settings {
 }
 
 export async function runScan(): Promise<ScanResponse> {
+  return startScanRefresh();
+}
+
+export function startScanRefresh(scanRunner: () => Promise<ScanResponse> = runFullScan): ScanResponse {
+  if (!activeScan) {
+    const startedAt = new Date().toISOString();
+    setScanMetadata({
+      ...readScanMetadata(),
+      scanStatus: "running",
+      lastScanStartedAt: startedAt,
+      isRefreshing: true
+    });
+    activeScan = executeScanRefresh(scanRunner, startedAt).finally(() => {
+      activeScan = null;
+    });
+  }
+  return readCachedScanResponse();
+}
+
+export function readCachedScanResponse(): ScanResponse {
+  const metadata = readScanMetadata();
+  return {
+    mode: metadata.lastScanMode ?? "demo",
+    results: readDisplayResults(),
+    settings: readSettings(),
+    warnings: metadata.lastScanWarnings ?? [],
+    ...metadata,
+    scanStatus: activeScan ? "running" : metadata.scanStatus,
+    isRefreshing: Boolean(activeScan)
+  };
+}
+
+export function readScanMetadata(): ScanMetadata {
+  const stored = getScanMetadata();
+  return {
+    scanStatus: stored.scanStatus ?? "idle",
+    lastScanStartedAt: stored.lastScanStartedAt,
+    lastScanFinishedAt: stored.lastScanFinishedAt,
+    lastScanMode: stored.lastScanMode,
+    lastScanWarnings: stored.lastScanWarnings ?? [],
+    nextRefreshAt: stored.nextRefreshAt,
+    isRefreshing: Boolean(activeScan)
+  };
+}
+
+export function shouldAutoRefresh(): boolean {
+  const cached = readDisplayResults();
+  const metadata = readScanMetadata();
+  if (activeScan) return false;
+  if (!hasSchwabCredentials() || !hasSchwabTokens()) return false;
+  if (!cached.length) return true;
+  if (!metadata.nextRefreshAt) return true;
+  return new Date(metadata.nextRefreshAt).getTime() <= Date.now();
+}
+
+export async function runFullScan(): Promise<ScanResponse> {
   const settings = readSettings();
   const results: ScanResult[] = [];
   const scanWarnings = new Set<string>();
@@ -54,143 +114,26 @@ export async function runScan(): Promise<ScanResponse> {
     scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 universe with live market data.");
   }
 
-  for (const symbol of symbolsToScan) {
-    const resultWarnings: string[] = [];
-    let candlesSource: "schwab" | "demo" = "demo";
-    let optionsSource: "schwab" | "demo" = "demo";
-    let quote: SchwabQuote | undefined = quoteMap.get(symbol);
-    const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!canUseLiveSchwab || Boolean(demoFundamental(symbol)));
+  const outcomes = await mapLimit(symbolsToScan, SCAN_CONCURRENCY, (symbol) => scanSymbol({
+    symbol,
+    settings,
+    canUseLiveSchwab,
+    quote: quoteMap.get(symbol)
+  }));
 
-    try {
-      if (canUseLiveSchwab && !quote) {
-        try {
-          quote = await fetchQuote(symbol);
-        } catch (error) {
-          resultWarnings.push(readError(error, "Schwab quote request failed."));
-        }
-      }
-
-      if (canUseLiveSchwab && !quote) {
-        scanWarnings.add(symbol + ": Schwab did not return a quote; skipped.");
-        continue;
-      }
-
-      if (quote && quote.price <= settings.minPrice) {
-        scanWarnings.add(symbol + ": skipped because Schwab quote price $" + quote.price.toFixed(2) + " is below $" + settings.minPrice + ".");
-        continue;
-      }
-
-      if (quote?.beta !== undefined && quote.beta < settings.minBeta) {
-        scanWarnings.add(symbol + ": skipped because Schwab beta is below " + settings.minBeta + ".");
-        continue;
-      }
-      if (quote?.marketCap !== undefined && quote.marketCap < settings.minMarketCap) {
-        scanWarnings.add(symbol + ": skipped because Schwab market cap is below " + formatMoney(settings.minMarketCap) + ".");
-        continue;
-      }
-
-      if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
-        scanWarnings.add(symbol + ": skipped because Schwab average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
-        continue;
-      }
-
-      let candles = canUseLiveSchwab ? await fetchHistory(symbol) : [];
-      if (candles.length >= 50) {
-        candlesSource = "schwab";
-        usedLive = true;
-      }
-      if (candles.length < 50 && allowDemoFallback) {
-        if (canUseLiveSchwab) resultWarnings.push("Schwab returned fewer than 50 historical candles; demo candles were used.");
-        candles = demoCandles(symbol);
-        candlesSource = "demo";
-        usedDemo = true;
-      }
-      if (candles.length < 50) throw new Error("Not enough candle history.");
-
-      const price = quote?.price ?? candles[candles.length - 1].close;
-      if (quote) {
-        candles[candles.length - 1] = { ...candles[candles.length - 1], close: quote.price };
-      }
-
-      const weekly = weeklySqueezeFromDaily(candles);
-
-      const lowerTimeframeWarnings: string[] = [];
-      const lowerTimeframes = canUseLiveSchwab
-        ? await loadLowerTimeframeConfluence(symbol, lowerTimeframeWarnings)
-        : undefined;
-      resultWarnings.push(...lowerTimeframeWarnings);
-
-      let options: Awaited<ReturnType<typeof fetchOptions>> = [];
-      if (canUseLiveSchwab) {
-        try {
-          options = await fetchOptions(symbol, price);
-          if (options.length) {
-            optionsSource = "schwab";
-            usedLive = true;
-          }
-        } catch (error) {
-          resultWarnings.push(readError(error, "Schwab options request failed."));
-        }
-      }
-
-      if (!options.length && allowDemoFallback) {
-        if (canUseLiveSchwab) resultWarnings.push("No live Schwab option contracts met the filters; demo contracts were used.");
-        options = demoOptions(symbol, price);
-        optionsSource = "demo";
-        usedDemo = true;
-      }
-      const optionable = options.length > 0;
-
-      const result = gradeSetup({
-        symbol,
-        companyName: quote?.companyName,
-        candles,
-        fundamentals: mergeFundamentals(symbol, quote),
-        optionable,
-        options,
-        lowerTimeframes,
-        weeklyIndicators: weekly.indicators,
-        weeklySqueezeWarning: weekly.warning
-      });
-      result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
-      result.warnings.push(...resultWarnings);
-      resultWarnings.forEach((warning) => scanWarnings.add(symbol + ": " + warning));
-      if (shouldIncludeResult(result)) results.push(result);
-      saveScanResult(symbol, result);
-      await throttleIfLive();
-    } catch (error) {
-      if (canUseLiveSchwab) {
-        scanWarnings.add(symbol + ": " + (error instanceof Error ? error.message : "Scan failed."));
-        continue;
-      }
-      if (!allowDemoFallback || !demoFundamental(symbol)) continue;
-      const candles = demoCandles(symbol);
-      const price = candles[candles.length - 1].close;
-      const weekly = weeklySqueezeFromDaily(candles);
-      const fallback = gradeSetup({
-        symbol,
-        candles,
-        fundamentals: demoFundamental(symbol),
-        optionable: settings.useDemoDataWhenMissingApi,
-        options: settings.useDemoDataWhenMissingApi ? demoOptions(symbol, price) : [],
-        weeklyIndicators: weekly.indicators,
-        weeklySqueezeWarning: weekly.warning
-      });
-      fallback.dataSource = "demo";
-      fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
-      fallback.warnings.forEach((warning) => scanWarnings.add(symbol + ": " + warning));
-      if (shouldIncludeResult(fallback)) results.push(fallback);
-      saveScanResult(symbol, fallback);
-      usedDemo = true;
-    }
+  for (const outcome of outcomes) {
+    outcome.warnings.forEach((warning) => scanWarnings.add(warning));
+    if (outcome.result) results.push(outcome.result);
+    if (outcome.usedLive) usedLive = true;
+    if (outcome.usedDemo) usedDemo = true;
   }
 
-  return {
+  return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
     results: results.sort((a, b) => b.score / b.maxScore - a.score / a.maxScore),
     settings,
     warnings: [...scanWarnings].filter(shouldShowWarning)
-  };
+  });
 }
 
 export function resolveScanSymbols(): string[] {
@@ -199,6 +142,165 @@ export function resolveScanSymbols(): string[] {
 
 export function readDisplayResults(): ScanResult[] {
   return getCachedResults().filter((result): result is ScanResult => shouldIncludeResult(result as ScanResult));
+}
+
+export function __resetScanStateForTest() {
+  activeScan = null;
+  setScanMetadata({ scanStatus: "idle" });
+}
+
+async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, startedAt: string): Promise<void> {
+  try {
+    const response = await scanRunner();
+    replaceScanResults(response.results);
+    const finishedAt = new Date().toISOString();
+    setScanMetadata({
+      scanStatus: "complete",
+      lastScanStartedAt: startedAt,
+      lastScanFinishedAt: finishedAt,
+      lastScanMode: response.mode,
+      lastScanWarnings: response.warnings,
+      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
+      isRefreshing: false
+    });
+  } catch (error) {
+    const finishedAt = new Date().toISOString();
+    setScanMetadata({
+      ...readScanMetadata(),
+      scanStatus: "failed",
+      lastScanStartedAt: startedAt,
+      lastScanFinishedAt: finishedAt,
+      lastScanWarnings: [readError(error, "Scan failed.")],
+      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
+      isRefreshing: false
+    });
+  }
+}
+
+async function scanSymbol(input: {
+  symbol: string;
+  settings: Settings;
+  canUseLiveSchwab: boolean;
+  quote?: SchwabQuote;
+}): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean }> {
+  const { symbol, settings, canUseLiveSchwab } = input;
+  const warnings: string[] = [];
+  let usedLive = false;
+  let usedDemo = false;
+  let candlesSource: "schwab" | "demo" = "demo";
+  let optionsSource: "schwab" | "demo" = "demo";
+  let quote = input.quote;
+  const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!canUseLiveSchwab || Boolean(demoFundamental(symbol)));
+
+  try {
+    if (canUseLiveSchwab && !quote) {
+      try {
+        quote = await fetchQuote(symbol);
+      } catch (error) {
+        warnings.push(symbol + ": " + readError(error, "Schwab quote request failed."));
+      }
+    }
+
+    if (canUseLiveSchwab && !quote) {
+      warnings.push(symbol + ": Schwab did not return a quote; skipped.");
+      return { warnings, usedLive, usedDemo };
+    }
+
+    if (quote && quote.price <= settings.minPrice) {
+      warnings.push(symbol + ": skipped because Schwab quote price $" + quote.price.toFixed(2) + " is below $" + settings.minPrice + ".");
+      return { warnings, usedLive, usedDemo };
+    }
+    if (quote?.beta !== undefined && quote.beta < settings.minBeta) {
+      warnings.push(symbol + ": skipped because Schwab beta is below " + settings.minBeta + ".");
+      return { warnings, usedLive, usedDemo };
+    }
+    if (quote?.marketCap !== undefined && quote.marketCap < settings.minMarketCap) {
+      warnings.push(symbol + ": skipped because Schwab market cap is below " + formatMoney(settings.minMarketCap) + ".");
+      return { warnings, usedLive, usedDemo };
+    }
+    if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
+      warnings.push(symbol + ": skipped because Schwab average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
+      return { warnings, usedLive, usedDemo };
+    }
+
+    const lowerTimeframeWarnings: string[] = [];
+    const lowerTimeframePromise = canUseLiveSchwab ? loadLowerTimeframeConfluence(symbol, lowerTimeframeWarnings) : Promise.resolve(undefined);
+    let candles = canUseLiveSchwab ? await fetchHistory(symbol) : [];
+    if (candles.length >= 50) {
+      candlesSource = "schwab";
+      usedLive = true;
+    }
+    if (candles.length < 50 && allowDemoFallback) {
+      if (canUseLiveSchwab) warnings.push(symbol + ": Schwab returned fewer than 50 historical candles; demo candles were used.");
+      candles = demoCandles(symbol);
+      candlesSource = "demo";
+      usedDemo = true;
+    }
+    if (candles.length < 50) throw new Error("Not enough candle history.");
+
+    const price = quote?.price ?? candles[candles.length - 1].close;
+    if (quote) candles[candles.length - 1] = { ...candles[candles.length - 1], close: quote.price };
+    const weekly = weeklySqueezeFromDaily(candles);
+    const lowerTimeframes = await lowerTimeframePromise;
+    warnings.push(...lowerTimeframeWarnings.map((warning) => symbol + ": " + warning));
+
+    let options: Awaited<ReturnType<typeof fetchOptions>> = [];
+    if (canUseLiveSchwab) {
+      try {
+        options = await fetchOptions(symbol, price);
+        if (options.length) {
+          optionsSource = "schwab";
+          usedLive = true;
+        }
+      } catch (error) {
+        warnings.push(symbol + ": " + readError(error, "Schwab options request failed."));
+      }
+    }
+    if (!options.length && allowDemoFallback) {
+      if (canUseLiveSchwab) warnings.push(symbol + ": No live Schwab option contracts met the filters; demo contracts were used.");
+      options = demoOptions(symbol, price);
+      optionsSource = "demo";
+      usedDemo = true;
+    }
+
+    const result = gradeSetup({
+      symbol,
+      companyName: quote?.companyName,
+      candles,
+      fundamentals: mergeFundamentals(symbol, quote),
+      optionable: options.length > 0,
+      options,
+      lowerTimeframes,
+      weeklyIndicators: weekly.indicators,
+      weeklySqueezeWarning: weekly.warning
+    });
+    result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
+    result.warnings.push(...warnings.filter((warning) => warning.startsWith(symbol + ": ")).map((warning) => warning.slice(symbol.length + 2)));
+    await throttleIfLive();
+    return { result: shouldIncludeResult(result) ? result : undefined, warnings, usedLive, usedDemo };
+  } catch (error) {
+    if (canUseLiveSchwab) {
+      warnings.push(symbol + ": " + (error instanceof Error ? error.message : "Scan failed."));
+      return { warnings, usedLive, usedDemo };
+    }
+    if (!allowDemoFallback || !demoFundamental(symbol)) return { warnings, usedLive, usedDemo };
+    const candles = demoCandles(symbol);
+    const price = candles[candles.length - 1].close;
+    const weekly = weeklySqueezeFromDaily(candles);
+    const fallback = gradeSetup({
+      symbol,
+      candles,
+      fundamentals: demoFundamental(symbol),
+      optionable: settings.useDemoDataWhenMissingApi,
+      options: settings.useDemoDataWhenMissingApi ? demoOptions(symbol, price) : [],
+      weeklyIndicators: weekly.indicators,
+      weeklySqueezeWarning: weekly.warning
+    });
+    fallback.dataSource = "demo";
+    fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
+    warnings.push(...fallback.warnings.map((warning) => symbol + ": " + warning));
+    return { result: shouldIncludeResult(fallback) ? fallback : undefined, warnings, usedLive, usedDemo: true };
+  }
 }
 
 function shouldIncludeResult(result: ScanResult): boolean {
@@ -215,6 +317,16 @@ function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>
   } catch (error) {
     return { warning: readError(error, "Weekly squeeze could not be calculated.") };
   }
+}
+
+function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[] }): ScanResponse {
+  const metadata = readScanMetadata();
+  return {
+    ...input,
+    ...metadata,
+    scanStatus: activeScan ? "running" : metadata.scanStatus,
+    isRefreshing: Boolean(activeScan)
+  };
 }
 
 function readError(error: unknown, fallback: string): string {
@@ -251,6 +363,20 @@ function mergeFundamentals(symbol: string, quote?: SchwabQuote) {
     marketCap: quote?.marketCap ?? demo?.marketCap,
     avgDollarVolume20d: quote?.avgDollarVolume ?? demo?.avgDollarVolume20d
   };
+}
+
+async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 function formatMoney(value: number): string {

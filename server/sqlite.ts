@@ -1,12 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import type { ScanMetadata } from "../shared/types";
 
 const dbPath = resolve("data/screener.sqlite");
 
 function runSql(sql: string): string {
   mkdirSync(dirname(dbPath), { recursive: true });
-  return execFileSync("sqlite3", ["-json", dbPath, sql], { encoding: "utf8" });
+  return execFileSync("sqlite3", ["-json", dbPath, sql], { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 });
 }
 
 export function initDb() {
@@ -53,9 +54,24 @@ export function saveScanResult(symbol: string, payload: unknown) {
   `);
 }
 
+export function replaceScanResults(results: Array<{ symbol: string }>) {
+  runSql("DELETE FROM scan_results;");
+  for (const result of results) {
+    saveScanResult(result.symbol, result);
+  }
+}
+
 export function getCachedResults() {
   const rows = JSON.parse(runSql("SELECT payload FROM scan_results ORDER BY updated_at DESC;") || "[]") as { payload: string }[];
   return rows.map((row) => JSON.parse(row.payload));
+}
+
+export function getScanMetadata(): ScanMetadata {
+  return getSetting<ScanMetadata>("scanMetadata", { scanStatus: "idle" });
+}
+
+export function setScanMetadata(value: ScanMetadata) {
+  setSetting("scanMetadata", value);
 }
 
 

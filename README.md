@@ -9,9 +9,9 @@ npm install --cache .npm-cache
 npm run dev
 ```
 
-Open http://127.0.0.1:5173 and click **Run Scan**.
+Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The app can open immediately, but the automatic scan needs Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
+The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
 ```bash
 SCHWAB_APP_KEY=your_app_key_here
