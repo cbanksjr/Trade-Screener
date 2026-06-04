@@ -57,8 +57,8 @@ export function hasSchwabCredentials(): boolean {
   return Boolean(config.schwabAppKey && config.schwabAppSecret && config.schwabCallbackUrl);
 }
 
-export function hasSchwabTokens(): boolean {
-  return Boolean(readTokens()?.accessToken);
+export async function hasSchwabTokens(): Promise<boolean> {
+  return Boolean((await readTokens())?.accessToken);
 }
 
 export function getSchwabLoginUrl(): string {
@@ -93,7 +93,7 @@ export async function getSchwabStatus(sampleSymbol = "AAPL"): Promise<BrokerStat
     };
   }
 
-  const stored = readTokens();
+  const stored = await readTokens();
   if (!stored) {
     return {
       ...base,
@@ -470,7 +470,7 @@ async function exchangeAuthorizationCode(code: string) {
     code,
     redirect_uri: config.schwabCallbackUrl
   });
-  saveTokens(response);
+  await saveTokens(response);
 }
 
 async function refreshAccessToken(tokens: SchwabTokens): Promise<SchwabTokens> {
@@ -517,19 +517,19 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
 }
 
 async function getAccessToken(): Promise<string> {
-  const tokens = readTokens();
+  const tokens = await readTokens();
   if (!tokens) throw new Error("Schwab is not connected. Use Connect Schwab first.");
   if (new Date(tokens.accessTokenExpiresAt).getTime() > Date.now() + 60_000) return tokens.accessToken;
   return (await refreshAccessToken(tokens)).accessToken;
 }
 
-function readTokens(): SchwabTokens | undefined {
+async function readTokens(): Promise<SchwabTokens | undefined> {
   if (tokenCache !== null) return tokenCache;
-  tokenCache = getSetting<SchwabTokens | undefined>(TOKEN_SETTING, undefined);
+  tokenCache = await getSetting<SchwabTokens | undefined>(TOKEN_SETTING, undefined);
   return tokenCache;
 }
 
-function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens): SchwabTokens {
+async function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens): Promise<SchwabTokens> {
   const expiresIn = response.expires_in ?? 1800;
   const next: SchwabTokens = {
     accessToken: response.access_token,
@@ -538,7 +538,7 @@ function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens): Sch
     refreshTokenIssuedAt: response.refresh_token ? new Date().toISOString() : previous?.refreshTokenIssuedAt
   };
   tokenCache = next;
-  setSetting(TOKEN_SETTING, next);
+  await setSetting(TOKEN_SETTING, next);
   return next;
 }
 

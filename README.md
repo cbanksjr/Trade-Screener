@@ -23,7 +23,7 @@ ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key_here
 API_HTTPS=true
 ```
 
-Then restart the dev server. The local API runs HTTPS by default for Schwab OAuth and will generate a local self-signed certificate in `certs/` the first time it starts. The Settings panel will show whether Schwab is connected. If credentials are present but no token is stored, click **Connect Schwab** and complete the OAuth login. Schwab must be configured with the exact same HTTPS callback URL as `.env`.
+Then restart the dev server. The local API runs HTTPS by default for Schwab OAuth and will generate a local self-signed certificate in `certs/` the first time it starts. The app will show whether Schwab is connected. If credentials are present but no token is stored, click **Connect Schwab** and complete the OAuth login. Schwab must be configured with the exact same HTTPS callback URL as `.env`.
 
 The scan uses Schwab for:
 
@@ -31,7 +31,28 @@ The scan uses Schwab for:
 - `/marketdata/v1/pricehistory` for daily OHLCV history plus 30-minute intraday candles for 1h/4h confluence
 - `/marketdata/v1/chains` for 30-180 DTE call and put chains with Greeks
 
-The **See More** fundamentals page uses Schwab first, then Alpha Vantage as a supplemental source when Schwab leaves overview fields blank. Alpha Vantage fills fields such as market cap, beta, EPS, P/E ratio, dividend amount, and dividend yield when available. The page shows the source under each value and explains why important missing fields are unavailable.
+The **See More** fundamentals page uses Schwab first, then Alpha Vantage as a supplemental source when Schwab leaves overview fields blank. Alpha Vantage fills fields such as market cap, beta, EPS, P/E ratio, dividend amount, and dividend yield when available. The page explains why important missing fields are unavailable.
+
+## Hosting
+
+For a hosted private deployment, use a single Node web service plus managed Postgres. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted environments should use Postgres so scan results, Schwab OAuth tokens, and cached universe data survive deploys.
+
+Recommended Render setup:
+
+- Create a Render Postgres database.
+- Create a Render Web Service from this GitHub repo.
+- Build command: `npm install && npm run build`
+- Start command: `npm start`
+- Add environment variables:
+  - `NODE_ENV=production`
+  - `API_HTTPS=false`
+  - `DATABASE_URL=<Render Postgres internal connection string>`
+  - `PUBLIC_URL=https://YOUR-APP.onrender.com`
+  - `CLIENT_ORIGIN=https://YOUR-APP.onrender.com`
+  - `SCHWAB_CALLBACK_URL=https://YOUR-APP.onrender.com/api/schwab/callback`
+  - `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, and `ALPHA_VANTAGE_API_KEY`
+
+Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB_CALLBACK_URL`. Render provides public HTTPS, so the app disables its local self-signed HTTPS server in production.
 
 ## Automatic Universe
 

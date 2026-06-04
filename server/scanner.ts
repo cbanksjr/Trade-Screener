@@ -12,9 +12,9 @@ const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
 let activeScan: Promise<void> | null = null;
 
-export function readSettings(): Settings {
-  const stored = getSetting<Partial<Settings>>("settings", {});
-  const defaultUniverse = getDefaultUniverseStatus();
+export async function readSettings(): Promise<Settings> {
+  const stored = await getSetting<Partial<Settings>>("settings", {});
+  const defaultUniverse = await getDefaultUniverseStatus();
   return {
     minPrice: stored.minPrice ?? defaultSettings.minPrice,
     minBeta: stored.minBeta ?? defaultSettings.minBeta,
@@ -30,8 +30,8 @@ export function readSettings(): Settings {
   };
 }
 
-export function writeSettings(input: Partial<Settings>): Settings {
-  const current = readSettings();
+export async function writeSettings(input: Partial<Settings>): Promise<Settings> {
+  const current = await readSettings();
   const next: Settings = {
     ...current,
     minPrice: input.minPrice ?? current.minPrice,
@@ -40,7 +40,7 @@ export function writeSettings(input: Partial<Settings>): Settings {
     minAvgDollarVolume: input.minAvgDollarVolume ?? current.minAvgDollarVolume,
     useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi
   };
-  setSetting("settings", next);
+  await setSetting("settings", next);
   return readSettings();
 }
 
@@ -48,11 +48,11 @@ export async function runScan(): Promise<ScanResponse> {
   return startScanRefresh();
 }
 
-export function startScanRefresh(scanRunner: () => Promise<ScanResponse> = runFullScan): ScanResponse {
+export async function startScanRefresh(scanRunner: () => Promise<ScanResponse> = runFullScan): Promise<ScanResponse> {
   if (!activeScan) {
     const startedAt = new Date().toISOString();
-    setScanMetadata({
-      ...readScanMetadata(),
+    await setScanMetadata({
+      ...await readScanMetadata(),
       scanStatus: "running",
       lastScanStartedAt: startedAt,
       isRefreshing: true
@@ -64,12 +64,12 @@ export function startScanRefresh(scanRunner: () => Promise<ScanResponse> = runFu
   return readCachedScanResponse();
 }
 
-export function readCachedScanResponse(): ScanResponse {
-  const metadata = readScanMetadata();
+export async function readCachedScanResponse(): Promise<ScanResponse> {
+  const metadata = await readScanMetadata();
   return {
     mode: metadata.lastScanMode ?? "demo",
-    results: readDisplayResults(),
-    settings: readSettings(),
+    results: await readDisplayResults(),
+    settings: await readSettings(),
     warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
     ...metadata,
     scanStatus: activeScan ? "running" : metadata.scanStatus,
@@ -77,8 +77,8 @@ export function readCachedScanResponse(): ScanResponse {
   };
 }
 
-export function readScanMetadata(): ScanMetadata {
-  const stored = getScanMetadata();
+export async function readScanMetadata(): Promise<ScanMetadata> {
+  const stored = await getScanMetadata();
   return {
     scanStatus: stored.scanStatus ?? "idle",
     lastScanStartedAt: stored.lastScanStartedAt,
@@ -90,24 +90,24 @@ export function readScanMetadata(): ScanMetadata {
   };
 }
 
-export function shouldAutoRefresh(): boolean {
-  const cached = readDisplayResults();
-  const metadata = readScanMetadata();
+export async function shouldAutoRefresh(): Promise<boolean> {
+  const cached = await readDisplayResults();
+  const metadata = await readScanMetadata();
   if (activeScan) return false;
-  if (!hasSchwabCredentials() || !hasSchwabTokens()) return false;
+  if (!hasSchwabCredentials() || !await hasSchwabTokens()) return false;
   if (!cached.length) return true;
   if (!metadata.nextRefreshAt) return true;
   return new Date(metadata.nextRefreshAt).getTime() <= Date.now();
 }
 
 export async function runFullScan(): Promise<ScanResponse> {
-  const settings = readSettings();
+  const settings = await readSettings();
   const results: ScanResult[] = [];
   const scanWarnings = new Set<string>();
   let usedLive = false;
   let usedDemo = false;
-  const symbolsToScan = resolveScanSymbols();
-  const canUseLiveSchwab = hasSchwabCredentials() && hasSchwabTokens();
+  const symbolsToScan = await resolveScanSymbols();
+  const canUseLiveSchwab = hasSchwabCredentials() && await hasSchwabTokens();
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
 
   if (!canUseLiveSchwab) {
@@ -137,25 +137,25 @@ export async function runFullScan(): Promise<ScanResponse> {
   });
 }
 
-export function resolveScanSymbols(): string[] {
+export async function resolveScanSymbols(): Promise<string[]> {
   return getDefaultUniverseSymbols();
 }
 
-export function readDisplayResults(): ScanResult[] {
-  return getCachedResults().filter((result): result is ScanResult => shouldIncludeResult(result as ScanResult));
+export async function readDisplayResults(): Promise<ScanResult[]> {
+  return (await getCachedResults()).filter((result): result is ScanResult => shouldIncludeResult(result as ScanResult));
 }
 
-export function __resetScanStateForTest() {
+export async function __resetScanStateForTest() {
   activeScan = null;
-  setScanMetadata({ scanStatus: "idle" });
+  await setScanMetadata({ scanStatus: "idle" });
 }
 
 async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, startedAt: string): Promise<void> {
   try {
     const response = await scanRunner();
-    replaceScanResults(response.results);
+    await replaceScanResults(response.results);
     const finishedAt = new Date().toISOString();
-    setScanMetadata({
+    await setScanMetadata({
       scanStatus: "complete",
       lastScanStartedAt: startedAt,
       lastScanFinishedAt: finishedAt,
@@ -166,8 +166,8 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
     });
   } catch (error) {
     const finishedAt = new Date().toISOString();
-    setScanMetadata({
-      ...readScanMetadata(),
+    await setScanMetadata({
+      ...await readScanMetadata(),
       scanStatus: "failed",
       lastScanStartedAt: startedAt,
       lastScanFinishedAt: finishedAt,
@@ -321,8 +321,8 @@ function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>
   }
 }
 
-function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[] }): ScanResponse {
-  const metadata = readScanMetadata();
+async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[] }): Promise<ScanResponse> {
+  const metadata = await readScanMetadata();
   return {
     ...input,
     ...metadata,
@@ -389,7 +389,7 @@ function formatMoney(value: number): string {
 }
 
 async function throttleIfLive() {
-  if (!hasSchwabCredentials() || !hasSchwabTokens()) return;
+  if (!hasSchwabCredentials() || !await hasSchwabTokens()) return;
   await new Promise((resolve) => setTimeout(resolve, 120));
 }
 

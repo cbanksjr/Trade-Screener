@@ -5,8 +5,8 @@ import { getCachedResults, getScanMetadata, initDb, replaceScanResults, setScanM
 import { __resetScanStateForTest, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
 
 describe("scan symbol resolution", () => {
-  it("always uses the automatic S&P 500 + Nasdaq 100 universe", () => {
-    const symbols = resolveScanSymbols();
+  it("always uses the automatic S&P 500 + Nasdaq 100 universe", async () => {
+    const symbols = await resolveScanSymbols();
 
     expect(symbols.length).toBeGreaterThanOrEqual(defaultUniverseSymbols.length);
     expect(symbols).toContain("AAPL");
@@ -25,13 +25,13 @@ describe("background scan refresh", () => {
       });
     };
 
-    const response = startScanRefresh(runner);
+    const response = await startScanRefresh(runner);
 
     expect(response.isRefreshing).toBe(true);
     expect(response.scanStatus).toBe("running");
     expect(calls).toBe(1);
 
-    resolveScan(fakeResponse([]));
+    resolveScan(await fakeResponse([]));
     await settleBackgroundScan();
   }));
 
@@ -45,49 +45,49 @@ describe("background scan refresh", () => {
       });
     };
 
-    startScanRefresh(runner);
-    const second = startScanRefresh(runner);
+    await startScanRefresh(runner);
+    const second = await startScanRefresh(runner);
 
     expect(calls).toBe(1);
     expect(second.isRefreshing).toBe(true);
 
-    resolveScan(fakeResponse([]));
+    resolveScan(await fakeResponse([]));
     await settleBackgroundScan();
   }));
 
   it("loads cached results without starting a slow scan", async () => withDbRestore(async () => {
-    replaceScanResults([qualifyingResult("CACHE")]);
-    setScanMetadata({ scanStatus: "complete", lastScanMode: "demo", lastScanFinishedAt: "2026-05-30T12:00:00.000Z" });
+    await replaceScanResults([qualifyingResult("CACHE")]);
+    await setScanMetadata({ scanStatus: "complete", lastScanMode: "demo", lastScanFinishedAt: "2026-05-30T12:00:00.000Z" });
 
-    const response = readCachedScanResponse();
+    const response = await readCachedScanResponse();
 
     expect(response.results.map((result) => result.symbol)).toEqual(["CACHE"]);
     expect(response.isRefreshing).toBe(false);
   }));
 
   it("does not hard-filter cached results by daily or weekly squeeze state", async () => withDbRestore(async () => {
-    replaceScanResults([
+    await replaceScanResults([
       qualifyingResult("NOSQZ", indicator("none"), indicator("none"))
     ]);
 
-    expect(readDisplayResults().map((result) => result.symbol)).toEqual(["NOSQZ"]);
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["NOSQZ"]);
   }));
 
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
-    replaceScanResults([qualifyingResult("STALE")]);
-    expect(readDisplayResults().map((result) => result.symbol)).toEqual(["STALE"]);
+    await replaceScanResults([qualifyingResult("STALE")]);
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["STALE"]);
 
-    startScanRefresh(() => Promise.resolve(fakeResponse([])));
+    await startScanRefresh(() => fakeResponse([]));
     await settleBackgroundScan();
 
-    expect(readDisplayResults()).toEqual([]);
+    expect(await readDisplayResults()).toEqual([]);
   }));
 
   it("saves scan metadata after a completed refresh", async () => withDbRestore(async () => {
-    startScanRefresh(() => Promise.resolve(fakeResponse([qualifyingResult("META")], ["ok"] )));
+    await startScanRefresh(() => fakeResponse([qualifyingResult("META")], ["ok"] ));
     await settleBackgroundScan();
 
-    const metadata = getScanMetadata();
+    const metadata = await getScanMetadata();
     expect(metadata.scanStatus).toBe("complete");
     expect(metadata.lastScanStartedAt).toBeTruthy();
     expect(metadata.lastScanFinishedAt).toBeTruthy();
@@ -97,16 +97,16 @@ describe("background scan refresh", () => {
 });
 
 async function withDbRestore(run: () => Promise<void>) {
-  initDb();
-  const cached = getCachedResults() as Array<{ symbol: string }>;
-  const metadata = getScanMetadata();
+  await initDb();
+  const cached = await getCachedResults() as Array<{ symbol: string }>;
+  const metadata = await getScanMetadata();
   try {
-    __resetScanStateForTest();
+    await __resetScanStateForTest();
     await run();
   } finally {
-    __resetScanStateForTest();
-    replaceScanResults(cached);
-    setScanMetadata(metadata);
+    await __resetScanStateForTest();
+    await replaceScanResults(cached);
+    await setScanMetadata(metadata);
   }
 }
 
@@ -114,11 +114,11 @@ async function settleBackgroundScan() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-function fakeResponse(results: ScanResult[], warnings: string[] = []): ScanResponse {
+async function fakeResponse(results: ScanResult[], warnings: string[] = []): Promise<ScanResponse> {
   return {
     mode: "demo",
     results,
-    settings: readSettings() as Settings,
+    settings: await readSettings() as Settings,
     warnings,
     scanStatus: "idle"
   };

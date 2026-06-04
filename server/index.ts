@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, resolve } from "node:path";
 import http from "node:http";
 import https from "node:https";
 import cors from "cors";
@@ -14,8 +14,8 @@ import { aggregateDailyCandlesToWeeks, aggregateSequentialCandles } from "./time
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
 import type { Candle, ChartTimeframe } from "../shared/types";
 
-initDb();
-refreshUniverseIfNeeded();
+await initDb();
+await refreshUniverseIfNeeded();
 
 const app = express();
 app.use(cors({ origin: config.clientOrigin }));
@@ -25,18 +25,30 @@ app.get("/api/health", (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
 });
 
-app.get("/api/settings", (_req, res) => {
-  res.json(readSettings());
+app.get("/api/settings", async (_req, res, next) => {
+  try {
+    res.json(await readSettings());
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.put("/api/settings", (req, res) => {
-  res.json(writeSettings(req.body));
+app.put("/api/settings", async (req, res, next) => {
+  try {
+    res.json(await writeSettings(req.body));
+  } catch (error) {
+    next(error);
+  }
 });
 
-app.get("/api/results", (_req, res) => {
-  const response = readCachedScanResponse();
-  if (shouldAutoRefresh()) startScanRefresh();
-  res.json(response);
+app.get("/api/results", async (_req, res, next) => {
+  try {
+    const response = await readCachedScanResponse();
+    if (await shouldAutoRefresh()) void startScanRefresh();
+    res.json(response);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/schwab/status", async (_req, res, next) => {
@@ -79,14 +91,18 @@ app.post("/api/scan", async (_req, res, next) => {
   }
 });
 
-app.get("/api/scan/status", (_req, res) => {
-  res.json(readCachedScanResponse());
+app.get("/api/scan/status", async (_req, res, next) => {
+  try {
+    res.json(await readCachedScanResponse());
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/api/fundamentals/:symbol", async (req, res, next) => {
   try {
     const symbol = String(req.params.symbol ?? "").trim().toUpperCase();
-    const scanResult = readCachedScanResponse().results.find((result) => result.symbol === symbol);
+    const scanResult = (await readCachedScanResponse()).results.find((result) => result.symbol === symbol);
     res.json(await fetchFundamentalAnalysis(symbol, scanResult));
   } catch (error) {
     next(error);
@@ -97,7 +113,7 @@ app.get("/api/chart/:symbol", async (req, res, next) => {
   try {
     const symbol = String(req.params.symbol ?? "").trim().toUpperCase();
     const timeframe = chartTimeframe(String(req.query.timeframe ?? "1d"));
-    const cached = readCachedScanResponse().results.find((result) => result.symbol === symbol);
+    const cached = (await readCachedScanResponse()).results.find((result) => result.symbol === symbol);
     const warnings: string[] = [];
     let candles: Candle[] = [];
 
@@ -134,19 +150,27 @@ function chartTimeframe(value: string): ChartTimeframe {
   return value === "1h" || value === "4h" || value === "1w" ? value : "1d";
 }
 
+if (config.isProduction) {
+  const distPath = resolve("dist");
+  app.use(express.static(distPath));
+  app.get(/^\/(?!api\/).*/, (_req, res) => {
+    res.sendFile(resolve(distPath, "index.html"));
+  });
+}
+
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error." });
 });
 
-function refreshUniverseIfNeeded() {
-  if (hasCachedDefaultUniverse()) return;
+async function refreshUniverseIfNeeded() {
+  if (await hasCachedDefaultUniverse()) return;
   void refreshDefaultUniverse().catch((error) => {
     console.warn("Default universe startup refresh failed:", error instanceof Error ? error.message : error);
   });
 }
 
 cron.schedule("35 8 * * 1-5", () => {
-  startScanRefresh();
+  void startScanRefresh();
 }, { timezone: "America/Chicago" });
 
 cron.schedule("10 18 28-31 * *", () => {
@@ -160,9 +184,9 @@ const server = config.httpsEnabled
   ? https.createServer(loadHttpsCredentials(), app)
   : http.createServer(app);
 
-server.listen(config.port, "127.0.0.1", () => {
+server.listen(config.port, config.host, () => {
   const protocol = config.httpsEnabled ? "https" : "http";
-  console.log(`Options swing screener API running at ${protocol}://127.0.0.1:${config.port}`);
+  console.log(`Options swing screener API running at ${protocol}://${config.host}:${config.port}`);
 });
 
 function loadHttpsCredentials() {

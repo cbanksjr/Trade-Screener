@@ -16,8 +16,8 @@ export function getDefaultUniverseName(): string {
   return defaultUniverseName;
 }
 
-export function getDefaultUniverseSymbols(): string[] {
-  return resolveDefaultUniverseSymbols(getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined));
+export async function getDefaultUniverseSymbols(): Promise<string[]> {
+  return resolveDefaultUniverseSymbols(await getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined));
 }
 
 export function resolveDefaultUniverseSymbols(cached?: UniverseCache): string[] {
@@ -25,16 +25,16 @@ export function resolveDefaultUniverseSymbols(cached?: UniverseCache): string[] 
   return defaultUniverseSymbols;
 }
 
-export function hasCachedDefaultUniverse(): boolean {
-  const cached = getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined);
+export async function hasCachedDefaultUniverse(): Promise<boolean> {
+  const cached = await getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined);
   return resolveDefaultUniverseSymbols(cached) === cached?.symbols;
 }
 
-export function getDefaultUniverseStatus() {
-  const cached = getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined);
+export async function getDefaultUniverseStatus() {
+  const cached = await getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined);
   return {
     name: defaultUniverseName,
-    count: getDefaultUniverseSymbols().length,
+    count: (await getDefaultUniverseSymbols()).length,
     bundledCount: defaultUniverseSymbols.length,
     lastCheckedAt: cached?.updatedAt,
     source: cached?.source ?? "bundled",
@@ -56,7 +56,7 @@ export async function refreshDefaultUniverse(): Promise<UniverseCache> {
     throw new Error(`Default universe refresh returned only ${refreshed.length} symbols.`);
   }
 
-  const previous = getDefaultUniverseSymbols();
+  const previous = await getDefaultUniverseSymbols();
   const next: UniverseCache = {
     symbols: refreshed,
     updatedAt: new Date().toISOString(),
@@ -64,7 +64,7 @@ export async function refreshDefaultUniverse(): Promise<UniverseCache> {
     added: refreshed.filter((symbol) => !previous.includes(symbol)),
     removed: previous.filter((symbol) => !refreshed.includes(symbol))
   };
-  setSetting(UNIVERSE_SETTING, next);
+  await setSetting(UNIVERSE_SETTING, next);
   return next;
 }
 
