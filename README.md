@@ -35,21 +35,25 @@ The **See More** fundamentals page uses Schwab first, then Alpha Vantage as a su
 
 ## Hosting
 
-For a hosted private deployment, use a single Node web service plus managed Postgres. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted environments should use Postgres so scan results, Schwab OAuth tokens, and cached universe data survive deploys.
+For a hosted private deployment, use **Supabase Free Postgres** for persistence and a **Render Free Web Service** for the app. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted deployments should use Supabase so scan results, Schwab OAuth tokens, and cached universe data survive redeploys.
 
-Recommended Render setup:
+Render Free web services can sleep after inactivity. The app is built around that tradeoff: cached results load first after wake-up, and fresh scans run when you open the app or click **Run Scan**. The scheduled 15-minute refresh only runs while the Render service is awake.
 
-- Create a Render Postgres database.
-- Create a Render Web Service from this GitHub repo.
+Recommended Supabase + Render setup:
+
+- Create a Supabase project.
+- In Supabase database connection settings, copy the **Shared Pooler / Session mode** connection string. Do not use the direct IPv6-only connection string for Render Free.
+- Create a Render Free Web Service from this GitHub repo.
 - Build command: `npm install && npm run build`
 - Start command: `npm start`
-- Add environment variables:
+- Add environment variables in Render:
   - `NODE_ENV=production`
   - `API_HTTPS=false`
-  - `DATABASE_URL=<Render Postgres internal connection string>`
-  - `PUBLIC_URL=https://YOUR-APP.onrender.com`
-  - `CLIENT_ORIGIN=https://YOUR-APP.onrender.com`
-  - `SCHWAB_CALLBACK_URL=https://YOUR-APP.onrender.com/api/schwab/callback`
+  - `DATABASE_URL=<Supabase shared pooler session-mode connection string>`
+  - `DATABASE_SSL=true`
+  - `PUBLIC_URL=https://trade-screener-auyv.onrender.com`
+  - `CLIENT_ORIGIN=https://trade-screener-auyv.onrender.com`
+  - `SCHWAB_CALLBACK_URL=https://trade-screener-auyv.onrender.com/api/schwab/callback`
   - `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, and `ALPHA_VANTAGE_API_KEY`
 
 Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB_CALLBACK_URL`. Render provides public HTTPS, so the app disables its local self-signed HTTPS server in production.
@@ -58,7 +62,7 @@ Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB
 
 The screener always scans a de-duped **S&P 500 + Nasdaq 100** universe. There is no user-managed universe workflow in this version.
 
-The checked-in universe is a safe last-known-good fallback. On startup, the server attempts to refresh the universe from public S&P 500 and Nasdaq 100 source pages if no valid cached public-source universe exists. At the end of every month, it checks those sources again and caches the refreshed symbol list in `data/screener.sqlite`. If a public-source refresh fails, the app keeps using the last cached list or the bundled fallback.
+The checked-in universe is a safe last-known-good fallback. On startup, the server attempts to refresh the universe from public S&P 500 and Nasdaq 100 source pages if no valid cached public-source universe exists. At the end of every month, it checks those sources again and caches the refreshed symbol list in the configured database. If a public-source refresh fails, the app keeps using the last cached list or the bundled fallback.
 
 OpenAI API is not used for universe gathering in this version. The stock universe comes from deterministic public-source parsing plus the local cache, while Schwab remains the market-data source for screening.
 

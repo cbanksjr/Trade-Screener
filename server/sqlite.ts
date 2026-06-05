@@ -7,10 +7,14 @@ import type { ScanMetadata } from "../shared/types";
 const dbPath = resolve("data/screener.sqlite");
 const databaseUrl = process.env.DATABASE_URL ?? "";
 const usePostgres = Boolean(databaseUrl);
+const databaseSsl = process.env.DATABASE_SSL;
+const usePostgresSsl = databaseSsl
+  ? databaseSsl !== "false"
+  : isSupabaseDatabaseUrl(databaseUrl);
 const pool = usePostgres
   ? new pg.Pool({
     connectionString: databaseUrl,
-    ssl: (process.env.DATABASE_SSL ?? "false") === "true" ? { rejectUnauthorized: false } : undefined
+    ssl: usePostgresSsl ? { rejectUnauthorized: false } : undefined
   })
   : undefined;
 
@@ -190,4 +194,8 @@ async function pgQuery<T extends pg.QueryResultRow = pg.QueryResultRow>(sql: str
 async function pgClient(): Promise<pg.PoolClient> {
   if (!pool) throw new Error("Postgres pool was not initialized.");
   return pool.connect();
+}
+
+function isSupabaseDatabaseUrl(url: string): boolean {
+  return /(?:supabase\.co|supabase\.com)/i.test(url);
 }
