@@ -95,23 +95,12 @@ describe("Schwab response normalizers", () => {
       dividendStatus: "unknown",
       warnings: []
     });
-    expect(analysis.sources.price).toBe("Schwab");
-    expect(analysis.missingReasons.marketCap).toContain("Not provided");
   });
 
-  it("merges Schwab, Alpha Vantage, and cached scan fundamentals by priority", () => {
+  it("uses Schwab fundamentals only and keeps scan context separate", () => {
     const analysis = mergeFundamentalAnalysis({
       symbol: "GAP",
       schwab: { symbol: "GAP", price: 50, beta: 1.2 },
-      alphaVantage: {
-        symbol: "GAP",
-        companyName: "Gap Filler Inc",
-        beta: 2.4,
-        marketCap: 5000000000,
-        eps: 4.25,
-        peRatio: 18.3
-      },
-      nextEarningsDate: "2099-01-25",
       scanResult: {
         symbol: "GAP",
         setupDirection: "long",
@@ -146,17 +135,14 @@ describe("Schwab response normalizers", () => {
         lastUpdated: "2026-05-31T00:00:00.000Z",
         warnings: []
       },
-      providerWarnings: []
+      warnings: []
     });
 
     expect(analysis.beta).toBe(1.2);
-    expect(analysis.sources.beta).toBe("Schwab");
-    expect(analysis.marketCap).toBe(5000000000);
-    expect(analysis.sources.marketCap).toBe("Alpha Vantage");
-    expect(analysis.avgDollarVolume).toBe(750000000);
-    expect(analysis.sources.avgDollarVolume).toBe("Cached scan");
-    expect(analysis.nextEarningsDate).toBe("2099-01-25");
-    expect(analysis.sources.nextEarningsDate).toBe("Alpha Vantage");
+    expect(analysis.marketCap).toBeNull();
+    expect(analysis.avgDollarVolume).toBeNull();
+    expect(analysis.eps).toBeNull();
+    expect(analysis.peRatio).toBeNull();
     expect(analysis.scanContext?.grade).toBe("A");
   });
 
@@ -176,13 +162,7 @@ describe("Schwab response normalizers", () => {
     const analysis = mergeFundamentalAnalysis({
       symbol: "TSLA",
       schwab: quote,
-      alphaVantage: {
-        symbol: "TSLA",
-        dividendAmount: 0,
-        dividendYield: 0,
-        explicitZeroDividend: true
-      },
-      providerWarnings: []
+      warnings: []
     });
 
     expect(analysis.dividendAmount).toBe(0);
@@ -193,12 +173,13 @@ describe("Schwab response normalizers", () => {
   it("marks positive dividend values as pays", () => {
     const analysis = mergeFundamentalAnalysis({
       symbol: "DIV",
-      alphaVantage: {
+      schwab: {
         symbol: "DIV",
+        price: 100,
         dividendAmount: 1.2,
         dividendYield: 2.4
       },
-      providerWarnings: []
+      warnings: []
     });
 
     expect(analysis.dividendStatus).toBe("pays");
@@ -207,11 +188,12 @@ describe("Schwab response normalizers", () => {
   it("marks missing dividend values as unknown", () => {
     const analysis = mergeFundamentalAnalysis({
       symbol: "UNK",
-      alphaVantage: {
+      schwab: {
         symbol: "UNK",
+        price: 100,
         marketCap: 10000000000
       },
-      providerWarnings: []
+      warnings: []
     });
 
     expect(analysis.dividendStatus).toBe("unknown");

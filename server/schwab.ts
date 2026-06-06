@@ -1,6 +1,5 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
-import { fetchAlphaVantageEarningsCalendar, fetchAlphaVantageOverview, type AlphaVantageOverview } from "./alphaVantage";
 import { getSetting, setSetting } from "./sqlite";
 import type { BrokerStatus, Candle, FundamentalAnalysis, OptionContract, ScanResult } from "../shared/types";
 
@@ -129,28 +128,21 @@ export async function fetchQuote(symbol: string): Promise<SchwabQuote | undefine
 export async function fetchFundamentalAnalysis(symbol: string, scanResult?: ScanResult): Promise<FundamentalAnalysis> {
   const upperSymbol = symbol.trim().toUpperCase();
   let quote: SchwabQuote | undefined;
-  const providerWarnings: string[] = [];
+  const warnings: string[] = [];
 
   try {
     quote = await fetchQuote(upperSymbol);
   } catch (error) {
-    providerWarnings.push(error instanceof Error ? error.message : "Schwab fundamentals request failed.");
+    warnings.push(error instanceof Error ? error.message : "Schwab fundamentals request failed.");
   }
 
-  if (!quote) providerWarnings.push("Schwab did not return fundamentals for " + upperSymbol + ".");
-
-  const alphaVantage = await fetchAlphaVantageOverview(upperSymbol);
-  if (alphaVantage.warning) providerWarnings.push(alphaVantage.warning);
-  const earningsCalendar = await fetchAlphaVantageEarningsCalendar(upperSymbol);
-  if (earningsCalendar.warning) providerWarnings.push(earningsCalendar.warning);
+  if (!quote) warnings.push("Schwab did not return fundamentals for " + upperSymbol + ".");
 
   return mergeFundamentalAnalysis({
     symbol: upperSymbol,
     schwab: quote,
-    alphaVantage: alphaVantage.overview,
-    nextEarningsDate: earningsCalendar.nextEarningsDate,
     scanResult,
-    providerWarnings
+    warnings
   });
 }
 
@@ -279,133 +271,54 @@ export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
 }
 
 export function normalizeFundamentalAnalysis(quote: SchwabQuote, scanResult?: ScanResult): FundamentalAnalysis {
-  return mergeFundamentalAnalysis({ symbol: quote.symbol, schwab: quote, scanResult, providerWarnings: [] });
+  return mergeFundamentalAnalysis({ symbol: quote.symbol, schwab: quote, scanResult, warnings: [] });
 }
 
 export function mergeFundamentalAnalysis(input: {
   symbol: string;
   schwab?: SchwabQuote;
-  alphaVantage?: AlphaVantageOverview;
-  nextEarningsDate?: string;
   scanResult?: ScanResult;
-  providerWarnings: string[];
+  warnings: string[];
 }): FundamentalAnalysis {
-  const sources: Record<string, string> = {};
-  const missingReasons: Record<string, string> = {};
-  const providerWarnings = [...new Set(input.providerWarnings.filter(Boolean))];
-  const sourceStatus = input.schwab || input.alphaVantage ? "live" : "unavailable";
-  const symbol = input.schwab?.symbol ?? input.alphaVantage?.symbol ?? input.symbol;
-  const companyName = pickField("companyName", [
-    ["Schwab", input.schwab?.companyName],
-    ["Alpha Vantage", input.alphaVantage?.companyName],
-    ["Cached scan", input.scanResult?.companyName]
-  ], sources);
+  const warnings = [...new Set(input.warnings.filter(Boolean))];
+  const sourceStatus = input.schwab ? "live" : "unavailable";
+  const symbol = input.schwab?.symbol ?? input.symbol;
 
-  const analysis: FundamentalAnalysis = {
+  return {
     symbol,
-    companyName,
-    price: pickField("price", [["Schwab", input.schwab?.price], ["Cached scan", input.scanResult?.price]], sources) ?? null,
-    volume: pickField("volume", [["Schwab", input.schwab?.volume]], sources) ?? null,
-    averageVolume: pickField("averageVolume", [["Schwab", input.schwab?.averageVolume]], sources) ?? null,
-    avgDollarVolume: pickField("avgDollarVolume", [["Schwab", input.schwab?.avgDollarVolume], ["Cached scan", input.scanResult?.avgDollarVolume20d]], sources) ?? null,
-    marketCap: pickField("marketCap", [["Schwab", input.schwab?.marketCap], ["Alpha Vantage", input.alphaVantage?.marketCap], ["Cached scan", input.scanResult?.marketCap ?? undefined]], sources) ?? null,
-    beta: pickField("beta", [["Schwab", input.schwab?.beta], ["Alpha Vantage", input.alphaVantage?.beta], ["Cached scan", input.scanResult?.beta ?? undefined]], sources) ?? null,
-    eps: pickField("eps", [["Schwab", input.schwab?.eps], ["Alpha Vantage", input.alphaVantage?.eps]], sources) ?? null,
-    peRatio: pickField("peRatio", [["Schwab", input.schwab?.peRatio], ["Alpha Vantage", input.alphaVantage?.peRatio]], sources) ?? null,
-    dividendAmount: pickField("dividendAmount", [["Schwab", input.schwab?.dividendAmount], ["Alpha Vantage", input.alphaVantage?.dividendAmount]], sources) ?? null,
-    dividendYield: pickField("dividendYield", [["Schwab", input.schwab?.dividendYield], ["Alpha Vantage", input.alphaVantage?.dividendYield]], sources) ?? null,
-    dividendFrequency: pickField("dividendFrequency", [["Schwab", input.schwab?.dividendFrequency]], sources),
-    dividendPayAmount: pickField("dividendPayAmount", [["Schwab", input.schwab?.dividendPayAmount]], sources) ?? null,
-    dividendPayDate: pickField("dividendPayDate", [["Schwab", input.schwab?.dividendPayDate], ["Alpha Vantage", input.alphaVantage?.dividendPayDate]], sources),
-    dividendExDate: pickField("dividendExDate", [["Schwab", input.schwab?.dividendExDate], ["Alpha Vantage", input.alphaVantage?.dividendExDate]], sources),
-    lastEarningsDate: pickField("lastEarningsDate", [["Schwab", input.schwab?.lastEarningsDate]], sources),
-    nextEarningsDate: pickField("nextEarningsDate", [["Alpha Vantage", input.nextEarningsDate]], sources),
+    companyName: input.schwab?.companyName,
+    price: input.schwab?.price ?? null,
+    volume: input.schwab?.volume ?? null,
+    averageVolume: input.schwab?.averageVolume ?? null,
+    avgDollarVolume: input.schwab?.avgDollarVolume ?? null,
+    marketCap: input.schwab?.marketCap ?? null,
+    beta: input.schwab?.beta ?? null,
+    eps: input.schwab?.eps ?? null,
+    peRatio: input.schwab?.peRatio ?? null,
+    dividendAmount: input.schwab?.dividendAmount ?? null,
+    dividendYield: input.schwab?.dividendYield ?? null,
+    dividendFrequency: input.schwab?.dividendFrequency,
+    dividendPayAmount: input.schwab?.dividendPayAmount ?? null,
+    dividendPayDate: input.schwab?.dividendPayDate,
+    dividendExDate: input.schwab?.dividendExDate,
+    lastEarningsDate: input.schwab?.lastEarningsDate,
     sourceStatus,
     dividendStatus: dividendStatus(input),
-    warnings: providerWarnings,
-    sources,
-    missingReasons,
-    providerWarnings,
+    warnings,
     scanContext: input.scanResult ? scanContext(input.scanResult) : undefined
   };
-
-  addMissingReasons(analysis, input);
-  return analysis;
-}
-
-function pickField<T>(field: string, candidates: Array<[string, T | null | undefined]>, sources: Record<string, string>): T | undefined {
-  for (const [source, value] of candidates) {
-    if (value !== null && value !== undefined && value !== "") {
-      sources[field] = source;
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function addMissingReasons(analysis: FundamentalAnalysis, input: {
-  schwab?: SchwabQuote;
-  alphaVantage?: AlphaVantageOverview;
-  scanResult?: ScanResult;
-  providerWarnings: string[];
-}) {
-  const schwabAvailable = Boolean(input.schwab);
-  const alphaAvailable = Boolean(input.alphaVantage);
-  const reason = missingReason(schwabAvailable, alphaAvailable, input.providerWarnings);
-
-  for (const field of [
-    "price",
-    "volume",
-    "averageVolume",
-    "avgDollarVolume",
-    "marketCap",
-    "beta",
-    "eps",
-    "peRatio",
-    "dividendAmount",
-    "dividendYield",
-    "dividendFrequency",
-    "dividendPayAmount",
-    "dividendPayDate",
-    "dividendExDate",
-    "lastEarningsDate",
-    "nextEarningsDate"
-  ]) {
-    if (analysis.sources[field]) continue;
-    analysis.missingReasons[field] = dividendField(field)
-      ? "No dividend or earnings value was reported by the connected fundamentals sources."
-      : reason;
-  }
 }
 
 function dividendStatus(input: {
   schwab?: SchwabQuote;
-  alphaVantage?: AlphaVantageOverview;
 }): FundamentalAnalysis["dividendStatus"] {
-  const amount = input.schwab?.dividendAmount ?? input.alphaVantage?.dividendAmount;
-  const yieldValue = input.schwab?.dividendYield ?? input.alphaVantage?.dividendYield;
-  const hasDividendDate = Boolean(input.schwab?.dividendPayDate || input.alphaVantage?.dividendPayDate || input.schwab?.dividendExDate || input.alphaVantage?.dividendExDate);
+  const amount = input.schwab?.dividendAmount;
+  const yieldValue = input.schwab?.dividendYield;
+  const hasDividendDate = Boolean(input.schwab?.dividendPayDate || input.schwab?.dividendExDate);
 
   if ((amount !== undefined && amount > 0) || (yieldValue !== undefined && yieldValue > 0) || hasDividendDate) return "pays";
-  if (input.schwab?.explicitZeroDividend || input.alphaVantage?.explicitZeroDividend) return "does_not_pay";
+  if (input.schwab?.explicitZeroDividend) return "does_not_pay";
   return "unknown";
-}
-
-function missingReason(schwabAvailable: boolean, alphaAvailable: boolean, warnings: string[]): string {
-  if (!schwabAvailable && !alphaAvailable) {
-    return warnings.length ? "Neither Schwab nor Alpha Vantage returned this value." : "No fundamentals source returned this value.";
-  }
-  if (!alphaAvailable && warnings.some((warning) => warning.includes("Alpha Vantage API key is missing"))) {
-    return "Schwab did not provide this value, and Alpha Vantage is not configured.";
-  }
-  if (!alphaAvailable && warnings.some((warning) => warning.includes("Alpha Vantage"))) {
-    return "Schwab did not provide this value, and Alpha Vantage could not fill it.";
-  }
-  return "Not provided by Schwab or Alpha Vantage for this symbol.";
-}
-
-function dividendField(field: string): boolean {
-  return field.startsWith("dividend") || field === "lastEarningsDate" || field === "nextEarningsDate";
 }
 
 export function normalizeSchwabHistory(data: SchwabPriceHistoryResponse, options: { includeTime?: boolean } = {}): Candle[] {
@@ -627,7 +540,7 @@ function unavailableFundamentals(symbol: string, scanResult: ScanResult | undefi
   const analysis = mergeFundamentalAnalysis({
     symbol,
     scanResult,
-    providerWarnings: [warning]
+    warnings: [warning]
   });
   analysis.warnings = [warning];
   return analysis;

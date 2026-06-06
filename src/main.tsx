@@ -47,8 +47,6 @@ type ThemeMode = "light" | "dark";
 type FundamentalItem = {
   label: string;
   value: string;
-  missingReason?: string;
-  optional?: boolean;
 };
 
 function App() {
@@ -255,10 +253,7 @@ function isDisplayWarning(warning: string): boolean {
 }
 
 function isFundamentalsDisplayWarning(warning: string): boolean {
-  return ![
-    "Alpha Vantage earnings calendar request failed",
-    "Alpha Vantage did not return a future earnings date"
-  ].some((message) => warning.includes(message));
+  return Boolean(warning);
 }
 
 function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
@@ -563,16 +558,16 @@ function FundamentalsPage({ symbol, results, onBack }: { symbol: string; results
 
       <div className="fundamentals-grid">
         <FundamentalCard title="Market Snapshot" items={visibleFundamentalItems([
-          fundamentalItem(data, "price", "Last Price", moneyOrUnavailable(data?.price)),
-          fundamentalItem(data, "volume", "Volume", numberOrUnavailable(data?.volume)),
-          fundamentalItem(data, "averageVolume", "Average Volume", numberOrUnavailable(data?.averageVolume)),
-          fundamentalItem(data, "avgDollarVolume", "Average Dollar Volume", moneyOrUnavailable(data?.avgDollarVolume))
+          fundamentalItem("Last Price", moneyOrUnavailable(data?.price)),
+          fundamentalItem("Volume", numberOrUnavailable(data?.volume)),
+          fundamentalItem("Average Volume", numberOrUnavailable(data?.averageVolume)),
+          fundamentalItem("Average Dollar Volume", moneyOrUnavailable(data?.avgDollarVolume))
         ])} />
         <FundamentalCard title="Company Profile" items={visibleFundamentalItems([
-          fundamentalItem(data, "marketCap", "Market Cap", moneyOrUnavailable(data?.marketCap)),
-          fundamentalItem(data, "beta", "Beta", decimalOrUnavailable(data?.beta)),
-          fundamentalItem(data, "eps", "EPS", decimalOrUnavailable(data?.eps)),
-          fundamentalItem(data, "peRatio", "P/E Ratio", decimalOrUnavailable(data?.peRatio))
+          fundamentalItem("Market Cap", moneyOrUnavailable(data?.marketCap)),
+          fundamentalItem("Beta", decimalOrUnavailable(data?.beta)),
+          fundamentalItem("EPS", decimalOrUnavailable(data?.eps)),
+          fundamentalItem("P/E Ratio", decimalOrUnavailable(data?.peRatio))
         ])} />
         <FundamentalCard title="Dividends & Earnings" items={visibleFundamentalItems([
           dividendStatusItem(data),
@@ -584,6 +579,7 @@ function FundamentalsPage({ symbol, results, onBack }: { symbol: string; results
 }
 
 function FundamentalCard({ title, items }: { title: string; items: FundamentalItem[] }) {
+  if (!items.length) return null;
   return (
     <section className="panel fundamental-card">
       <div className="panel-head">
@@ -593,10 +589,7 @@ function FundamentalCard({ title, items }: { title: string; items: FundamentalIt
         {items.map((item) => (
           <div className="fundamental-row" key={item.label}>
             <span>{item.label}</span>
-            <strong>
-              {item.value}
-              {item.missingReason && <small>{item.missingReason}</small>}
-            </strong>
+            <strong>{item.value}</strong>
           </div>
         ))}
       </div>
@@ -612,13 +605,8 @@ function EmptyState({ runScan }: { runScan: () => void }) {
   return <button className="empty" onClick={runScan}>Run the first scan</button>;
 }
 
-function fundamentalItem(analysis: FundamentalAnalysis | null, field: string, label: string, value: string, optional = false): FundamentalItem {
-  return {
-    label,
-    value,
-    optional,
-    missingReason: value === "Unavailable" ? analysis?.missingReasons[field] ?? "Not returned by the connected fundamentals sources." : undefined
-  };
+function fundamentalItem(label: string, value: string): FundamentalItem {
+  return { label, value };
 }
 
 function dividendStatusItem(analysis: FundamentalAnalysis | null): FundamentalItem {
@@ -630,8 +618,7 @@ function dividendStatusItem(analysis: FundamentalAnalysis | null): FundamentalIt
   }
   return {
     label: "Dividend Status",
-    value: "Not verified",
-    missingReason: "Not verified from available fundamentals data."
+    value: "Unavailable"
   };
 }
 
@@ -640,25 +627,22 @@ function dividendFundamentalItems(analysis: FundamentalAnalysis | null): Fundame
     return [
       { label: "Dividend Amount", value: "$0" },
       { label: "Dividend Yield", value: "0.00%" },
-      { label: "Dividend Frequency", value: "N/A - no dividend" },
-      { label: "Dividend Pay Date", value: "N/A - no dividend" },
-      { label: "Ex-Dividend Date", value: "N/A - no dividend" },
-      fundamentalItem(analysis, "lastEarningsDate", "Last Earnings", dateOrUnavailable(analysis.lastEarningsDate))
+      fundamentalItem("Last Earnings", dateOrUnavailable(analysis.lastEarningsDate))
     ];
   }
 
   return [
-    fundamentalItem(analysis, "dividendAmount", "Dividend Amount", moneyOrUnavailable(analysis?.dividendAmount)),
-    fundamentalItem(analysis, "dividendYield", "Dividend Yield", percentOrUnavailable(analysis?.dividendYield)),
-    fundamentalItem(analysis, "dividendFrequency", "Dividend Frequency", textOrUnavailable(analysis?.dividendFrequency)),
-    fundamentalItem(analysis, "dividendPayDate", "Dividend Pay Date", dateOrUnavailable(analysis?.dividendPayDate)),
-    fundamentalItem(analysis, "dividendExDate", "Ex-Dividend Date", dateOrUnavailable(analysis?.dividendExDate)),
-    fundamentalItem(analysis, "lastEarningsDate", "Last Earnings", dateOrUnavailable(analysis?.lastEarningsDate))
+    fundamentalItem("Dividend Amount", moneyOrUnavailable(analysis?.dividendAmount)),
+    fundamentalItem("Dividend Yield", percentOrUnavailable(analysis?.dividendYield)),
+    fundamentalItem("Dividend Frequency", textOrUnavailable(analysis?.dividendFrequency)),
+    fundamentalItem("Dividend Pay Date", dateOrUnavailable(analysis?.dividendPayDate)),
+    fundamentalItem("Ex-Dividend Date", dateOrUnavailable(analysis?.dividendExDate)),
+    fundamentalItem("Last Earnings", dateOrUnavailable(analysis?.lastEarningsDate))
   ];
 }
 
 function visibleFundamentalItems(items: FundamentalItem[]): FundamentalItem[] {
-  return items.filter((item) => !item.optional || item.value !== "Unavailable");
+  return items.filter((item) => item.value !== "Unavailable");
 }
 
 function timeframeLabel(value: string | undefined): string {

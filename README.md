@@ -19,7 +19,6 @@ The app can open immediately from saved results, but background refreshes need S
 SCHWAB_APP_KEY=your_app_key_here
 SCHWAB_APP_SECRET=your_app_secret_here
 SCHWAB_CALLBACK_URL=https://127.0.0.1:4173/api/schwab/callback
-ALPHA_VANTAGE_API_KEY=your_alpha_vantage_key_here
 API_HTTPS=true
 ```
 
@@ -31,7 +30,7 @@ The scan uses Schwab for:
 - `/marketdata/v1/pricehistory` for daily OHLCV history plus 30-minute intraday candles for 1h/4h confluence
 - `/marketdata/v1/chains` for 30-180 DTE call and put chains with Greeks
 
-The **See More** fundamentals page uses Schwab first, then Alpha Vantage as a supplemental source when Schwab leaves overview fields blank. Alpha Vantage fills fields such as market cap, beta, EPS, P/E ratio, dividend amount, and dividend yield when available. The page explains why important missing fields are unavailable.
+The **See More** fundamentals page uses Schwab only. Fields Schwab does not return are omitted from the page instead of being filled by a supplemental provider.
 
 ## Hosting
 
@@ -54,7 +53,7 @@ Recommended Supabase + Render setup:
   - `PUBLIC_URL=https://trade-screener-auyv.onrender.com`
   - `CLIENT_ORIGIN=https://trade-screener-auyv.onrender.com`
   - `SCHWAB_CALLBACK_URL=https://trade-screener-auyv.onrender.com/api/schwab/callback`
-  - `SCHWAB_APP_KEY`, `SCHWAB_APP_SECRET`, and `ALPHA_VANTAGE_API_KEY`
+  - `SCHWAB_APP_KEY` and `SCHWAB_APP_SECRET`
 
 Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB_CALLBACK_URL`. Render provides public HTTPS, so the app disables its local self-signed HTTPS server in production.
 

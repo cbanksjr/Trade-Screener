@@ -155,13 +155,9 @@ export type FundamentalAnalysis = {
   dividendPayDate?: string;
   dividendExDate?: string;
   lastEarningsDate?: string;
-  nextEarningsDate?: string;
   sourceStatus: "live" | "unavailable";
   dividendStatus: "pays" | "does_not_pay" | "unknown";
   warnings: string[];
-  sources: Record<string, string>;
-  missingReasons: Record<string, string>;
-  providerWarnings: string[];
   scanContext?: {
     grade: Grade;
     direction: TradeDirection;
