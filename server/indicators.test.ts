@@ -55,9 +55,26 @@ describe("transparent grading", () => {
       lowerTimeframes: bullishConfluence()
     });
 
-    expect(result.indicators.squeezeState).toBe("none");
+    expect(isSqueezeActive(result.indicators.squeezeState)).toBe(false);
     expect(result.rules.find((rule) => rule.id === "daily-squeeze")?.passed).toBe(false);
     expect(result.grade).not.toBe("A+");
+  });
+
+  it("keeps squeeze calculations based on OHLC candles when a live quote price is provided", () => {
+    const candles = noSqueezeBullishCandles();
+    const candleSqueeze = latestIndicators(candles).squeezeState;
+    const result = gradeSetup({
+      symbol: "QUOTEONLY",
+      candles,
+      currentPrice: candles[candles.length - 1].close + 15,
+      fundamentals: strongFundamentals("QUOTEONLY"),
+      optionable: true,
+      options: demoOptions("QUOTEONLY", candles[candles.length - 1].close),
+      lowerTimeframes: bullishConfluence()
+    });
+
+    expect(result.price).toBe(candles[candles.length - 1].close + 15);
+    expect(result.indicators.squeezeState).toBe(candleSqueeze);
   });
 
 

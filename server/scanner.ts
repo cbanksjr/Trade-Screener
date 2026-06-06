@@ -240,7 +240,6 @@ async function scanSymbol(input: {
     if (candles.length < 50) throw new Error("Not enough candle history.");
 
     const price = quote?.price ?? candles[candles.length - 1].close;
-    if (quote) candles[candles.length - 1] = { ...candles[candles.length - 1], close: quote.price };
     const weekly = weeklySqueezeFromDaily(candles);
     const lowerTimeframes = await lowerTimeframePromise;
     warnings.push(...lowerTimeframeWarnings.map((warning) => symbol + ": " + warning));
@@ -268,6 +267,7 @@ async function scanSymbol(input: {
       symbol,
       companyName: quote?.companyName,
       candles,
+      currentPrice: price,
       fundamentals: mergeFundamentals(symbol, quote),
       optionable: options.length > 0,
       options,

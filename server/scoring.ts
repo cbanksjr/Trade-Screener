@@ -16,6 +16,7 @@ export function gradeSetup(input: {
   symbol: string;
   companyName?: string;
   candles: Candle[];
+  currentPrice?: number;
   fundamentals?: Fundamentals;
   optionable: boolean;
   options: OptionContract[];
@@ -27,7 +28,7 @@ export function gradeSetup(input: {
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
   const latest = input.candles[input.candles.length - 1];
-  const price = latest.close;
+  const price = input.currentPrice ?? latest.close;
   const beta = input.fundamentals?.beta;
   const marketCap = input.fundamentals?.marketCap;
   const avgDollarVolume20d = input.fundamentals?.avgDollarVolume20d ?? average(input.candles.slice(-20).map((candle) => candle.volume * candle.close));
@@ -37,7 +38,7 @@ export function gradeSetup(input: {
   const weeklyIndicators = input.weeklyIndicators;
   const commonRules: ScoreRule[] = [
     rule("optionable", "Optionable stock", input.optionable, 10, input.optionable ? "Options chain is available." : "No usable options chain was found."),
-    rule("price", "Price above $20", price > defaultSettings.minPrice, 8, "Last close is $" + price.toFixed(2) + "."),
+    rule("price", "Price above $20", price > defaultSettings.minPrice, 8, "Last price is $" + price.toFixed(2) + "."),
     rule("beta", "Beta >= 0.75", betaPassed, 8, beta !== undefined ? "Beta is " + beta.toFixed(2) + "." : input.strictFundamentals ? "Beta was not available from Schwab/fundamentals." : "Assumed prequalified by the selected universe."),
     rule("market-cap", "Market cap >= $2B", marketCapPassed, 8, marketCap !== undefined ? "Market cap is " + formatMoney(marketCap) + "." : input.strictFundamentals ? "Market cap was not available from Schwab/fundamentals." : "Assumed prequalified by the selected universe."),
     rule("dollar-volume", "20-day dollar volume >= $600M", avgDollarVolume20d >= defaultSettings.minAvgDollarVolume, 10, "20-day average dollar volume is " + formatMoney(avgDollarVolume20d) + ".")

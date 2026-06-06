@@ -2,15 +2,16 @@ import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, Timeframe
 import { latestIndicators } from "./indicators";
 
 export function buildLowerTimeframeConfluence(thirtyMinuteCandles: Candle[]): LowerTimeframeConfluence {
-  const oneHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 2);
-  const fourHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 8);
+  const oneHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 2, { includeIncomplete: false });
+  const fourHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 8, { includeIncomplete: false });
   return {
     oneHour: buildContext("1h", oneHourCandles),
     fourHour: buildContext("4h", fourHourCandles)
   };
 }
 
-export function aggregateSequentialCandles(candles: Candle[], candlesPerBar: number): Candle[] {
+export function aggregateSequentialCandles(candles: Candle[], candlesPerBar: number, options: { includeIncomplete?: boolean } = {}): Candle[] {
+  const includeIncomplete = options.includeIncomplete ?? true;
   const bySession = new Map<string, Candle[]>();
   for (const candle of candles.filter((item) => Number.isFinite(new Date(item.date).getTime())).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())) {
     const session = new Date(candle.date).toISOString().slice(0, 10);
@@ -21,6 +22,7 @@ export function aggregateSequentialCandles(candles: Candle[], candlesPerBar: num
   for (const sessionCandles of bySession.values()) {
     for (let index = 0; index < sessionCandles.length; index += candlesPerBar) {
       const group = sessionCandles.slice(index, index + candlesPerBar);
+      if (!includeIncomplete && group.length < candlesPerBar) continue;
       if (!group.length) continue;
       output.push({
         date: group[0].date,

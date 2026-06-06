@@ -43,6 +43,14 @@ describe("lower-timeframe confluence", () => {
     expect(aggregateSequentialCandles(candles, 2)).toHaveLength(8);
     expect(aggregateSequentialCandles(candles, 8)).toHaveLength(2);
   });
+
+  it("can exclude incomplete intraday bars for scanner context", () => {
+    const candles = intradayCandles("up", 1).slice(0, 7);
+
+    expect(aggregateSequentialCandles(candles, 2)).toHaveLength(4);
+    expect(aggregateSequentialCandles(candles, 2, { includeIncomplete: false })).toHaveLength(3);
+    expect(aggregateSequentialCandles(candles, 8, { includeIncomplete: false })).toHaveLength(0);
+  });
 });
 
 function intradayCandles(direction: "up" | "down", days = 30): Candle[] {

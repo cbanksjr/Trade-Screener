@@ -25,7 +25,11 @@ export function standardDeviation(values: number[]): number {
 }
 
 export function atr(candles: Candle[], period = 14): number[] {
-  const trueRanges = candles.map((candle, index) => {
+  return ema(trueRanges(candles), period);
+}
+
+export function trueRanges(candles: Candle[]): number[] {
+  return candles.map((candle, index) => {
     const previousClose = candles[index - 1]?.close ?? candle.close;
     return Math.max(
       candle.high - candle.low,
@@ -33,7 +37,6 @@ export function atr(candles: Candle[], period = 14): number[] {
       Math.abs(candle.low - previousClose)
     );
   });
-  return ema(trueRanges, period);
 }
 
 export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
@@ -48,20 +51,21 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
   const ema50Series = ema(closes, 50);
   const atr14Series = atr(candles, 14);
   const index = candles.length - 1;
+  const squeezePeriod = 20;
   const basis = sma(closes, 20)[index];
-  const recentCloses = closes.slice(-20);
+  const recentCloses = closes.slice(-squeezePeriod);
   const deviation = standardDeviation(recentCloses);
   const latestAtr = atr14Series[index];
-  const typical = candles.map((candle) => (candle.high + candle.low + candle.close) / 3);
-  const kcBasis = ema(typical, 20)[index];
+  const kcBasis = basis;
+  const kcRange = sma(trueRanges(candles), squeezePeriod)[index];
   const bbUpper = basis + deviation * 2;
   const bbLower = basis - deviation * 2;
-  const kcLowUpper = kcBasis + latestAtr * 2;
-  const kcLowLower = kcBasis - latestAtr * 2;
-  const kcMidUpper = kcBasis + latestAtr * 1.5;
-  const kcMidLower = kcBasis - latestAtr * 1.5;
-  const kcHighUpper = kcBasis + latestAtr;
-  const kcHighLower = kcBasis - latestAtr;
+  const kcLowUpper = kcBasis + kcRange * 2;
+  const kcLowLower = kcBasis - kcRange * 2;
+  const kcMidUpper = kcBasis + kcRange * 1.5;
+  const kcMidLower = kcBasis - kcRange * 1.5;
+  const kcHighUpper = kcBasis + kcRange;
+  const kcHighLower = kcBasis - kcRange;
   const momentum = linearMomentum(closes, highs, lows, 20);
 
   return {
