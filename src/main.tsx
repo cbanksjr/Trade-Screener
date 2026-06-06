@@ -294,18 +294,18 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <p>{result.setupDirection.toUpperCase()} · {money(result.price)} · Score {result.score}/{result.maxScore}</p>
         </div>
         <div className="indicator-grid">
-          <Metric label="Daily Sqz" value={result.indicators.squeezeState} />
           <Metric label="Weekly Sqz" value={result.weeklyIndicators?.squeezeState ?? "unavailable"} />
-          <Metric label="1h Sqz" value={result.lowerTimeframes?.oneHour?.squeezeState ?? "unavailable"} />
+          <Metric label="Daily Sqz" value={result.indicators.squeezeState} />
           <Metric label="4h Sqz" value={result.lowerTimeframes?.fourHour?.squeezeState ?? "unavailable"} />
+          <Metric label="1h Sqz" value={result.lowerTimeframes?.oneHour?.squeezeState ?? "unavailable"} />
           <Metric label="Momentum" value={formatNumber(result.indicators.momentum)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
           <Metric label="50 EMA" value={formatNumber(result.indicators.ema50)} />
           <Metric label="ATR" value={formatNumber(result.indicators.atr14)} />
           <Metric label="Dollar Vol" value={money(result.avgDollarVolume20d)} />
           <Metric label="Direction" value={result.setupDirection.toUpperCase()} />
-          <Metric label="1h Bias" value={timeframeLabel(result.lowerTimeframes?.oneHour?.bias)} />
           <Metric label="4h Bias" value={timeframeLabel(result.lowerTimeframes?.fourHour?.bias)} />
+          <Metric label="1h Bias" value={timeframeLabel(result.lowerTimeframes?.oneHour?.bias)} />
         </div>
       </section>
 
