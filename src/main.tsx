@@ -55,7 +55,6 @@ function App() {
   const [selected, setSelected] = React.useState<string>("");
   const [loading, setLoading] = React.useState(false);
   const [message, setMessage] = React.useState("");
-  const [warnings, setWarnings] = React.useState<string[]>([]);
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
   const [scanStatus, setScanStatus] = React.useState<string>("idle");
   const [theme, setTheme] = React.useState<ThemeMode>(() => localStorage.getItem("theme") === "dark" ? "dark" : "light");
@@ -78,7 +77,7 @@ function App() {
     const schwabMessage = params.get("message");
 
     if (schwabResult === "connected") setMessage("Schwab connected. You can run a live scan now.");
-    if (schwabResult === "error") setMessage(schwabMessage ? "Schwab connection failed: " + schwabMessage : "Schwab connection failed.");
+    if (schwabResult === "error" && schwabMessage) console.warn("Schwab connection did not complete:", schwabMessage);
     if (schwabResult) window.history.replaceState({}, document.title, window.location.pathname);
 
     api.results().then((data) => {
@@ -117,7 +116,6 @@ function App() {
     setResults(nextResults);
     if (data.settings) setSettings(data.settings);
     setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
-    setWarnings((data.warnings ?? []).filter(isDisplayWarning));
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
   }
@@ -200,12 +198,6 @@ function App() {
             </section>
 
             {message && <div className="notice">{message}</div>}
-            {warnings.length > 0 && (
-              <section className="warning-strip">
-                {warnings.slice(0, 4).map((warning) => <span key={warning}>{warning}</span>)}
-                {warnings.length > 4 && <span>{warnings.length - 4} more warning(s)</span>}
-              </section>
-            )}
 
             <section className="workspace">
               <div className="panel list-panel">
@@ -240,20 +232,6 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
     if (rightScore !== leftScore) return rightScore - leftScore;
     return left.symbol.localeCompare(right.symbol);
   });
-}
-
-function isDisplayWarning(warning: string): boolean {
-  return ![
-    "database is locked",
-    "screener.sqlite",
-    "Command failed: sqlite3",
-    "SELECT value FROM settings",
-    "schwabTokens"
-  ].some((message) => warning.includes(message));
-}
-
-function isFundamentalsDisplayWarning(warning: string): boolean {
-  return Boolean(warning);
 }
 
 function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
@@ -307,7 +285,6 @@ function ResultRow({ result, activeSymbol, onSelect, onSeeMore }: {
 }
 
 function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode }) {
-  const displayWarnings = result.warnings.filter(isDisplayWarning);
   return (
     <>
       <section className="panel hero-panel">
@@ -331,12 +308,6 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <Metric label="4h Bias" value={timeframeLabel(result.lowerTimeframes?.fourHour?.bias)} />
         </div>
       </section>
-
-      {displayWarnings.length > 0 && (
-        <section className="panel inline-warnings">
-          {displayWarnings.map((warning) => <span key={warning}>{warning}</span>)}
-        </section>
-      )}
 
       <section className="panel chart-panel">
         <ChartPanel result={result} theme={theme} />
@@ -384,14 +355,12 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
 function ChartPanel({ result, theme }: { result: ScanResult; theme: ThemeMode }) {
   const [timeframe, setTimeframe] = React.useState<ChartTimeframe>("1d");
   const [candles, setCandles] = React.useState<Candle[]>(result.candles);
-  const [warning, setWarning] = React.useState("");
   const fallbackCandlesRef = React.useRef(result.candles);
 
   React.useEffect(() => {
     fallbackCandlesRef.current = result.candles;
     setTimeframe("1d");
     setCandles(result.candles);
-    setWarning("");
   }, [result.symbol]);
 
   React.useEffect(() => {
@@ -399,11 +368,10 @@ function ChartPanel({ result, theme }: { result: ScanResult; theme: ThemeMode })
     api.chart(result.symbol, timeframe).then((data) => {
       if (cancelled) return;
       setCandles(data.candles.length ? data.candles : fallbackCandlesRef.current);
-      setWarning(data.warnings[0] ?? "");
     }).catch((error) => {
       if (cancelled) return;
+      console.warn("Chart timeframe could not be loaded:", error);
       setCandles(fallbackCandlesRef.current);
-      setWarning(error instanceof Error ? error.message : "Chart timeframe could not be loaded.");
     });
     return () => {
       cancelled = true;
@@ -419,7 +387,6 @@ function ChartPanel({ result, theme }: { result: ScanResult; theme: ThemeMode })
           ))}
         </div>
       </div>
-      {warning && <small className="chart-warning">{warning}</small>}
       <LightweightPriceChart candles={candles} theme={theme} />
     </div>
   );
@@ -528,14 +495,13 @@ function emaLineData(candles: Candle[], period: number): LineData<Time>[] {
 function FundamentalsPage({ symbol, results, onBack }: { symbol: string; results: ScanResult[]; onBack: () => void }) {
   const [analysis, setAnalysis] = React.useState<FundamentalAnalysis | null>(null);
   const [loading, setLoading] = React.useState(true);
-  const [error, setError] = React.useState("");
   const cached = results.find((result) => result.symbol === symbol);
 
   React.useEffect(() => {
     setLoading(true);
-    setError("");
     api.fundamentals(symbol).then(setAnalysis).catch((requestError) => {
-      setError(requestError instanceof Error ? requestError.message : "Fundamentals could not be loaded.");
+      console.warn("Fundamentals could not be loaded:", requestError);
+      setAnalysis(null);
     }).finally(() => setLoading(false));
   }, [symbol]);
 
@@ -553,8 +519,6 @@ function FundamentalsPage({ symbol, results, onBack }: { symbol: string; results
       </div>
 
       {loading && <div className="notice">Loading Schwab fundamentals...</div>}
-      {error && <div className="warning-strip"><span>{error}</span></div>}
-      {data?.warnings.filter(isFundamentalsDisplayWarning).map((warning) => <div className="warning-strip" key={warning}><span>{warning}</span></div>)}
 
       <div className="fundamentals-grid">
         <FundamentalCard title="Market Snapshot" items={visibleFundamentalItems([
