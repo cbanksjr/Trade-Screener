@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Candle, IndicatorSnapshot, LowerTimeframeConfluence } from "../shared/types";
 import { demoCandles, demoOptions } from "./demoData";
-import { latestIndicators } from "./indicators";
+import { latestIndicators, squeezeState } from "./indicators";
 import { gradeSetup, isSqueezeActive } from "./scoring";
 
 describe("indicator calculations", () => {
@@ -11,6 +11,19 @@ describe("indicator calculations", () => {
     expect(indicators.ema50).toBeGreaterThan(0);
     expect(indicators.atr14).toBeGreaterThan(0);
     expect(["none", "low", "mid", "high", "released"]).toContain(indicators.squeezeState);
+  });
+
+  it("classifies Squeeze Pro levels from Bollinger/Keltner upper-band deltas", () => {
+    expect(squeezeState(100, 102, 101, 100)).toBe("high");
+    expect(squeezeState(100.5, 102, 101, 100)).toBe("mid");
+    expect(squeezeState(101.5, 102, 101, 100)).toBe("low");
+    expect(squeezeState(102.5, 102, 101, 100)).toBe("released");
+  });
+
+  it("counts equal Bollinger and Keltner upper bands as in-squeeze", () => {
+    expect(squeezeState(100, 102, 101, 100)).toBe("high");
+    expect(squeezeState(101, 102, 101, 100)).toBe("mid");
+    expect(squeezeState(102, 102, 101, 100)).toBe("low");
   });
 });
 

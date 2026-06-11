@@ -81,24 +81,20 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
     kcHighUpper: round(kcHighUpper),
     kcHighLower: round(kcHighLower),
     momentum: round(momentum),
-    squeezeState: squeezeState(bbUpper, bbLower, kcLowUpper, kcLowLower, kcMidUpper, kcMidLower, kcHighUpper, kcHighLower)
+    squeezeState: squeezeState(bbUpper, kcLowUpper, kcMidUpper, kcHighUpper)
   };
 }
 
-function squeezeState(
+export function squeezeState(
   bbUpper: number,
-  bbLower: number,
   kcLowUpper: number,
-  kcLowLower: number,
   kcMidUpper: number,
-  kcMidLower: number,
-  kcHighUpper: number,
-  kcHighLower: number
+  kcHighUpper: number
 ): SqueezeState {
-  if (bbUpper < kcHighUpper && bbLower > kcHighLower) return "high";
-  if (bbUpper < kcMidUpper && bbLower > kcMidLower) return "mid";
-  if (bbUpper < kcLowUpper && bbLower > kcLowLower) return "low";
-  if (bbUpper > kcLowUpper && bbLower < kcLowLower) return "released";
+  if (bbUpper <= kcHighUpper) return "high";
+  if (bbUpper <= kcMidUpper) return "mid";
+  if (bbUpper <= kcLowUpper) return "low";
+  if (bbUpper > kcLowUpper) return "released";
   return "none";
 }
 
