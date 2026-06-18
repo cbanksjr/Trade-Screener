@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard grades candidates with Daily squeeze as a weighted checklist item instead of a hard filter. A stock must have an active Daily squeeze to earn `A+`, while Weekly, 4h, and 1h squeeze states are shown as context only and do not affect the grade.
+The Dashboard only displays candidates scoring 95% or higher. It grades candidates with Daily squeeze as a weighted checklist item instead of a hard filter. A stock must have an active Daily squeeze to earn `A+`, while Weekly, 4h, and 1h squeeze states are shown as context only and do not affect the grade.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 

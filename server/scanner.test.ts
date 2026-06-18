@@ -83,6 +83,15 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LONG"]);
   }));
 
+  it("only displays results that score at least 95 percent", async () => withDbRestore(async () => {
+    await replaceScanResults([
+      qualifyingResult("NINETYFIVE"),
+      { ...qualifyingResult("NINETYFOUR"), score: 94 }
+    ]);
+
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["NINETYFIVE"]);
+  }));
+
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
     await replaceScanResults([qualifyingResult("STALE")]);
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["STALE"]);

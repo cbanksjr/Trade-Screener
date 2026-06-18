@@ -202,7 +202,7 @@ function App() {
             <section className="workspace">
               <div className="panel list-panel">
                 <div className="panel-head">
-                  <h2>Top Candidates</h2>
+                  <h2>95%+ Candidates</h2>
                   <span>{new Date().toLocaleDateString()}</span>
                 </div>
                 <div className="table scroll-list">

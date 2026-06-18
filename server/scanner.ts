@@ -10,6 +10,7 @@ import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe"
 
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
+const MIN_DISPLAY_SCORE_RATIO = 0.95;
 let activeScan: Promise<void> | null = null;
 
 export async function readSettings(): Promise<Settings> {
@@ -310,6 +311,7 @@ async function scanSymbol(input: {
 function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.setupDirection === "long"
+    && result.score / result.maxScore >= MIN_DISPLAY_SCORE_RATIO
     && result.grade !== "D"
     && result.grade !== "F";
 }
