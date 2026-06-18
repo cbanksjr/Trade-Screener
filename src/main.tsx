@@ -173,7 +173,7 @@ function App() {
         <header className="topbar">
           <div>
             <h1>Options Swing Screener</h1>
-            <p>Automatic S&amp;P 500 + Nasdaq 100 screening for long and short squeeze-style setups.</p>
+            <p>Automatic S&amp;P 500 + Nasdaq 100 screening for long squeeze-style setups.</p>
           </div>
           <div className="top-actions">
             <button className="icon-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle color mode">
@@ -334,7 +334,7 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
 
       <section className="panel">
         <div className="panel-head">
-          <h2>{result.setupDirection === "long" ? "Liquid Calls" : "Liquid Puts"}</h2>
+          <h2>Liquid Calls</h2>
           <span>30-180 DTE target</span>
         </div>
         <div className="contracts">

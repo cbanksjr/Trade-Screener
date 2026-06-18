@@ -3,7 +3,7 @@ import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { latestIndicators } from "./indicators";
 import { defaultSettings, gradeSetup } from "./scoring";
-import { fetchOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
+import { fetchCallOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks, buildLowerTimeframeConfluence } from "./timeframes";
 import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
@@ -244,10 +244,10 @@ async function scanSymbol(input: {
     const lowerTimeframes = await lowerTimeframePromise;
     warnings.push(...lowerTimeframeWarnings.map((warning) => symbol + ": " + warning));
 
-    let options: Awaited<ReturnType<typeof fetchOptions>> = [];
+    let options: Awaited<ReturnType<typeof fetchCallOptions>> = [];
     if (canUseLiveSchwab) {
       try {
-        options = await fetchOptions(symbol, price);
+        options = await fetchCallOptions(symbol, price);
         if (options.length) {
           optionsSource = "schwab";
           usedLive = true;
@@ -309,6 +309,7 @@ async function scanSymbol(input: {
 
 function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
+    && result.setupDirection === "long"
     && result.grade !== "D"
     && result.grade !== "F";
 }

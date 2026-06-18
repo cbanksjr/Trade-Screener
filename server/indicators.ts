@@ -81,21 +81,38 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
     kcHighUpper: round(kcHighUpper),
     kcHighLower: round(kcHighLower),
     momentum: round(momentum),
-    squeezeState: squeezeState(bbUpper, kcLowUpper, kcMidUpper, kcHighUpper)
+    squeezeState: squeezeState(
+      bbUpper,
+      bbLower,
+      kcLowUpper,
+      kcLowLower,
+      kcMidUpper,
+      kcMidLower,
+      kcHighUpper,
+      kcHighLower
+    )
   };
 }
 
 export function squeezeState(
   bbUpper: number,
+  bbLower: number,
   kcLowUpper: number,
+  kcLowLower: number,
   kcMidUpper: number,
-  kcHighUpper: number
+  kcMidLower: number,
+  kcHighUpper: number,
+  kcHighLower: number
 ): SqueezeState {
-  if (bbUpper <= kcHighUpper) return "high";
-  if (bbUpper <= kcMidUpper) return "mid";
-  if (bbUpper <= kcLowUpper) return "low";
-  if (bbUpper > kcLowUpper) return "released";
+  if (isInsideChannel(bbUpper, bbLower, kcHighUpper, kcHighLower)) return "high";
+  if (isInsideChannel(bbUpper, bbLower, kcMidUpper, kcMidLower)) return "mid";
+  if (isInsideChannel(bbUpper, bbLower, kcLowUpper, kcLowLower)) return "low";
+  if (bbUpper > kcLowUpper || bbLower < kcLowLower) return "released";
   return "none";
+}
+
+function isInsideChannel(bbUpper: number, bbLower: number, kcUpper: number, kcLower: number): boolean {
+  return bbUpper <= kcUpper && bbLower >= kcLower;
 }
 
 function linearMomentum(closes: number[], highs: number[], lows: number[], period: number): number {

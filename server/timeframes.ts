@@ -2,8 +2,8 @@ import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, Timeframe
 import { latestIndicators } from "./indicators";
 
 export function buildLowerTimeframeConfluence(thirtyMinuteCandles: Candle[]): LowerTimeframeConfluence {
-  const oneHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 2, { includeIncomplete: false });
-  const fourHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 8, { includeIncomplete: false });
+  const oneHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 2);
+  const fourHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 8);
   return {
     oneHour: buildContext("1h", oneHourCandles),
     fourHour: buildContext("4h", fourHourCandles)

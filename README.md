@@ -1,6 +1,6 @@
 # Local Options Swing Screener
 
-A local web app for automatically screening optionable swing-trade candidates using a transparent A+ through F grading model. It supports long and short setups against an automatic **S&P 500 + Nasdaq 100** universe.
+A local web app for automatically screening optionable swing-trade candidates using a transparent A+ through F grading model. It supports long setups against an automatic **S&P 500 + Nasdaq 100** universe.
 
 ## Run It
 
@@ -28,7 +28,7 @@ The scan uses Schwab for:
 
 - `/marketdata/v1/quotes` for quote and fundamental market data
 - `/marketdata/v1/pricehistory` for daily OHLCV history plus 30-minute intraday candles for 1h/4h confluence
-- `/marketdata/v1/chains` for 30-180 DTE call and put chains with Greeks
+- `/marketdata/v1/chains` for 30-180 DTE call chains with Greeks
 
 The **See More** fundamentals page uses Schwab only. Fields Schwab does not return are omitted from the page instead of being filled by a supplemental provider.
 
@@ -73,15 +73,14 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Market cap >= $2B when Schwab provides market cap
 - Average dollar volume >= $600M, from Schwab `average volume x last price` when available
 - Long setup: 21 EMA above 50 EMA, price above the 21 EMA and within +1.25 ATR
-- Short setup: 21 EMA below 50 EMA, price below the 21 EMA and within -1.25 ATR
-- 1h and 4h confluence: bullish for longs, bearish for shorts, using 21/50 EMA alignment and price vs 50 EMA
+- 1h and 4h confluence: bullish alignment, using 21/50 EMA alignment and price vs 50 EMA
 - Daily active Squeeze Pro-style compression is a weighted checklist rule (`low`, `mid`, or `high`); `released` and `none` fail that rule, and stocks without Daily squeeze cannot grade `A+`
 - Weekly, 4h, and 1h squeeze states are displayed as context only
-- Momentum histogram above zero for longs or below zero for shorts
-- Liquid call candidates for longs or liquid put candidates for shorts
+- Momentum histogram above zero
+- Liquid call candidates
 
 The automatic index universe is treated as prequalified if Schwab omits beta or market cap. If Schwab provides beta or market cap below the configured thresholds, the symbol is rejected.
 
 ## Notes
 
-The squeeze logic is Squeeze Pro-style, not a licensed/proprietary clone. It uses Bollinger Bands inside multiple Keltner Channel widths to classify compression as low, mid, high, released, or none. This app is decision support only and does not place trades.
+The squeeze logic is Squeeze Pro-style, not a licensed/proprietary clone. It requires both Bollinger Bands to sit inside the selected Keltner Channel width to classify compression as low, mid, or high; otherwise it reports released or none. This app is decision support only and does not place trades.

@@ -13,17 +13,22 @@ describe("indicator calculations", () => {
     expect(["none", "low", "mid", "high", "released"]).toContain(indicators.squeezeState);
   });
 
-  it("classifies Squeeze Pro levels from Bollinger/Keltner upper-band deltas", () => {
-    expect(squeezeState(100, 102, 101, 100)).toBe("high");
-    expect(squeezeState(100.5, 102, 101, 100)).toBe("mid");
-    expect(squeezeState(101.5, 102, 101, 100)).toBe("low");
-    expect(squeezeState(102.5, 102, 101, 100)).toBe("released");
+  it("classifies Squeeze Pro levels from Bollinger/Keltner envelopes", () => {
+    expect(squeezeState(100, 100, 102, 98, 101, 99, 100, 100)).toBe("high");
+    expect(squeezeState(100.5, 99.5, 102, 98, 101, 99, 100, 100)).toBe("mid");
+    expect(squeezeState(101.5, 98.5, 102, 98, 101, 99, 100, 100)).toBe("low");
+    expect(squeezeState(102.5, 97.5, 102, 98, 101, 99, 100, 100)).toBe("released");
   });
 
-  it("counts equal Bollinger and Keltner upper bands as in-squeeze", () => {
-    expect(squeezeState(100, 102, 101, 100)).toBe("high");
-    expect(squeezeState(101, 102, 101, 100)).toBe("mid");
-    expect(squeezeState(102, 102, 101, 100)).toBe("low");
+  it("counts equal Bollinger and Keltner envelopes as in-squeeze", () => {
+    expect(squeezeState(100, 100, 102, 98, 101, 99, 100, 100)).toBe("high");
+    expect(squeezeState(101, 99, 102, 98, 101, 99, 100, 100)).toBe("mid");
+    expect(squeezeState(102, 98, 102, 98, 101, 99, 100, 100)).toBe("low");
+  });
+
+  it("requires both Bollinger bands to fit inside the selected Keltner width", () => {
+    expect(squeezeState(100, 97.5, 102, 98, 101, 99, 100, 100)).toBe("released");
+    expect(squeezeState(101, 98.5, 102, 98, 101, 99, 100, 100)).toBe("low");
   });
 });
 
@@ -91,7 +96,7 @@ describe("transparent grading", () => {
   });
 
 
-  it("identifies bearish short setups when price is below the 21 EMA within -1.25 ATR", () => {
+  it("does not switch bearish setups into short screening", () => {
     const candles = bearishCandles();
     const price = candles[candles.length - 1].close;
     const result = gradeSetup({
@@ -107,11 +112,10 @@ describe("transparent grading", () => {
       options: demoOptions("BEAR", price)
     });
 
-    expect(result.setupDirection).toBe("short");
-    expect(result.rules.find((rule) => rule.id === "ema-stack")?.passed).toBe(true);
-    expect(result.rules.find((rule) => rule.id === "price-side")?.passed).toBe(true);
-    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(true);
-    expect(result.suggestedOptions.every((contract) => contract.optionType === "put")).toBe(true);
+    expect(result.setupDirection).toBe("long");
+    expect(result.rules.find((rule) => rule.id === "ema-stack")?.passed).toBe(false);
+    expect(result.rules.find((rule) => rule.id === "price-side")?.passed).toBe(false);
+    expect(result.suggestedOptions.every((contract) => contract.optionType === "call")).toBe(true);
   });
 
 
@@ -147,7 +151,7 @@ describe("transparent grading", () => {
     expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(false);
   });
 
-  it("passes short ATR distance when price is within -1.25 ATR of the 21 EMA", () => {
+  it("fails long ATR distance when price is below the 21 EMA", () => {
     const candles = candlesAtSignedAtr(bearishCandles(), -1.22);
     const price = candles[candles.length - 1].close;
     const result = gradeSetup({
@@ -159,11 +163,11 @@ describe("transparent grading", () => {
       lowerTimeframes: bearishConfluence()
     });
 
-    expect(result.setupDirection).toBe("short");
-    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(true);
+    expect(result.setupDirection).toBe("long");
+    expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(false);
   });
 
-  it("fails short ATR distance when price is beyond -1.25 ATR of the 21 EMA", () => {
+  it("still fails long ATR distance when price is far below the 21 EMA", () => {
     const candles = candlesAtSignedAtr(bearishCandles(), -1.35);
     const price = candles[candles.length - 1].close;
     const result = gradeSetup({
@@ -175,7 +179,7 @@ describe("transparent grading", () => {
       lowerTimeframes: bearishConfluence()
     });
 
-    expect(result.setupDirection).toBe("short");
+    expect(result.setupDirection).toBe("long");
     expect(result.rules.find((rule) => rule.id === "near-ema")?.passed).toBe(false);
   });
 
@@ -196,7 +200,7 @@ describe("transparent grading", () => {
     expect(result.rules.find((rule) => rule.id === "4h-confluence")?.passed).toBe(true);
   });
 
-  it("adds weighted bearish 1h and 4h confluence to short setups", () => {
+  it("does not score bearish 1h and 4h confluence for long setups", () => {
     const candles = candlesAtSignedAtr(bearishCandles(), -0.6);
     const price = candles[candles.length - 1].close;
     const result = gradeSetup({
@@ -208,9 +212,9 @@ describe("transparent grading", () => {
       lowerTimeframes: bearishConfluence()
     });
 
-    expect(result.setupDirection).toBe("short");
-    expect(result.rules.find((rule) => rule.id === "1h-confluence")?.passed).toBe(true);
-    expect(result.rules.find((rule) => rule.id === "4h-confluence")?.passed).toBe(true);
+    expect(result.setupDirection).toBe("long");
+    expect(result.rules.find((rule) => rule.id === "1h-confluence")?.passed).toBe(false);
+    expect(result.rules.find((rule) => rule.id === "4h-confluence")?.passed).toBe(false);
   });
 
   it("keeps weekly squeeze visible without adding it to the grading rules", () => {

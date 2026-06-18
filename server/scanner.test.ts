@@ -73,6 +73,16 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["NOSQZ"]);
   }));
 
+  it("filters old cached short results from display", async () => withDbRestore(async () => {
+    const oldShort: ScanResult = { ...qualifyingResult("OLDPUT"), setupDirection: "short" };
+    await replaceScanResults([
+      qualifyingResult("LONG"),
+      oldShort
+    ]);
+
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LONG"]);
+  }));
+
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
     await replaceScanResults([qualifyingResult("STALE")]);
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["STALE"]);

@@ -1,4 +1,4 @@
-import type { Candle, Fundamentals, Grade, IndicatorSnapshot, LowerTimeframeConfluence, LowerTimeframeContext, OptionContract, ScanResult, ScoreRule, SqueezeState, TradeDirection } from "../shared/types";
+import type { Candle, Fundamentals, Grade, IndicatorSnapshot, LowerTimeframeConfluence, LowerTimeframeContext, OptionContract, ScanResult, ScoreRule, SqueezeState } from "../shared/types";
 import { latestIndicators, round } from "./indicators";
 
 const ATR_DISTANCE_LIMIT = 1.25;
@@ -43,11 +43,7 @@ export function gradeSetup(input: {
     rule("market-cap", "Market cap >= $2B", marketCapPassed, 8, marketCap !== undefined ? "Market cap is " + formatMoney(marketCap) + "." : input.strictFundamentals ? "Market cap was not available from Schwab/fundamentals." : "Assumed prequalified by the selected universe."),
     rule("dollar-volume", "20-day dollar volume >= $600M", avgDollarVolume20d >= defaultSettings.minAvgDollarVolume, 10, "20-day average dollar volume is " + formatMoney(avgDollarVolume20d) + ".")
   ];
-  const candidates = [
-    directionalCandidate("long", commonRules, input.options, price, indicators, lowerTimeframes),
-    directionalCandidate("short", commonRules, input.options, price, indicators, lowerTimeframes)
-  ];
-  const selected = candidates.sort((a, b) => b.score / b.maxScore - a.score / a.maxScore)[0];
+  const selected = longCandidate(commonRules, input.options, price, indicators, lowerTimeframes);
   const passesUniverse = commonRules.every((item) => item.passed);
   const warnings = input.lowerTimeframeWarnings ?? (input.lowerTimeframes ? [] : ["Lower-timeframe confluence unavailable; 1h/4h rules were not scored."]);
   if (input.weeklySqueezeWarning) warnings.push(input.weeklySqueezeWarning);
@@ -77,73 +73,70 @@ export function gradeSetup(input: {
   };
 }
 
-function directionalCandidate(
-  direction: TradeDirection,
+function longCandidate(
   commonRules: ScoreRule[],
   options: OptionContract[],
   price: number,
   indicators: ReturnType<typeof latestIndicators>,
   lowerTimeframes: LowerTimeframeConfluence
-): { direction: TradeDirection; rules: ScoreRule[]; options: OptionContract[]; score: number; maxScore: number } {
-  const isLong = direction === "long";
-  const directionalOptions = options.filter((contract) => contract.optionType === (isLong ? "call" : "put"));
+): { direction: "long"; rules: ScoreRule[]; options: OptionContract[]; score: number; maxScore: number } {
+  const directionalOptions = options.filter((contract) => contract.optionType === "call");
   const liquidOptions = directionalOptions.filter((contract) => contract.score >= 70);
   const atrDistance = indicators.atr14 > 0 ? round(Math.abs(price - indicators.ema21) / indicators.atr14, 2) : 0;
   const signedAtrDistance = indicators.atr14 > 0 ? round((price - indicators.ema21) / indicators.atr14, 2) : 0;
   const withinLongAtr = price >= indicators.ema21 && price <= indicators.ema21 + indicators.atr14 * ATR_DISTANCE_LIMIT;
-  const withinShortAtr = price <= indicators.ema21 && price >= indicators.ema21 - indicators.atr14 * ATR_DISTANCE_LIMIT;
   const rules = [
     ...commonRules,
     rule(
       "ema-stack",
-      isLong ? "Long: 21 EMA above 50 EMA" : "Short: 21 EMA below 50 EMA",
-      isLong ? indicators.ema21 > indicators.ema50 : indicators.ema21 < indicators.ema50,
+      "Long: 21 EMA above 50 EMA",
+      indicators.ema21 > indicators.ema50,
       14,
       "21 EMA " + indicators.ema21 + " vs 50 EMA " + indicators.ema50 + "."
     ),
     rule(
       "price-side",
-      isLong ? "Long: price above 21 EMA" : "Short: price below 21 EMA",
-      isLong ? price > indicators.ema21 : price < indicators.ema21,
+      "Long: price above 21 EMA",
+      price > indicators.ema21,
       8,
       "Price is $" + price.toFixed(2) + " vs 21 EMA " + indicators.ema21 + "."
     ),
     rule(
       "near-ema",
-      isLong ? "Long: price within +1.25 ATR of 21 EMA" : "Short: price within -1.25 ATR of 21 EMA",
-      isLong ? withinLongAtr : withinShortAtr,
+      "Long: price within +1.25 ATR of 21 EMA",
+      withinLongAtr,
       14,
-      "Price is " + atrDistance + " ATR from the 21 EMA (" + signedAtrDistance + " signed ATR). Limit is " + (isLong ? "+" : "-") + ATR_DISTANCE_LIMIT + " ATR."
+      "Price is " + atrDistance + " ATR from the 21 EMA (" + signedAtrDistance + " signed ATR). Limit is +" + ATR_DISTANCE_LIMIT + " ATR."
     ),
-    confluenceRule("1h-confluence", "1h confluence", direction, lowerTimeframes.oneHour),
-    confluenceRule("4h-confluence", "4h confluence", direction, lowerTimeframes.fourHour),
+    confluenceRule("1h-confluence", "1h confluence", lowerTimeframes.oneHour),
+    confluenceRule("4h-confluence", "4h confluence", lowerTimeframes.fourHour),
     rule("daily-squeeze", "Daily squeeze active", isSqueezeActive(indicators.squeezeState), 12, "Daily squeeze state is " + indicators.squeezeState + "."),
     rule(
       "momentum",
-      isLong ? "Squeeze histogram above zero" : "Squeeze histogram below zero",
-      isLong ? indicators.momentum > 0 : indicators.momentum < 0,
+      "Squeeze histogram above zero",
+      indicators.momentum > 0,
       10,
       "Momentum histogram is " + indicators.momentum + "."
     ),
     rule(
       "contracts",
-      isLong ? "Liquid call candidates" : "Liquid put candidates",
+      "Liquid call candidates",
       liquidOptions.length > 0,
       6,
-      liquidOptions.length ? liquidOptions.length + " liquid " + (isLong ? "call" : "put") + " candidate(s) found." : "No liquid " + (isLong ? "calls" : "puts") + " met the spread/open-interest filters."
+      liquidOptions.length ? liquidOptions.length + " liquid call candidate(s) found." : "No liquid calls met the spread/open-interest filters."
     )
   ];
   const maxScore = rules.reduce((sum, item) => sum + item.maxPoints, 0);
   const score = rules.reduce((sum, item) => sum + item.points, 0);
-  return { direction, rules, options: directionalOptions.sort((a, b) => b.score - a.score), score, maxScore };
+  return { direction: "long", rules, options: directionalOptions.sort((a, b) => b.score - a.score), score, maxScore };
 }
 
 export function isSqueezeActive(state: SqueezeState | undefined): boolean {
   return Boolean(state && SQUEEZE_STATES.includes(state));
 }
 
-function confluenceRule(id: string, label: string, direction: TradeDirection, context: LowerTimeframeContext): ScoreRule {
-  const expected = direction === "long" ? "bullish" : "bearish";
+function confluenceRule(id: string, label: string, context: LowerTimeframeContext): ScoreRule {
+  const expected = "bullish";
   return rule(
     id,
     label,
