@@ -184,13 +184,13 @@ function evaluateOptions(options: OptionContract[]): LayerEvaluation {
 }
 
 function evaluateCompression(contexts: LowerTimeframeContext[], dailyContext: LowerTimeframeContext): LayerEvaluation {
-  const score = Math.round(average(contexts.map((context) => context.compressionScore)));
+  const score = dailyContext.compressionScore;
   const intradayActive = contexts.filter((context) => context.timeframe !== "daily" && isSqueezeActive(context.squeezeState)).length;
   if (!isSqueezeActive(dailyContext.squeezeState)) {
     return layer("Compression Quality", "Bearish", "Daily squeeze is required for swing setups; intraday squeezes are bonus only.");
   }
   const status = compressionLayerStatus(score, dailyContext.squeezeState);
-  return layer("Compression Quality", status, "Daily squeeze is active. Compression diagnostic is " + score + "/100; intraday squeeze bonus count is " + intradayActive + ".");
+  return layer("Compression Quality", status, "Daily squeeze is active. Daily compression diagnostic is " + score + "/100; lower-timeframe squeeze bonus count is " + intradayActive + ".");
 }
 
 function evaluateMacro(spyCandles?: Candle[], qqqCandles?: Candle[]): LayerEvaluation {
@@ -244,21 +244,21 @@ function finalDecision(layerEvaluations: LayerEvaluation[], contexts: LowerTimef
   return "Watchlist Candidate";
 }
 
-function rankCallOptions(options: OptionContract[], price: number): OptionContract[] {
+export function rankCallOptions(options: OptionContract[], price: number): OptionContract[] {
   return options
     .filter((contract) => contract.optionType === "call")
     .filter((contract) => contract.bid > 0 && contract.ask > 0)
     .filter((contract) => contract.openInterest >= 50 || contract.volume >= 25)
     .filter((contract) => contract.spreadPct <= 35)
     .filter((contract) => contract.delta === undefined || (contract.delta >= 0.4 && contract.delta <= 0.7))
-    .filter((contract) => contract.dte === undefined || (contract.dte >= 7 && contract.dte <= 90))
+    .filter((contract) => contract.dte === undefined || (contract.dte >= 30 && contract.dte <= 180))
     .filter((contract) => contract.strike <= price * 1.12)
     .sort((a, b) => optionQuality(b) - optionQuality(a));
 }
 
 function optionQuality(contract: OptionContract): number {
-  const dte = contract.dte ?? 45;
-  const dteScore = dte >= 30 && dte <= 90 ? 25 : dte >= 7 && dte <= 21 ? 18 : 0;
+  const dte = contract.dte ?? 60;
+  const dteScore = dte >= 30 && dte <= 90 ? 25 : dte >= 91 && dte <= 180 ? 18 : 0;
   const deltaScore = contract.delta === undefined ? 10 : Math.max(0, 25 - Math.abs(contract.delta - 0.55) * 100);
   const spreadScore = Math.max(0, 25 - contract.spreadPct);
   const liquidityScore = Math.min(25, contract.openInterest / 40 + contract.volume / 25);
@@ -427,9 +427,8 @@ function invalidation(_price: number, indicators: IndicatorSnapshot): string {
 }
 
 function optionDteLabel(contract: OptionContract): string {
-  if (contract.dte === undefined) return "30-90 DTE preferred";
-  if (contract.dte >= 30) return contract.dte + " DTE swing";
-  return contract.dte + " DTE momentum";
+  if (contract.dte === undefined) return "30-180 DTE swing";
+  return contract.dte + " DTE swing";
 }
 
 function alertMessage(symbol: string, decision: LongCallDecision, price: number, compressionStatus: LayerStatus): string {

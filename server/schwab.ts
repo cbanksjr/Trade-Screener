@@ -212,8 +212,8 @@ export async function fetchCallOptions(symbol: string, price: number): Promise<O
 }
 
 async function fetchDirectionalOptions(symbol: string, price: number, contractType: "CALL" | "PUT"): Promise<OptionContract[]> {
-  const fromDate = dateOffset(7);
-  const toDate = dateOffset(90);
+  const fromDate = dateOffset(30);
+  const toDate = dateOffset(180);
   const data = await schwabGet<SchwabOptionChainResponse>("/chains", {
     symbol,
     contractType,

@@ -366,7 +366,7 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
       <section className="panel">
         <div className="panel-head">
           <h2>Recommended Calls</h2>
-          <span>7-21 or 30-90 DTE</span>
+          <span>30-180 DTE swing calls</span>
         </div>
         <div className="contracts">
           {result.suggestedOptions.map((contract) => (

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeState } from "../shared/types";
 import { demoOptions } from "./demoData";
 import { latestIndicators, squeezeState } from "./indicators";
-import { gradeSetup, isSqueezeActive } from "./scoring";
+import { gradeSetup, isSqueezeActive, rankCallOptions } from "./scoring";
 import { buildLowerTimeframeConfluence } from "./timeframes";
 
 describe("indicator calculations", () => {
@@ -95,6 +95,43 @@ describe("layer decision engine", () => {
     expect(isSqueezeActive(result.indicators.squeezeState)).toBe(true);
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.grade).toBe("B");
+    expect(result.reasonsSupportingTrade.join(" ")).not.toContain("Bonus intraday squeeze");
+  });
+
+  it("treats lower-timeframe squeeze as bonus confirmation only", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "BONUSSQZ",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("BONUSSQZ"),
+      optionable: true,
+      options: demoOptions("BONUSSQZ", price),
+      lowerTimeframes: bullishLowerTimeframes("high")
+    });
+
+    expect(result.longCallDecision).not.toBe("Avoid");
+    expect(result.reasonsSupportingTrade.join(" ")).toContain("Bonus intraday squeeze confirmation");
+  });
+
+  it("blocks broadly bearish lower-timeframe structure", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "BEARLOWER",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("BEARLOWER"),
+      optionable: true,
+      options: demoOptions("BEARLOWER", price),
+      lowerTimeframes: bearishLowerTimeframes()
+    });
+
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("bearish EMA structure");
   });
 
   it("does not qualify on intraday squeeze when daily squeeze is absent", () => {
@@ -189,6 +226,27 @@ describe("layer decision engine", () => {
     expect(result.passesUniverse).toBe(false);
     expect(result.longCallDecision).toBe("Avoid");
   });
+
+  it("ranks only 30-180 DTE swing calls and prefers 30-90 when quality is comparable", () => {
+    const ranked = rankCallOptions([
+      option("SHORT", 14, 500, 200, 0.55, 4, 102),
+      option("PREFERRED", 45, 500, 200, 0.55, 4, 102),
+      option("LONGER", 120, 500, 200, 0.55, 4, 102),
+      option("TOO-LONG", 220, 900, 900, 0.55, 2, 102)
+    ], 100);
+
+    expect(ranked.map((contract) => contract.symbol)).toEqual(["PREFERRED", "LONGER"]);
+    expect(ranked.every((contract) => contract.dte !== undefined && contract.dte >= 30 && contract.dte <= 180)).toBe(true);
+  });
+
+  it("allows 91-180 DTE when contract quality is meaningfully better", () => {
+    const ranked = rankCallOptions([
+      option("WEAK-60", 60, 60, 25, 0.42, 30, 103),
+      option("STRONG-150", 150, 2000, 600, 0.55, 3, 103)
+    ], 100);
+
+    expect(ranked[0].symbol).toBe("STRONG-150");
+  });
 });
 
 function bullishCompressionCandles(): Candle[] {
@@ -262,6 +320,15 @@ function bullishLowerTimeframes(squeezeState: SqueezeState): LowerTimeframeConfl
   };
 }
 
+function bearishLowerTimeframes(): LowerTimeframeConfluence {
+  return {
+    fifteenMinute: bearishContext("15m"),
+    thirtyMinute: bearishContext("30m"),
+    oneHour: bearishContext("1h"),
+    fourHour: bearishContext("4h")
+  };
+}
+
 function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeState: SqueezeState): LowerTimeframeContext {
   return {
     timeframe,
@@ -281,5 +348,49 @@ function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeSt
     compressionStatus: squeezeState === "none" ? "Neutral" : "Bullish",
     squeezeState,
     detail: timeframe + " is bullish and inside the 1 ATR entry zone."
+  };
+}
+
+function bearishContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTimeframeContext {
+  return {
+    timeframe,
+    bias: "bearish",
+    price: 96,
+    ema8: 97,
+    ema21: 98,
+    ema34: 99,
+    ema55: 100,
+    ema89: 101,
+    positiveEmaStack: false,
+    priceAboveEmaStack: false,
+    atr14: 3,
+    atrDistanceFromEma21: -0.67,
+    withinOneAtrOfEma21: false,
+    compressionScore: 20,
+    compressionStatus: "Bearish",
+    squeezeState: "none",
+    detail: timeframe + " is bearish."
+  };
+}
+
+function option(symbol: string, dte: number, openInterest: number, volume: number, delta: number, spreadPct: number, strike: number) {
+  const mid = 5;
+  const ask = mid * (1 + spreadPct / 200);
+  const bid = mid * (1 - spreadPct / 200);
+  return {
+    symbol,
+    description: symbol,
+    expirationDate: "2026-09-18",
+    strike,
+    optionType: "call" as const,
+    bid,
+    ask,
+    last: mid,
+    volume,
+    openInterest,
+    delta,
+    dte,
+    spreadPct,
+    score: 75
   };
 }

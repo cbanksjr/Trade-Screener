@@ -28,7 +28,7 @@ The scan uses Schwab for:
 
 - `/marketdata/v1/quotes` for quote and fundamental market data
 - `/marketdata/v1/pricehistory` for daily OHLCV history plus 15-minute intraday candles aggregated into 30m, 1h, and 4h context
-- `/marketdata/v1/chains` for 7-90 DTE call chains with Greeks
+- `/marketdata/v1/chains` for 30-180 DTE swing call chains with Greeks
 
 The **See More** fundamentals page uses Schwab only. Fields Schwab does not return are omitted from the page instead of being filled by a supplemental provider.
 
@@ -79,7 +79,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Compression quality from Bollinger/Keltner squeeze state, ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and compression quality
-- Liquid call candidates in the preferred 7-21 DTE momentum or 30-90 DTE swing windows, with delta around 0.40-0.70
+- Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 
 The automatic index universe is treated as prequalified if Schwab omits beta or market cap. If Schwab provides beta or market cap below the configured thresholds, the symbol is rejected.
 
