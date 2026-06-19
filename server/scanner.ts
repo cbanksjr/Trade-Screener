@@ -10,7 +10,6 @@ import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe"
 
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
-const MIN_DISPLAY_SCORE_RATIO = 0.95;
 let activeScan: Promise<void> | null = null;
 
 export async function readSettings(): Promise<Settings> {
@@ -110,6 +109,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const symbolsToScan = await resolveScanSymbols();
   const canUseLiveSchwab = hasSchwabCredentials() && await hasSchwabTokens();
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
+  const benchmarks = canUseLiveSchwab ? await loadBenchmarks(scanWarnings) : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ") };
 
   if (!canUseLiveSchwab) {
     scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 universe with live market data.");
@@ -119,7 +119,9 @@ export async function runFullScan(): Promise<ScanResponse> {
     symbol,
     settings,
     canUseLiveSchwab,
-    quote: quoteMap.get(symbol)
+    quote: quoteMap.get(symbol),
+    spyCandles: benchmarks.spyCandles,
+    qqqCandles: benchmarks.qqqCandles
   }));
 
   for (const outcome of outcomes) {
@@ -129,10 +131,14 @@ export async function runFullScan(): Promise<ScanResponse> {
     if (outcome.usedDemo) usedDemo = true;
   }
 
-  const sortByScore = (a: ScanResult, b: ScanResult) => b.score / b.maxScore - a.score / a.maxScore;
+  const sortByDecision = (a: ScanResult, b: ScanResult) => {
+    const gradeDelta = (a.grade === "A" ? 0 : 1) - (b.grade === "A" ? 0 : 1);
+    if (gradeDelta !== 0) return gradeDelta;
+    return b.compressionQualityScore - a.compressionQualityScore;
+  };
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
-    results: results.sort(sortByScore),
+    results: results.sort(sortByDecision),
     settings,
     warnings: [...scanWarnings].filter(shouldShowWarning)
   });
@@ -184,6 +190,8 @@ async function scanSymbol(input: {
   settings: Settings;
   canUseLiveSchwab: boolean;
   quote?: SchwabQuote;
+  spyCandles?: Awaited<ReturnType<typeof fetchHistory>>;
+  qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>;
 }): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean }> {
   const { symbol, settings, canUseLiveSchwab } = input;
   const warnings: string[] = [];
@@ -274,7 +282,9 @@ async function scanSymbol(input: {
       options,
       lowerTimeframes,
       weeklyIndicators: weekly.indicators,
-      weeklySqueezeWarning: weekly.warning
+      weeklySqueezeWarning: weekly.warning,
+      spyCandles: input.spyCandles,
+      qqqCandles: input.qqqCandles
     });
     result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
     result.warnings.push(...warnings
@@ -299,7 +309,9 @@ async function scanSymbol(input: {
       optionable: settings.useDemoDataWhenMissingApi,
       options: settings.useDemoDataWhenMissingApi ? demoOptions(symbol, price) : [],
       weeklyIndicators: weekly.indicators,
-      weeklySqueezeWarning: weekly.warning
+      weeklySqueezeWarning: weekly.warning,
+      spyCandles: input.spyCandles,
+      qqqCandles: input.qqqCandles
     });
     fallback.dataSource = "demo";
     fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
@@ -311,9 +323,8 @@ async function scanSymbol(input: {
 function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.setupDirection === "long"
-    && result.score / result.maxScore >= MIN_DISPLAY_SCORE_RATIO
-    && result.grade !== "D"
-    && result.grade !== "F";
+    && (result.longCallDecision === "Strong Long Call Candidate" || result.longCallDecision === "Moderate Long Call Candidate")
+    && (result.grade === "A" || result.grade === "B");
 }
 
 function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>>): { indicators?: ReturnType<typeof latestIndicators>; warning?: string } {
@@ -347,10 +358,27 @@ async function loadQuoteMap(symbols: string[], warnings: Set<string>): Promise<M
   }
 }
 
+async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>> }> {
+  const output: { spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>> } = {};
+  try {
+    output.spyCandles = await fetchHistory("SPY");
+  } catch (error) {
+    warnings.add(readError(error, "SPY macro history request failed."));
+  }
+  try {
+    output.qqqCandles = await fetchHistory("QQQ");
+  } catch (error) {
+    warnings.add(readError(error, "QQQ macro history request failed."));
+  }
+  return output;
+}
+
 async function loadLowerTimeframeConfluence(symbol: string, warnings: string[]): Promise<LowerTimeframeConfluence | undefined> {
   try {
-    const intradayCandles = await fetchIntradayHistory(symbol);
+    const intradayCandles = await fetchIntradayHistory(symbol, 15);
     const confluence = buildLowerTimeframeConfluence(intradayCandles);
+    if (confluence.fifteenMinute.bias === "unavailable") warnings.push("15m confluence unavailable: " + confluence.fifteenMinute.detail);
+    if (confluence.thirtyMinute.bias === "unavailable") warnings.push("30m confluence unavailable: " + confluence.thirtyMinute.detail);
     if (confluence.oneHour.bias === "unavailable") warnings.push("1h confluence unavailable: " + confluence.oneHour.detail);
     if (confluence.fourHour.bias === "unavailable") warnings.push("4h confluence unavailable: " + confluence.fourHour.detail);
     return confluence;

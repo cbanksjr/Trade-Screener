@@ -142,12 +142,14 @@ function redirectToClient(res: express.Response, schwab: "connected" | "error", 
 async function loadChartCandles(symbol: string, timeframe: ChartTimeframe): Promise<Candle[]> {
   if (timeframe === "1d") return fetchChartHistory(symbol);
   if (timeframe === "1w") return aggregateDailyCandlesToWeeks(await fetchChartHistory(symbol));
-  const intraday = await fetchIntradayHistory(symbol);
-  return aggregateSequentialCandles(intraday, timeframe === "1h" ? 2 : 8);
+  const intraday = await fetchIntradayHistory(symbol, 15);
+  if (timeframe === "15m") return intraday;
+  if (timeframe === "30m") return aggregateSequentialCandles(intraday, 2, { includeIncomplete: false });
+  return aggregateSequentialCandles(intraday, timeframe === "1h" ? 4 : 16, { includeIncomplete: false });
 }
 
 function chartTimeframe(value: string): ChartTimeframe {
-  return value === "1h" || value === "4h" || value === "1w" ? value : "1d";
+  return value === "15m" || value === "30m" || value === "1h" || value === "4h" || value === "1w" ? value : "1d";
 }
 
 if (config.isProduction) {

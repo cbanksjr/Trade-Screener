@@ -1,7 +1,22 @@
-import type { Candle, Fundamentals, Grade, IndicatorSnapshot, LowerTimeframeConfluence, LowerTimeframeContext, OptionContract, ScanResult, ScoreRule, SqueezeState } from "../shared/types";
+import type {
+  Candle,
+  Fundamentals,
+  Grade,
+  IndicatorSnapshot,
+  LayerEvaluation,
+  LayerStatus,
+  LongCallDecision,
+  LowerTimeframeConfluence,
+  LowerTimeframeContext,
+  OptionContract,
+  ScanResult,
+  ScoreRule,
+  SqueezeState,
+  TimeframeSqueezeStatus
+} from "../shared/types";
 import { latestIndicators, round } from "./indicators";
+import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
 
-const ATR_DISTANCE_LIMIT = 1.25;
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
 
 export const defaultSettings = {
@@ -24,6 +39,8 @@ export function gradeSetup(input: {
   lowerTimeframeWarnings?: string[];
   weeklyIndicators?: IndicatorSnapshot;
   weeklySqueezeWarning?: string;
+  spyCandles?: Candle[];
+  qqqCandles?: Candle[];
   strictFundamentals?: boolean;
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
@@ -32,142 +49,374 @@ export function gradeSetup(input: {
   const beta = input.fundamentals?.beta;
   const marketCap = input.fundamentals?.marketCap;
   const avgDollarVolume20d = input.fundamentals?.avgDollarVolume20d ?? average(input.candles.slice(-20).map((candle) => candle.volume * candle.close));
-  const betaPassed = input.strictFundamentals ? beta !== undefined && beta >= defaultSettings.minBeta : true;
-  const marketCapPassed = input.strictFundamentals ? marketCap !== undefined && marketCap >= defaultSettings.minMarketCap : true;
+  const dailyContext = buildTimeframeContext("daily", input.candles);
+  const weeklyContext = input.weeklyIndicators ? contextFromIndicators("weekly", input.weeklyIndicators, price) : unavailableContext("weekly", "Weekly context could not be calculated.");
   const lowerTimeframes = input.lowerTimeframes ?? unavailableLowerTimeframes();
-  const weeklyIndicators = input.weeklyIndicators;
-  const commonRules: ScoreRule[] = [
-    rule("optionable", "Optionable stock", input.optionable, 10, input.optionable ? "Options chain is available." : "No usable options chain was found."),
-    rule("price", "Price above $20", price > defaultSettings.minPrice, 8, "Last price is $" + price.toFixed(2) + "."),
-    rule("beta", "Beta >= 0.75", betaPassed, 8, beta !== undefined ? "Beta is " + beta.toFixed(2) + "." : input.strictFundamentals ? "Beta was not available from Schwab/fundamentals." : "Assumed prequalified by the selected universe."),
-    rule("market-cap", "Market cap >= $2B", marketCapPassed, 8, marketCap !== undefined ? "Market cap is " + formatMoney(marketCap) + "." : input.strictFundamentals ? "Market cap was not available from Schwab/fundamentals." : "Assumed prequalified by the selected universe."),
-    rule("dollar-volume", "20-day dollar volume >= $600M", avgDollarVolume20d >= defaultSettings.minAvgDollarVolume, 10, "20-day average dollar volume is " + formatMoney(avgDollarVolume20d) + ".")
+  const contexts = [
+    lowerTimeframes.fifteenMinute,
+    lowerTimeframes.thirtyMinute,
+    lowerTimeframes.oneHour,
+    lowerTimeframes.fourHour,
+    dailyContext
   ];
-  const selected = longCandidate(commonRules, input.options, price, indicators, lowerTimeframes);
-  const passesUniverse = commonRules.every((item) => item.passed);
-  const warnings = input.lowerTimeframeWarnings ?? (input.lowerTimeframes ? [] : ["Lower-timeframe confluence unavailable; 1h/4h rules were not scored."]);
+  const weeklySupport = weeklySupportStatus(weeklyContext);
+  const options = rankCallOptions(input.options, price);
+  const recommendedOption = options[0];
+  const institutional = evaluateInstitutional({
+    price,
+    beta,
+    marketCap,
+    avgDollarVolume20d,
+    optionable: input.optionable,
+    strictFundamentals: Boolean(input.strictFundamentals)
+  });
+  const marketStructure = evaluateMarketStructure(contexts, weeklySupport);
+  const optionLayer = evaluateOptions(options);
+  const compression = evaluateCompression(contexts);
+  const macro = evaluateMacro(input.spyCandles, input.qqqCandles);
+  const relativeStrengthSummary = evaluateRelativeStrength(input.candles, input.spyCandles, input.qqqCandles);
+  const layerEvaluations = [marketStructure, institutional, optionLayer, macro, compression];
+  const decision = finalDecision(layerEvaluations, contexts, weeklySupport);
+  const grade = decision === "Strong Long Call Candidate" ? "A" : "B";
+  const compressionQualityScoreValue = Math.round(average(contexts.map((context) => context.compressionScore)));
+  const warnings = input.lowerTimeframeWarnings ?? (input.lowerTimeframes ? [] : ["Lower-timeframe confluence unavailable; 15m/30m/1h/4h rules were not evaluated."]);
   if (input.weeklySqueezeWarning) warnings.push(input.weeklySqueezeWarning);
 
   return {
     symbol: input.symbol,
     companyName: input.companyName,
-    setupDirection: selected.direction,
+    setupDirection: "long",
     dataSource: "demo",
     price,
     beta: beta ?? null,
     marketCap: marketCap ?? null,
     avgDollarVolume20d: round(avgDollarVolume20d, 0),
     optionable: input.optionable,
-    passesUniverse,
-    grade: toGrade(selected.score / selected.maxScore, isSqueezeActive(indicators.squeezeState)),
-    score: selected.score,
-    maxScore: selected.maxScore,
+    passesUniverse: institutional.status !== "Bearish" && institutional.status !== "Insufficient Data",
+    grade,
+    longCallDecision: decision,
+    setupQuality: grade === "A" ? "High" : "Moderate",
+    entryRecommendationType: entryType(decision, compression.status),
+    score: compressionQualityScoreValue,
+    maxScore: 100,
     indicators,
-    weeklyIndicators,
+    weeklyIndicators: input.weeklyIndicators,
     lowerTimeframes,
-    rules: selected.rules,
-    suggestedOptions: selected.options.slice(0, 5),
-    candles: input.candles.slice(-90),
+    squeezeStatusByTimeframe: [
+      ...contexts.map(toTimeframeStatus),
+      toTimeframeStatus(weeklyContext)
+    ],
+    weeklyContextSummary: weeklySummary(weeklyContext),
+    compressionQualityScore: compressionQualityScoreValue,
+    compressionQualityStatus: compression.status,
+    multiTimeframeAlignmentSummary: alignmentSummary(contexts, weeklyContext),
+    relativeStrengthSummary,
+    institutionalContextSummary: institutional.detail,
+    macroRegimeSummary: macro.detail,
+    layerEvaluations,
+    recommendedOptionContract: recommendedOption,
+    recommendedDte: recommendedOption ? optionDteLabel(recommendedOption) : undefined,
+    recommendedDelta: recommendedOption?.delta !== undefined ? recommendedOption.delta.toFixed(2) : undefined,
+    suggestedEntryArea: suggestedEntry(price, indicators),
+    invalidationLevel: invalidation(price, indicators),
+    stockStopPrice: round(Math.min(indicators.ema34, indicators.ema55), 2),
+    target1: round(price + indicators.atr14 * 1.5, 2),
+    target2: round(price + indicators.atr14 * 2.5, 2),
+    reasonsSupportingTrade: supportReasons(layerEvaluations, contexts, weeklyContext, recommendedOption),
+    reasonsAgainstTrade: riskReasons(layerEvaluations, contexts, weeklyContext, recommendedOption),
+    alertMessage: alertMessage(input.symbol, decision, price, compression.status),
+    journalRecord: journalRecord(input.symbol, decision, price, contexts, weeklyContext, recommendedOption),
+    rules: layerEvaluations.map(layerToRule),
+    suggestedOptions: options.slice(0, 5),
+    candles: input.candles.slice(-120),
     lastUpdated: new Date().toISOString(),
     warnings
   };
-}
-
-function longCandidate(
-  commonRules: ScoreRule[],
-  options: OptionContract[],
-  price: number,
-  indicators: ReturnType<typeof latestIndicators>,
-  lowerTimeframes: LowerTimeframeConfluence
-): { direction: "long"; rules: ScoreRule[]; options: OptionContract[]; score: number; maxScore: number } {
-  const directionalOptions = options.filter((contract) => contract.optionType === "call");
-  const liquidOptions = directionalOptions.filter((contract) => contract.score >= 70);
-  const atrDistance = indicators.atr14 > 0 ? round(Math.abs(price - indicators.ema21) / indicators.atr14, 2) : 0;
-  const signedAtrDistance = indicators.atr14 > 0 ? round((price - indicators.ema21) / indicators.atr14, 2) : 0;
-  const withinLongAtr = price >= indicators.ema21 && price <= indicators.ema21 + indicators.atr14 * ATR_DISTANCE_LIMIT;
-  const rules = [
-    ...commonRules,
-    rule(
-      "ema-stack",
-      "Long: 21 EMA above 50 EMA",
-      indicators.ema21 > indicators.ema50,
-      14,
-      "21 EMA " + indicators.ema21 + " vs 50 EMA " + indicators.ema50 + "."
-    ),
-    rule(
-      "price-side",
-      "Long: price above 21 EMA",
-      price > indicators.ema21,
-      8,
-      "Price is $" + price.toFixed(2) + " vs 21 EMA " + indicators.ema21 + "."
-    ),
-    rule(
-      "near-ema",
-      "Long: price within +1.25 ATR of 21 EMA",
-      withinLongAtr,
-      14,
-      "Price is " + atrDistance + " ATR from the 21 EMA (" + signedAtrDistance + " signed ATR). Limit is +" + ATR_DISTANCE_LIMIT + " ATR."
-    ),
-    confluenceRule("1h-confluence", "1h confluence", lowerTimeframes.oneHour),
-    confluenceRule("4h-confluence", "4h confluence", lowerTimeframes.fourHour),
-    rule("daily-squeeze", "Daily squeeze active", isSqueezeActive(indicators.squeezeState), 12, "Daily squeeze state is " + indicators.squeezeState + "."),
-    rule(
-      "momentum",
-      "Squeeze histogram above zero",
-      indicators.momentum > 0,
-      10,
-      "Momentum histogram is " + indicators.momentum + "."
-    ),
-    rule(
-      "contracts",
-      "Liquid call candidates",
-      liquidOptions.length > 0,
-      6,
-      liquidOptions.length ? liquidOptions.length + " liquid call candidate(s) found." : "No liquid calls met the spread/open-interest filters."
-    )
-  ];
-  const maxScore = rules.reduce((sum, item) => sum + item.maxPoints, 0);
-  const score = rules.reduce((sum, item) => sum + item.points, 0);
-  return { direction: "long", rules, options: directionalOptions.sort((a, b) => b.score - a.score), score, maxScore };
 }
 
 export function isSqueezeActive(state: SqueezeState | undefined): boolean {
   return Boolean(state && SQUEEZE_STATES.includes(state));
 }
 
-function confluenceRule(id: string, label: string, context: LowerTimeframeContext): ScoreRule {
-  const expected = "bullish";
-  return rule(
-    id,
-    label,
-    context.bias === expected,
-    6,
-    context.bias === expected ? context.detail : context.detail + " Expected " + expected + " lower-timeframe confluence."
-  );
+function evaluateMarketStructure(contexts: LowerTimeframeContext[], weeklyStatus: LayerStatus): LayerEvaluation {
+  const available = contexts.filter((context) => context.bias !== "unavailable");
+  if (available.length < 3) return layer("Squeeze Market Structure", "Insufficient Data", "Not enough selected timeframe data to evaluate structure.");
+  const bullish = available.filter((context) => context.bias === "bullish").length;
+  const activeSqueeze = available.some((context) => isSqueezeActive(context.squeezeState));
+  const bearish = available.some((context) => context.bias === "bearish");
+  if (bullish === available.length && activeSqueeze && weeklyStatus !== "Bearish") return layer("Squeeze Market Structure", "Bullish", "All selected lower/daily timeframes are bullish with active compression present.");
+  if (bullish >= 3 && activeSqueeze && !bearish) return layer("Squeeze Market Structure", "Neutral", bullish + " of " + available.length + " selected timeframes are bullish with compression present.");
+  if (bearish) return layer("Squeeze Market Structure", "Bearish", "At least one selected timeframe has bearish EMA structure.");
+  return layer("Squeeze Market Structure", "Conflicting", "EMA alignment and compression are mixed across selected timeframes.");
 }
 
-function unavailableLowerTimeframes(): LowerTimeframeConfluence {
-  const detail = "No lower-timeframe candles were available.";
+function evaluateInstitutional(input: {
+  price: number;
+  beta?: number;
+  marketCap?: number;
+  avgDollarVolume20d: number;
+  optionable: boolean;
+  strictFundamentals: boolean;
+}): LayerEvaluation {
+  const priceOk = input.price > defaultSettings.minPrice;
+  const betaOk = input.beta === undefined ? !input.strictFundamentals : input.beta >= defaultSettings.minBeta;
+  const marketCapOk = input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= defaultSettings.minMarketCap;
+  const volumeOk = input.avgDollarVolume20d >= defaultSettings.minAvgDollarVolume;
+  const passed = [priceOk, betaOk, marketCapOk, volumeOk, input.optionable].filter(Boolean).length;
+  const detail = "Price $" + input.price.toFixed(2)
+    + ", beta " + (input.beta?.toFixed(2) ?? "unavailable")
+    + ", market cap " + (input.marketCap ? formatMoney(input.marketCap) : "unavailable")
+    + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + ".";
+  if (passed === 5) return layer("Institutional Context", "Bullish", detail);
+  if (passed >= 4) return layer("Institutional Context", "Neutral", detail);
+  return layer("Institutional Context", "Bearish", detail);
+}
+
+function evaluateOptions(options: OptionContract[]): LayerEvaluation {
+  if (!options.length) return layer("Options Market Context", "Bearish", "No liquid call contract met the selection filters.");
+  const best = options[0];
+  if (best.openInterest >= 250 && best.spreadPct <= 20 && best.delta !== undefined && best.delta >= 0.4 && best.delta <= 0.7) {
+    return layer("Options Market Context", "Bullish", "Best call has healthy liquidity, delta, and spread.");
+  }
+  return layer("Options Market Context", "Neutral", "Usable call liquidity exists, but contract quality is not ideal.");
+}
+
+function evaluateCompression(contexts: LowerTimeframeContext[]): LayerEvaluation {
+  const score = Math.round(average(contexts.map((context) => context.compressionScore)));
+  const active = contexts.filter((context) => isSqueezeActive(context.squeezeState)).length;
+  const status = compressionLayerStatus(score, active ? "low" : "none");
+  return layer("Compression Quality", status, "Compression diagnostic is " + score + "/100 across selected non-weekly timeframes; active squeeze count is " + active + ".");
+}
+
+function evaluateMacro(spyCandles?: Candle[], qqqCandles?: Candle[]): LayerEvaluation {
+  if (!spyCandles?.length || !qqqCandles?.length) return layer("Macro Regime", "Neutral", "SPY/QQQ macro context was not available; market regime treated as contextual.");
+  try {
+    const spy = buildTimeframeContext("daily", spyCandles);
+    const qqq = buildTimeframeContext("daily", qqqCandles);
+    if (spy.bias === "bullish" && qqq.bias === "bullish") return layer("Macro Regime", "Bullish", "SPY and QQQ daily EMA structures are bullish.");
+    if (spy.bias === "bearish" || qqq.bias === "bearish") return layer("Macro Regime", "Bearish", "SPY or QQQ daily EMA structure is bearish.");
+    return layer("Macro Regime", "Neutral", "SPY/QQQ daily EMA structures are mixed.");
+  } catch {
+    return layer("Macro Regime", "Neutral", "SPY/QQQ macro context could not be calculated.");
+  }
+}
+
+function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqCandles?: Candle[]): string {
+  if (!spyCandles?.length || !qqqCandles?.length) return "SPY/QQQ relative strength comparison unavailable; setup is evaluated from symbol trend and compression only.";
+  const symbolReturn = percentReturn(candles.slice(-20));
+  const spyReturn = percentReturn(spyCandles.slice(-20));
+  const qqqReturn = percentReturn(qqqCandles.slice(-20));
+  const spyText = symbolReturn >= spyReturn ? "outperforming SPY" : "underperforming SPY";
+  const qqqText = symbolReturn >= qqqReturn ? "outperforming QQQ" : "underperforming QQQ";
+  return "20-period relative strength: " + spyText + " and " + qqqText + ".";
+}
+
+function finalDecision(layerEvaluations: LayerEvaluation[], contexts: LowerTimeframeContext[], weeklyStatus: LayerStatus): LongCallDecision {
+  const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
+  const bullishTimeframes = contexts.filter((context) => context.bias === "bullish").length;
+  const activeCompression = contexts.some((context) => isSqueezeActive(context.squeezeState));
+  const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
+  if (bearishLayer || !activeCompression) return "Avoid";
+  if (
+    byLayer("Squeeze Market Structure") === "Bullish"
+    && byLayer("Compression Quality") === "Bullish"
+    && byLayer("Options Market Context") !== "Bearish"
+    && byLayer("Institutional Context") !== "Bearish"
+    && bullishTimeframes >= 5
+    && weeklyStatus !== "Bearish"
+  ) return "Strong Long Call Candidate";
+  if (
+    bullishTimeframes >= 3
+    && byLayer("Compression Quality") !== "Bearish"
+    && byLayer("Options Market Context") !== "Bearish"
+    && byLayer("Institutional Context") !== "Bearish"
+    && weeklyStatus !== "Bearish"
+  ) return "Moderate Long Call Candidate";
+  return "Watchlist Candidate";
+}
+
+function rankCallOptions(options: OptionContract[], price: number): OptionContract[] {
+  return options
+    .filter((contract) => contract.optionType === "call")
+    .filter((contract) => contract.bid > 0 && contract.ask > 0)
+    .filter((contract) => contract.openInterest >= 50 || contract.volume >= 25)
+    .filter((contract) => contract.spreadPct <= 35)
+    .filter((contract) => contract.delta === undefined || (contract.delta >= 0.4 && contract.delta <= 0.7))
+    .filter((contract) => contract.dte === undefined || (contract.dte >= 7 && contract.dte <= 90))
+    .filter((contract) => contract.strike <= price * 1.12)
+    .sort((a, b) => optionQuality(b) - optionQuality(a));
+}
+
+function optionQuality(contract: OptionContract): number {
+  const dte = contract.dte ?? 45;
+  const dteScore = dte >= 30 && dte <= 90 ? 25 : dte >= 7 && dte <= 21 ? 18 : 0;
+  const deltaScore = contract.delta === undefined ? 10 : Math.max(0, 25 - Math.abs(contract.delta - 0.55) * 100);
+  const spreadScore = Math.max(0, 25 - contract.spreadPct);
+  const liquidityScore = Math.min(25, contract.openInterest / 40 + contract.volume / 25);
+  const ivPenalty = contract.impliedVolatility !== undefined && contract.impliedVolatility > 1.25 ? 15 : 0;
+  return dteScore + deltaScore + spreadScore + liquidityScore - ivPenalty;
+}
+
+function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapshot, price: number): LowerTimeframeContext {
+  const positiveEmaStack = hasPositiveEmaStack(indicators);
+  const priceAboveEmaStack = price > indicators.ema8 && price > indicators.ema21 && price > indicators.ema34 && price > indicators.ema55 && price > indicators.ema89;
+  const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   return {
-    oneHour: { timeframe: "1h", bias: "unavailable", price: null, ema21: null, ema50: null, squeezeState: "none", detail },
-    fourHour: { timeframe: "4h", bias: "unavailable", price: null, ema21: null, ema50: null, squeezeState: "none", detail }
+    timeframe,
+    bias: positiveEmaStack && priceAboveEmaStack ? "bullish" : !positiveEmaStack && !priceAboveEmaStack ? "bearish" : "neutral",
+    price,
+    ema8: indicators.ema8,
+    ema21: indicators.ema21,
+    ema34: indicators.ema34,
+    ema55: indicators.ema55,
+    ema89: indicators.ema89,
+    positiveEmaStack,
+    priceAboveEmaStack,
+    compressionScore,
+    compressionStatus: compressionLayerStatus(compressionScore, indicators.squeezeState),
+    squeezeState: indicators.squeezeState,
+    detail: "Weekly context is " + (positiveEmaStack && priceAboveEmaStack ? "bullish" : "mixed") + " with squeeze " + indicators.squeezeState + "."
   };
 }
 
-function rule(id: string, label: string, passed: boolean, maxPoints: number, detail: string): ScoreRule {
-  return { id, label, passed, maxPoints, points: passed ? maxPoints : 0, detail };
+function weeklySupportStatus(context: LowerTimeframeContext): LayerStatus {
+  if (context.bias === "unavailable") return "Neutral";
+  if (context.bias === "bullish") return isSqueezeActive(context.squeezeState) ? "Bullish" : "Neutral";
+  if (context.bias === "bearish") return "Bearish";
+  return "Neutral";
 }
 
-function toGrade(ratio: number, hasDailySqueeze: boolean): Grade {
-  if (ratio >= 0.97) return hasDailySqueeze ? "A+" : "A";
-  if (ratio >= 0.9) return "A";
-  if (ratio >= 0.8) return "B";
-  if (ratio >= 0.7) return "C";
-  if (ratio >= 0.6) return "D";
-  return "F";
+function unavailableLowerTimeframes(): LowerTimeframeConfluence {
+  return {
+    fifteenMinute: unavailableContext("15m", "No 15m candles were available."),
+    thirtyMinute: unavailableContext("30m", "No 30m candles were available."),
+    oneHour: unavailableContext("1h", "No 1h candles were available."),
+    fourHour: unavailableContext("4h", "No 4h candles were available.")
+  };
+}
+
+function unavailableContext(timeframe: LowerTimeframeContext["timeframe"], detail: string): LowerTimeframeContext {
+  return {
+    timeframe,
+    bias: "unavailable",
+    price: null,
+    ema8: null,
+    ema21: null,
+    ema34: null,
+    ema55: null,
+    ema89: null,
+    positiveEmaStack: false,
+    priceAboveEmaStack: false,
+    compressionScore: 0,
+    compressionStatus: "Insufficient Data",
+    squeezeState: "none",
+    detail
+  };
+}
+
+function toTimeframeStatus(context: LowerTimeframeContext): TimeframeSqueezeStatus {
+  return {
+    timeframe: context.timeframe,
+    squeezeState: context.squeezeState ?? "unavailable",
+    bias: context.bias,
+    priceAboveEmaStack: context.priceAboveEmaStack,
+    positiveEmaStack: context.positiveEmaStack,
+    compressionStatus: context.compressionStatus,
+    detail: context.detail
+  };
+}
+
+function entryType(decision: LongCallDecision, compressionStatus: LayerStatus) {
+  if (decision === "Strong Long Call Candidate" && compressionStatus === "Bullish") return "High Conviction Compression Entry";
+  if (decision === "Strong Long Call Candidate") return "Mid Compression Entry";
+  if (decision === "Moderate Long Call Candidate") return "Early Compression Entry";
+  if (decision === "Watchlist Candidate") return "Compression Watchlist";
+  return "Avoid";
+}
+
+function weeklySummary(context: LowerTimeframeContext): string {
+  if (context.bias === "unavailable") return "Weekly context unavailable; weekly squeeze is not required.";
+  const squeezeBonus = isSqueezeActive(context.squeezeState) ? " Weekly squeeze adds bonus confirmation." : " Weekly squeeze is not required.";
+  return "Weekly chart is " + context.bias + " with " + (context.positiveEmaStack ? "bullish" : "mixed") + " EMA structure." + squeezeBonus;
+}
+
+function alignmentSummary(contexts: LowerTimeframeContext[], weeklyContext: LowerTimeframeContext): string {
+  const bullish = contexts.filter((context) => context.bias === "bullish").map((context) => context.timeframe).join(", ") || "none";
+  const mixed = contexts.filter((context) => context.bias !== "bullish").map((context) => context.timeframe).join(", ") || "none";
+  return "Bullish timeframes: " + bullish + ". Mixed/unavailable: " + mixed + ". Weekly: " + weeklyContext.bias + ".";
+}
+
+function supportReasons(layers: LayerEvaluation[], contexts: LowerTimeframeContext[], weeklyContext: LowerTimeframeContext, option?: OptionContract): string[] {
+  const reasons = layers.filter((layerItem) => layerItem.status === "Bullish").map((layerItem) => layerItem.layer + ": " + layerItem.detail);
+  const active = contexts.filter((context) => isSqueezeActive(context.squeezeState)).map((context) => context.timeframe);
+  if (active.length) reasons.push("Active squeeze/compression on " + active.join(", ") + ".");
+  if (isSqueezeActive(weeklyContext.squeezeState)) reasons.push("Weekly squeeze adds bonus confirmation.");
+  if (option) reasons.push("Recommended call has OI " + option.openInterest + ", spread " + option.spreadPct.toFixed(1) + "%, delta " + (option.delta?.toFixed(2) ?? "unavailable") + ".");
+  return reasons.slice(0, 6);
+}
+
+function riskReasons(layers: LayerEvaluation[], contexts: LowerTimeframeContext[], weeklyContext: LowerTimeframeContext, option?: OptionContract): string[] {
+  const reasons = layers.filter((layerItem) => layerItem.status === "Bearish" || layerItem.status === "Conflicting").map((layerItem) => layerItem.layer + ": " + layerItem.detail);
+  const notBullish = contexts.filter((context) => context.bias !== "bullish").map((context) => context.timeframe);
+  if (notBullish.length) reasons.push("Not fully aligned on " + notBullish.join(", ") + ".");
+  if (weeklyContext.bias === "bearish") reasons.push("Weekly bearish structure reduces setup quality.");
+  if (!option) reasons.push("No preferred call contract was found.");
+  return reasons.slice(0, 6);
+}
+
+function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
+  return "$" + round(Math.min(price, indicators.ema8), 2).toFixed(2) + " to $" + round(Math.max(price, indicators.ema21), 2).toFixed(2);
+}
+
+function invalidation(_price: number, indicators: IndicatorSnapshot): string {
+  return "Daily close below 34/55 EMA zone near $" + round(Math.min(indicators.ema34, indicators.ema55), 2).toFixed(2) + ".";
+}
+
+function optionDteLabel(contract: OptionContract): string {
+  if (contract.dte === undefined) return "30-90 DTE preferred";
+  if (contract.dte >= 30) return contract.dte + " DTE swing";
+  return contract.dte + " DTE momentum";
+}
+
+function alertMessage(symbol: string, decision: LongCallDecision, price: number, compressionStatus: LayerStatus): string {
+  return symbol + " " + decision + " at $" + price.toFixed(2) + "; compression status " + compressionStatus + ". Watch for controlled consolidation before expansion.";
+}
+
+function journalRecord(symbol: string, decision: LongCallDecision, price: number, contexts: LowerTimeframeContext[], weeklyContext: LowerTimeframeContext, option?: OptionContract): string {
+  return [
+    symbol,
+    decision,
+    "price $" + price.toFixed(2),
+    "aligned " + contexts.filter((context) => context.bias === "bullish").length + "/5 selected timeframes",
+    "weekly " + weeklyContext.bias,
+    option ? "contract " + option.description : "no preferred contract"
+  ].join(" | ");
+}
+
+function layerToRule(item: LayerEvaluation): ScoreRule {
+  return {
+    id: item.layer.toLowerCase().replaceAll(" ", "-"),
+    label: item.layer + ": " + item.status,
+    points: 0,
+    maxPoints: 0,
+    passed: item.status === "Bullish" || item.status === "Neutral",
+    detail: item.detail
+  };
+}
+
+function layer(itemLayer: LayerEvaluation["layer"], status: LayerStatus, detail: string): LayerEvaluation {
+  return { layer: itemLayer, status, detail };
+}
+
+function percentReturn(candles: Candle[]): number {
+  if (candles.length < 2) return 0;
+  const first = candles[0].close;
+  const last = candles[candles.length - 1].close;
+  return first ? (last - first) / first : 0;
 }
 
 function average(values: number[]): number {
+  if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 

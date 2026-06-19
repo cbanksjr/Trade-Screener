@@ -492,6 +492,12 @@ small,
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
 }
 
+.summary-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+}
+
 .metric {
   background: var(--panel-soft);
   border-bottom: 1px solid var(--border);

@@ -1,10 +1,13 @@
-import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, TimeframeBias } from "../shared/types";
+import type { AnalysisTimeframe, Candle, LayerStatus, LowerTimeframeConfluence, LowerTimeframeContext, TimeframeBias } from "../shared/types";
 import { latestIndicators } from "./indicators";
 
-export function buildLowerTimeframeConfluence(thirtyMinuteCandles: Candle[]): LowerTimeframeConfluence {
-  const oneHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 2);
-  const fourHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 8);
+export function buildLowerTimeframeConfluence(fifteenMinuteCandles: Candle[]): LowerTimeframeConfluence {
+  const thirtyMinuteCandles = aggregateSequentialCandles(fifteenMinuteCandles, 2, { includeIncomplete: false });
+  const oneHourCandles = aggregateSequentialCandles(fifteenMinuteCandles, 4, { includeIncomplete: false });
+  const fourHourCandles = aggregateSequentialCandles(fifteenMinuteCandles, 16, { includeIncomplete: false });
   return {
+    fifteenMinute: buildContext("15m", fifteenMinuteCandles),
+    thirtyMinute: buildContext("30m", thirtyMinuteCandles),
     oneHour: buildContext("1h", oneHourCandles),
     fourHour: buildContext("4h", fourHourCandles)
   };
@@ -37,37 +40,105 @@ export function aggregateSequentialCandles(candles: Candle[], candlesPerBar: num
   return output;
 }
 
-function buildContext(timeframe: "1h" | "4h", candles: Candle[]): LowerTimeframeContext {
-  if (candles.length < 50) {
+export function buildTimeframeContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTimeframeContext {
+  return buildContext(timeframe, candles);
+}
+
+function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTimeframeContext {
+  if (candles.length < 90) {
     return {
       timeframe,
       bias: "unavailable",
       price: null,
+      ema8: null,
       ema21: null,
-      ema50: null,
+      ema34: null,
+      ema55: null,
+      ema89: null,
+      positiveEmaStack: false,
+      priceAboveEmaStack: false,
+      compressionScore: 0,
+      compressionStatus: "Insufficient Data",
       squeezeState: "none",
-      detail: timeframe + " needs at least 50 candles; only " + candles.length + " were available."
+      detail: timeframe + " needs at least 90 candles; only " + candles.length + " were available."
     };
   }
 
   const indicators = latestIndicators(candles);
   const price = candles[candles.length - 1].close;
-  const bias = lowerTimeframeBias(price, indicators.ema21, indicators.ema50);
+  const positiveEmaStack = hasPositiveEmaStack(indicators);
+  const priceAboveEmaStack = price > indicators.ema8
+    && price > indicators.ema21
+    && price > indicators.ema34
+    && price > indicators.ema55
+    && price > indicators.ema89;
+  const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
+  const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
+  const bias = lowerTimeframeBias(positiveEmaStack, priceAboveEmaStack);
   return {
     timeframe,
     bias,
     price,
+    ema8: indicators.ema8,
     ema21: indicators.ema21,
-    ema50: indicators.ema50,
+    ema34: indicators.ema34,
+    ema55: indicators.ema55,
+    ema89: indicators.ema89,
+    positiveEmaStack,
+    priceAboveEmaStack,
+    compressionScore,
+    compressionStatus,
     squeezeState: indicators.squeezeState,
-    detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", 21 EMA " + indicators.ema21 + ", 50 EMA " + indicators.ema50 + "."
+    detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", EMAs "
+      + [indicators.ema8, indicators.ema21, indicators.ema34, indicators.ema55, indicators.ema89].join("/")
+      + ", squeeze " + indicators.squeezeState + "."
   };
 }
 
-function lowerTimeframeBias(price: number, ema21: number, ema50: number): TimeframeBias {
-  if (ema21 > ema50 && price > ema50) return "bullish";
-  if (ema21 < ema50 && price < ema50) return "bearish";
+function lowerTimeframeBias(positiveEmaStack: boolean, priceAboveEmaStack: boolean): TimeframeBias {
+  if (positiveEmaStack && priceAboveEmaStack) return "bullish";
+  if (!positiveEmaStack && !priceAboveEmaStack) return "bearish";
   return "neutral";
+}
+
+export function hasPositiveEmaStack(indicators: {
+  ema8: number;
+  ema21: number;
+  ema34: number;
+  ema55: number;
+  ema89: number;
+}): boolean {
+  return indicators.ema8 > indicators.ema21
+    && indicators.ema21 > indicators.ema34
+    && indicators.ema34 > indicators.ema55
+    && indicators.ema55 > indicators.ema89;
+}
+
+export function compressionQualityScore(indicators: {
+  squeezeState?: string;
+  atrContracting?: boolean;
+  bbContracting?: boolean;
+  candleRangeContracting?: boolean;
+  momentumImproving?: boolean;
+}, priceAboveEmaStack: boolean): number {
+  let score = 0;
+  if (indicators.squeezeState === "high") score += 30;
+  else if (indicators.squeezeState === "mid") score += 25;
+  else if (indicators.squeezeState === "low") score += 20;
+  if (indicators.bbContracting) score += 20;
+  if (indicators.atrContracting) score += 20;
+  if (indicators.candleRangeContracting) score += 10;
+  if (indicators.momentumImproving) score += 10;
+  if (priceAboveEmaStack) score += 10;
+  return Math.min(100, score);
+}
+
+export function compressionLayerStatus(score: number, squeezeState?: string): LayerStatus {
+  if (!squeezeState || squeezeState === "none") return score >= 50 ? "Neutral" : "Bearish";
+  if (squeezeState === "released") return "Conflicting";
+  if (score >= 75) return "Bullish";
+  if (score >= 55) return "Neutral";
+  return "Conflicting";
 }
 
 export function aggregateDailyCandlesToWeeks(candles: Candle[]): Candle[] {

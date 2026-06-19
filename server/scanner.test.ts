@@ -83,13 +83,14 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LONG"]);
   }));
 
-  it("only displays results that score at least 95 percent", async () => withDbRestore(async () => {
+  it("only displays A/B qualified strong or moderate candidates", async () => withDbRestore(async () => {
+    const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     await replaceScanResults([
-      qualifyingResult("NINETYFIVE"),
-      { ...qualifyingResult("NINETYFOUR"), score: 94 }
+      qualifyingResult("QUALIFIED"),
+      watchlist
     ]);
 
-    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["NINETYFIVE"]);
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["QUALIFIED"]);
   }));
 
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
@@ -154,12 +155,42 @@ function qualifyingResult(symbol: string, daily = indicator("low"), weekly = ind
     optionable: true,
     passesUniverse: true,
     grade: "A",
+    longCallDecision: "Strong Long Call Candidate",
+    setupQuality: "High",
+    entryRecommendationType: "High Conviction Compression Entry",
     score: 95,
     maxScore: 100,
     setupDirection: "long",
     indicators: daily,
     weeklyIndicators: weekly,
     lowerTimeframes: undefined,
+    squeezeStatusByTimeframe: [
+      { timeframe: "15m", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "15m bullish." },
+      { timeframe: "30m", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "30m bullish." },
+      { timeframe: "1h", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "1h bullish." },
+      { timeframe: "4h", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "4h bullish." },
+      { timeframe: "daily", squeezeState: daily.squeezeState, bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "Daily bullish." },
+      { timeframe: "weekly", squeezeState: weekly.squeezeState, bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "Weekly bullish." }
+    ],
+    weeklyContextSummary: "Weekly chart supports the bullish thesis.",
+    compressionQualityScore: 95,
+    compressionQualityStatus: "Bullish",
+    multiTimeframeAlignmentSummary: "All selected timeframes are bullish.",
+    relativeStrengthSummary: "Outperforming SPY and QQQ.",
+    institutionalContextSummary: "Institutional filters passed.",
+    macroRegimeSummary: "SPY and QQQ bullish.",
+    layerEvaluations: [],
+    recommendedDte: "45 DTE swing",
+    recommendedDelta: "0.55",
+    suggestedEntryArea: "$99.00 to $101.00",
+    invalidationLevel: "Daily close below 34/55 EMA zone.",
+    stockStopPrice: 95,
+    target1: 105,
+    target2: 110,
+    reasonsSupportingTrade: ["Compression active."],
+    reasonsAgainstTrade: [],
+    alertMessage: symbol + " compression candidate.",
+    journalRecord: symbol + " | Strong Long Call Candidate",
     rules: [],
     suggestedOptions: [],
     candles: [],
@@ -170,11 +201,17 @@ function qualifyingResult(symbol: string, daily = indicator("low"), weekly = ind
 
 function indicator(squeezeState: "none" | "low" | "mid" | "released") {
   return {
+    ema8: 103,
     ema21: 100,
-    ema50: 95,
+    ema34: 98,
+    ema55: 96,
+    ema89: 94,
     atr14: 2,
+    atrContracting: true,
     bbUpper: 101,
     bbLower: 99,
+    bbWidth: 2,
+    bbContracting: true,
     kcLowUpper: 102,
     kcLowLower: 98,
     kcMidUpper: 103,
@@ -182,6 +219,8 @@ function indicator(squeezeState: "none" | "low" | "mid" | "released") {
     kcHighUpper: 104,
     kcHighLower: 96,
     momentum: 1,
+    momentumImproving: true,
+    candleRangeContracting: true,
     squeezeState
   };
 }

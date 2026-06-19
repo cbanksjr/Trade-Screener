@@ -36,12 +36,14 @@ const api = {
   }
 };
 
-const GRADE_ORDER = ["A+", "A", "B", "C", "D", "F"] as const;
+const GRADE_ORDER = ["A", "B"] as const;
 const CHART_TIMEFRAMES: Array<{ label: string; value: ChartTimeframe }> = [
   { label: "1W", value: "1w" },
   { label: "1D", value: "1d" },
   { label: "4H", value: "4h" },
-  { label: "1H", value: "1h" }
+  { label: "1H", value: "1h" },
+  { label: "30M", value: "30m" },
+  { label: "15M", value: "15m" }
 ];
 type ThemeMode = "light" | "dark";
 type FundamentalItem = {
@@ -202,7 +204,7 @@ function App() {
             <section className="workspace">
               <div className="panel list-panel">
                 <div className="panel-head">
-                  <h2>95%+ Candidates</h2>
+                  <h2>Qualified Compression Candidates</h2>
                   <span>{new Date().toLocaleDateString()}</span>
                 </div>
                 <div className="table scroll-list">
@@ -227,9 +229,7 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   return [...results].sort((left, right) => {
     const gradeDelta = GRADE_ORDER.indexOf(left.grade) - GRADE_ORDER.indexOf(right.grade);
     if (gradeDelta !== 0) return gradeDelta;
-    const leftScore = left.score / left.maxScore;
-    const rightScore = right.score / right.maxScore;
-    if (rightScore !== leftScore) return rightScore - leftScore;
+    if (right.compressionQualityScore !== left.compressionQualityScore) return right.compressionQualityScore - left.compressionQualityScore;
     return left.symbol.localeCompare(right.symbol);
   });
 }
@@ -271,7 +271,7 @@ function ResultRow({ result, activeSymbol, onSelect, onSeeMore }: {
       <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
       <span>
         <strong>{result.symbol}</strong>
-        <small>{result.setupDirection.toUpperCase()} · {money(result.price)} · {Math.round((result.score / result.maxScore) * 100)}%</small>
+        <small>{money(result.price)} · {result.longCallDecision} · Compression {result.compressionQualityScore}</small>
       </span>
       <span className="candidate-actions">
         <span className={result.passesUniverse ? "pass" : "fail"}>{result.passesUniverse ? "Qualified" : "Filtered"}</span>
@@ -291,21 +291,37 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
         <div>
           <span className={"grade large grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
           <h2>{result.symbol}</h2>
-          <p>{result.setupDirection.toUpperCase()} · {money(result.price)} · Score {result.score}/{result.maxScore}</p>
+          <p>{result.longCallDecision} · {money(result.price)} · {result.entryRecommendationType}</p>
         </div>
         <div className="indicator-grid">
-          <Metric label="Weekly Sqz" value={result.weeklyIndicators?.squeezeState ?? "unavailable"} />
-          <Metric label="Daily Sqz" value={result.indicators.squeezeState} />
-          <Metric label="4h Sqz" value={result.lowerTimeframes?.fourHour?.squeezeState ?? "unavailable"} />
-          <Metric label="1h Sqz" value={result.lowerTimeframes?.oneHour?.squeezeState ?? "unavailable"} />
+          <Metric label="15m Sqz" value={timeframeSqueeze(result, "15m")} />
+          <Metric label="30m Sqz" value={timeframeSqueeze(result, "30m")} />
+          <Metric label="1h Sqz" value={timeframeSqueeze(result, "1h")} />
+          <Metric label="4h Sqz" value={timeframeSqueeze(result, "4h")} />
+          <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
+          <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
+          <Metric label="Compression" value={result.compressionQualityScore + " / " + result.compressionQualityStatus} />
           <Metric label="Momentum" value={formatNumber(result.indicators.momentum)} />
+          <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
-          <Metric label="50 EMA" value={formatNumber(result.indicators.ema50)} />
+          <Metric label="34 EMA" value={formatNumber(result.indicators.ema34)} />
+          <Metric label="55 EMA" value={formatNumber(result.indicators.ema55)} />
+          <Metric label="89 EMA" value={formatNumber(result.indicators.ema89)} />
           <Metric label="ATR" value={formatNumber(result.indicators.atr14)} />
-          <Metric label="Dollar Vol" value={money(result.avgDollarVolume20d)} />
-          <Metric label="Direction" value={result.setupDirection.toUpperCase()} />
-          <Metric label="4h Bias" value={timeframeLabel(result.lowerTimeframes?.fourHour?.bias)} />
-          <Metric label="1h Bias" value={timeframeLabel(result.lowerTimeframes?.oneHour?.bias)} />
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Setup Summary</h2>
+          <span>{result.setupQuality} quality</span>
+        </div>
+        <div className="summary-grid">
+          <Metric label="Alignment" value={result.multiTimeframeAlignmentSummary} />
+          <Metric label="Weekly" value={result.weeklyContextSummary} />
+          <Metric label="Relative Strength" value={result.relativeStrengthSummary} />
+          <Metric label="Institutional" value={result.institutionalContextSummary} />
+          <Metric label="Macro" value={result.macroRegimeSummary} />
         </div>
       </section>
 
@@ -315,18 +331,18 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Checklist</h2>
-          <span>Transparent scoring</span>
+          <h2>Layer Status</h2>
+          <span>Independent evaluation</span>
         </div>
         <div className="rules">
-          {result.rules.map((rule) => (
-            <div className="rule" key={rule.id}>
-              {rule.passed ? <CheckCircle2 className="ok" /> : <XCircle className="bad" />}
+          {result.layerEvaluations.map((layer) => (
+            <div className="rule" key={layer.layer}>
+              {layer.status === "Bullish" || layer.status === "Neutral" ? <CheckCircle2 className="ok" /> : <XCircle className="bad" />}
               <span>
-                <strong>{rule.label}</strong>
-                <small>{rule.detail}</small>
+                <strong>{layer.layer}: {layer.status}</strong>
+                <small>{layer.detail}</small>
               </span>
-              <b>{rule.points}/{rule.maxPoints}</b>
+              <b>{layer.status}</b>
             </div>
           ))}
         </div>
@@ -334,15 +350,30 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Liquid Calls</h2>
-          <span>30-180 DTE target</span>
+          <h2>Trade Plan</h2>
+          <span>{result.entryRecommendationType}</span>
+        </div>
+        <div className="summary-grid">
+          <Metric label="Entry Area" value={result.suggestedEntryArea} />
+          <Metric label="Invalidation" value={result.invalidationLevel} />
+          <Metric label="Stock Stop" value={moneyOrUnavailable(result.stockStopPrice)} />
+          <Metric label="Target 1" value={moneyOrUnavailable(result.target1)} />
+          <Metric label="Target 2" value={moneyOrUnavailable(result.target2)} />
+          <Metric label="Alert" value={result.alertMessage} />
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Recommended Calls</h2>
+          <span>7-21 or 30-90 DTE</span>
         </div>
         <div className="contracts">
           {result.suggestedOptions.map((contract) => (
             <div className="contract" key={contract.symbol}>
               <strong>{contract.strike}{contract.optionType === "call" ? "C" : "P"} · {dateOrUnavailable(contract.expirationDate)}</strong>
               <span>Bid/Ask ${contract.bid.toFixed(2)} / ${contract.ask.toFixed(2)}</span>
-              <span>OI {contract.openInterest} · Vol {contract.volume} · Spread {contract.spreadPct.toFixed(1)}%</span>
+              <span>DTE {contract.dte ?? "n/a"} · Delta {contract.delta?.toFixed(2) ?? "n/a"} · OI {contract.openInterest} · Vol {contract.volume} · Spread {contract.spreadPct.toFixed(1)}%</span>
               <b>{Math.round(contract.score)}</b>
             </div>
           ))}
@@ -434,6 +465,13 @@ function LightweightPriceChart({ candles, theme }: { candles: Candle[]; theme: T
       close: candle.close
     }));
     series.setData(chartCandles);
+    const ema8Series = chart.addSeries(LineSeries, {
+      color: colors.ema8,
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      title: "8 EMA"
+    });
     const ema21Series = chart.addSeries(LineSeries, {
       color: colors.ema21,
       lineWidth: 2,
@@ -441,15 +479,32 @@ function LightweightPriceChart({ candles, theme }: { candles: Candle[]; theme: T
       lastValueVisible: false,
       title: "21 EMA"
     });
-    const ema50Series = chart.addSeries(LineSeries, {
-      color: colors.ema50,
+    const ema34Series = chart.addSeries(LineSeries, {
+      color: colors.ema34,
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
-      title: "50 EMA"
+      title: "34 EMA"
     });
+    const ema55Series = chart.addSeries(LineSeries, {
+      color: colors.ema55,
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      title: "55 EMA"
+    });
+    const ema89Series = chart.addSeries(LineSeries, {
+      color: colors.ema89,
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      title: "89 EMA"
+    });
+    ema8Series.setData(emaLineData(candles, 8));
     ema21Series.setData(emaLineData(candles, 21));
-    ema50Series.setData(emaLineData(candles, 50));
+    ema34Series.setData(emaLineData(candles, 34));
+    ema55Series.setData(emaLineData(candles, 55));
+    ema89Series.setData(emaLineData(candles, 89));
     chart.timeScale().fitContent();
     const resizeObserver = new ResizeObserver(() => {
       chart.resize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight), true);
@@ -467,8 +522,8 @@ function LightweightPriceChart({ candles, theme }: { candles: Candle[]; theme: T
 
 function chartPalette(theme: ThemeMode) {
   return theme === "dark"
-    ? { background: "#121c22", text: "#99aab3", grid: "#273842", border: "#273842", ema21: "#20c997", ema50: "#f5b84b" }
-    : { background: "#ffffff", text: "#667085", grid: "#e5eaf0", border: "#e5eaf0", ema21: "#047857", ema50: "#d39b24" };
+    ? { background: "#121c22", text: "#99aab3", grid: "#273842", border: "#273842", ema8: "#20c997", ema21: "#6dcadd", ema34: "#f5b84b", ema55: "#e0a526", ema89: "#ef6b6b" }
+    : { background: "#ffffff", text: "#667085", grid: "#e5eaf0", border: "#e5eaf0", ema8: "#047857", ema21: "#1d7a8c", ema34: "#d39b24", ema55: "#b98518", ema89: "#b64141" };
 }
 
 function toChartTime(value: string): Time {
@@ -515,7 +570,7 @@ function FundamentalsPage({ symbol, results, onBack }: { symbol: string; results
           <h2>{symbol}</h2>
           <p>{data?.companyName ?? cached?.companyName ?? "Compact Schwab fundamentals analysis"}</p>
         </div>
-        <span className={"grade large grade-" + (cached?.grade ?? "C").replace("+", "plus")}>{cached?.grade ?? "--"}</span>
+        <span className={"grade large grade-" + (cached?.grade ?? "B").replace("+", "plus")}>{cached?.grade ?? "--"}</span>
       </div>
 
       {loading && <div className="notice">Loading Schwab fundamentals...</div>}
@@ -612,6 +667,11 @@ function visibleFundamentalItems(items: FundamentalItem[]): FundamentalItem[] {
 function timeframeLabel(value: string | undefined): string {
   if (!value) return "Unavailable";
   return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function timeframeSqueeze(result: ScanResult, timeframe: string): string {
+  const status = result.squeezeStatusByTimeframe.find((item) => item.timeframe === timeframe);
+  return status ? String(status.squeezeState) + " / " + timeframeLabel(status.bias) : "Unavailable";
 }
 
 function money(value: number): string {

@@ -162,7 +162,7 @@ export async function fetchQuotes(symbols: string[]): Promise<Map<string, Schwab
 }
 
 export async function fetchHistory(symbol: string): Promise<Candle[]> {
-  return fetchDailyHistory(symbol, 370);
+  return fetchDailyHistory(symbol, 5 * 366);
 }
 
 export async function fetchChartHistory(symbol: string): Promise<Candle[]> {
@@ -184,7 +184,7 @@ async function fetchDailyHistory(symbol: string, lookbackDays: number): Promise<
   return normalizeSchwabHistory(data);
 }
 
-export async function fetchIntradayHistory(symbol: string): Promise<Candle[]> {
+export async function fetchIntradayHistory(symbol: string, frequency = 15): Promise<Candle[]> {
   const endDate = Date.now();
   const startDate = endDate - 90 * 24 * 60 * 60 * 1000;
   const data = await schwabGet<SchwabPriceHistoryResponse>("/pricehistory", {
@@ -192,7 +192,7 @@ export async function fetchIntradayHistory(symbol: string): Promise<Candle[]> {
     startDate,
     endDate,
     frequencyType: "minute",
-    frequency: "30",
+    frequency,
     needExtendedHoursData: "false",
     needPreviousClose: "false"
   });
@@ -212,8 +212,8 @@ export async function fetchCallOptions(symbol: string, price: number): Promise<O
 }
 
 async function fetchDirectionalOptions(symbol: string, price: number, contractType: "CALL" | "PUT"): Promise<OptionContract[]> {
-  const fromDate = dateOffset(30);
-  const toDate = dateOffset(180);
+  const fromDate = dateOffset(7);
+  const toDate = dateOffset(90);
   const data = await schwabGet<SchwabOptionChainResponse>("/chains", {
     symbol,
     contractType,
@@ -360,10 +360,12 @@ function normalizeOption(item: Record<string, unknown>, price: number, optionTyp
   const openInterest = numberValue(item.openInterest);
   const volume = numberValue(item.totalVolume ?? item.volume);
   const strike = numberValue(item.strikePrice ?? item.strike);
+  const expirationDate = String(item.expirationDate ?? "");
+  const dte = daysToExpiration(expirationDate);
   return {
     symbol: String(item.symbol ?? ""),
     description: String(item.description ?? item.symbol ?? ""),
-    expirationDate: String(item.expirationDate ?? ""),
+    expirationDate,
     strike,
     optionType,
     bid,
@@ -372,6 +374,8 @@ function normalizeOption(item: Record<string, unknown>, price: number, optionTyp
     volume,
     openInterest,
     delta: finiteNumber(item.delta),
+    impliedVolatility: finiteNumber(item.volatility ?? item.impliedVolatility),
+    dte,
     spreadPct: Number(spreadPct.toFixed(2)),
     score: optionScore(spreadPct, volume, openInterest, strike, price)
   };
@@ -474,6 +478,15 @@ function dateOffset(days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function daysToExpiration(value: string): number | undefined {
+  const prefix = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
+  if (!prefix) return undefined;
+  const expiration = new Date(prefix + "T21:00:00.000Z").getTime();
+  const now = Date.now();
+  if (!Number.isFinite(expiration)) return undefined;
+  return Math.max(0, Math.ceil((expiration - now) / (24 * 60 * 60 * 1000)));
+}
+
 function objectValue(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null ? value as Record<string, unknown> : {};
 }
@@ -552,8 +565,11 @@ function scanContext(result: ScanResult): FundamentalAnalysis["scanContext"] {
     direction: result.setupDirection,
     score: result.score,
     maxScore: result.maxScore,
+    longCallDecision: result.longCallDecision,
     dailySqueeze: result.indicators.squeezeState,
     weeklySqueeze: result.weeklyIndicators?.squeezeState,
+    fifteenMinuteSqueeze: result.lowerTimeframes?.fifteenMinute.squeezeState,
+    thirtyMinuteSqueeze: result.lowerTimeframes?.thirtyMinute.squeezeState,
     oneHourSqueeze: result.lowerTimeframes?.oneHour.squeezeState,
     fourHourSqueeze: result.lowerTimeframes?.fourHour.squeezeState,
     optionable: result.optionable,
