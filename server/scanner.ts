@@ -134,7 +134,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sortByDecision = (a: ScanResult, b: ScanResult) => {
     const gradeDelta = (a.grade === "A" ? 0 : 1) - (b.grade === "A" ? 0 : 1);
     if (gradeDelta !== 0) return gradeDelta;
-    return b.compressionQualityScore - a.compressionQualityScore;
+    return (b.dailySqueezeDotCount ?? b.compressionQualityScore) - (a.dailySqueezeDotCount ?? a.compressionQualityScore);
   };
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",

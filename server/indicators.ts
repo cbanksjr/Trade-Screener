@@ -114,6 +114,19 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
   };
 }
 
+export function activeSqueezeDotCount(candles: Candle[]): number {
+  let count = 0;
+  for (let end = candles.length; end >= 90; end -= 1) {
+    if (!isActiveSqueeze(latestIndicators(candles.slice(0, end)).squeezeState)) break;
+    count += 1;
+  }
+  return count;
+}
+
+function isActiveSqueeze(state: SqueezeState): boolean {
+  return state === "low" || state === "mid" || state === "high";
+}
+
 function average(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;

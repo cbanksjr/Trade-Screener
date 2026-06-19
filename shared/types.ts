@@ -151,6 +151,7 @@ export type ScanResult = {
   lowerTimeframes?: LowerTimeframeConfluence;
   squeezeStatusByTimeframe: TimeframeSqueezeStatus[];
   weeklyContextSummary: string;
+  dailySqueezeDotCount?: number;
   compressionQualityScore: number;
   compressionQualityStatus: LayerStatus;
   multiTimeframeAlignmentSummary: string;

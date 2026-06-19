@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeState } from "../shared/types";
 import { demoOptions } from "./demoData";
-import { latestIndicators, squeezeState } from "./indicators";
+import { activeSqueezeDotCount, latestIndicators, squeezeState } from "./indicators";
 import { gradeSetup, isSqueezeActive, rankCallOptions } from "./scoring";
 import { buildLowerTimeframeConfluence } from "./timeframes";
 
@@ -56,8 +56,9 @@ describe("layer decision engine", () => {
     expect(["A", "B"]).toContain(result.grade);
     expect(["Strong Long Call Candidate", "Moderate Long Call Candidate", "Watchlist Candidate", "Avoid"]).toContain(result.longCallDecision);
     expect(result.layerEvaluations).toHaveLength(5);
-    expect(result.compressionQualityScore).toBeGreaterThanOrEqual(0);
-    expect(result.maxScore).toBe(100);
+    expect(result.dailySqueezeDotCount).toBeGreaterThanOrEqual(5);
+    expect(result.compressionQualityScore).toBe(result.dailySqueezeDotCount);
+    expect(result.maxScore).toBe(5);
   });
 
   it("requires daily squeeze for swing candidates", () => {
@@ -93,9 +94,31 @@ describe("layer decision engine", () => {
     });
 
     expect(isSqueezeActive(result.indicators.squeezeState)).toBe(true);
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
     expect(result.reasonsSupportingTrade.join(" ")).not.toContain("Bonus intraday squeeze");
+  });
+
+  it("requires at least 5 consecutive active daily squeeze dots", () => {
+    const candles = activeDailySqueezeCandles();
+    const firstFiveDotIndex = candles.findIndex((_, index) => index >= 90 && activeSqueezeDotCount(candles.slice(0, index + 1)) >= 5);
+    expect(firstFiveDotIndex).toBeGreaterThan(90);
+    const limitedCandles = candles.slice(0, firstFiveDotIndex);
+    const indicators = latestIndicators(limitedCandles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "FOURDOTS",
+      candles: limitedCandles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("FOURDOTS"),
+      optionable: true,
+      options: demoOptions("FOURDOTS", price),
+      lowerTimeframes: bullishLowerTimeframes("none")
+    });
+
+    expect(result.dailySqueezeDotCount).toBeLessThan(5);
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("At least 5 consecutive active daily squeeze dots are required");
   });
 
   it("does not require lower timeframes to be within 1 ATR for grading", () => {
@@ -113,8 +136,8 @@ describe("layer decision engine", () => {
     });
 
     expect(result.squeezeStatusByTimeframe.filter((item) => ["30m", "1h", "4h"].includes(item.timeframe)).every((item) => item.withinOneAtrOfEma21 === false)).toBe(true);
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
     expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the 1 ATR entry zone from the 21 EMA on 30m");
   });
 

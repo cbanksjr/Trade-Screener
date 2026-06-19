@@ -14,7 +14,7 @@ import type {
   SqueezeState,
   TimeframeSqueezeStatus
 } from "../shared/types";
-import { latestIndicators, round } from "./indicators";
+import { activeSqueezeDotCount, latestIndicators, round } from "./indicators";
 import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
 
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
@@ -44,6 +44,7 @@ export function gradeSetup(input: {
   strictFundamentals?: boolean;
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
+  const dailySqueezeDotCount = activeSqueezeDotCount(input.candles);
   const latest = input.candles[input.candles.length - 1];
   const price = input.currentPrice ?? latest.close;
   const beta = input.fundamentals?.beta;
@@ -71,13 +72,13 @@ export function gradeSetup(input: {
   });
   const marketStructure = evaluateMarketStructure(contexts, dailyContext, weeklySupport);
   const optionLayer = evaluateOptions(options);
-  const compression = evaluateCompression(contexts, dailyContext);
+  const compression = evaluateCompression(contexts, dailyContext, dailySqueezeDotCount);
   const macro = evaluateMacro(input.spyCandles, input.qqqCandles);
   const relativeStrengthSummary = evaluateRelativeStrength(input.candles, input.spyCandles, input.qqqCandles);
   const layerEvaluations = [marketStructure, institutional, optionLayer, macro, compression];
   const decision = finalDecision(layerEvaluations, contexts, dailyContext, weeklySupport);
   const grade = decision === "Strong Long Call Candidate" ? "A" : "B";
-  const compressionQualityScoreValue = Math.round(average(contexts.map((context) => context.compressionScore)));
+  const compressionQualityScoreValue = dailySqueezeDotCount;
   const warnings = input.lowerTimeframeWarnings ?? (input.lowerTimeframes ? [] : ["Lower-timeframe confluence unavailable; 30m/1h/4h rules were not evaluated."]);
   if (input.weeklySqueezeWarning) warnings.push(input.weeklySqueezeWarning);
 
@@ -97,7 +98,7 @@ export function gradeSetup(input: {
     setupQuality: grade === "A" ? "High" : "Moderate",
     entryRecommendationType: entryType(decision, compression.status),
     score: compressionQualityScoreValue,
-    maxScore: 100,
+    maxScore: 5,
     indicators,
     weeklyIndicators: input.weeklyIndicators,
     lowerTimeframes,
@@ -106,6 +107,7 @@ export function gradeSetup(input: {
       toTimeframeStatus(weeklyContext)
     ],
     weeklyContextSummary: weeklySummary(weeklyContext),
+    dailySqueezeDotCount,
     compressionQualityScore: compressionQualityScoreValue,
     compressionQualityStatus: compression.status,
     multiTimeframeAlignmentSummary: alignmentSummary(contexts, weeklyContext),
@@ -182,14 +184,12 @@ function evaluateOptions(options: OptionContract[]): LayerEvaluation {
   return layer("Options Market Context", "Neutral", "Usable call liquidity exists, but contract quality is not ideal.");
 }
 
-function evaluateCompression(contexts: LowerTimeframeContext[], dailyContext: LowerTimeframeContext): LayerEvaluation {
-  const score = dailyContext.compressionScore;
+function evaluateCompression(contexts: LowerTimeframeContext[], dailyContext: LowerTimeframeContext, dailySqueezeDotCount: number): LayerEvaluation {
   const intradayActive = contexts.filter((context) => context.timeframe !== "daily" && isSqueezeActive(context.squeezeState)).length;
-  if (!isSqueezeActive(dailyContext.squeezeState)) {
-    return layer("Compression Quality", "Bearish", "Daily squeeze is required for swing setups; intraday squeezes are bonus only.");
+  if (dailySqueezeDotCount < 5) {
+    return layer("Compression Quality", "Bearish", "At least 5 consecutive active daily squeeze dots are required; current count is " + dailySqueezeDotCount + ". Intraday squeezes are bonus only.");
   }
-  const status = compressionLayerStatus(score, dailyContext.squeezeState);
-  return layer("Compression Quality", status, "Daily squeeze is active. Daily compression diagnostic is " + score + "/100; lower-timeframe squeeze bonus count is " + intradayActive + ".");
+  return layer("Compression Quality", "Bullish", "Daily chart has " + dailySqueezeDotCount + " consecutive active squeeze dots. Lower-timeframe squeeze bonus count is " + intradayActive + ".");
 }
 
 function evaluateMacro(spyCandles?: Candle[], qqqCandles?: Candle[]): LayerEvaluation {

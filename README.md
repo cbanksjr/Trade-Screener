@@ -72,10 +72,10 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Average dollar volume >= $600M, from Schwab `average volume x last price` when available
 - Long setup: price above the 8, 21, 34, 55, and 89 EMAs with a positive EMA stack
 - Selected timeframes: 30m, 1h, 4h, daily, and weekly
-- Active Daily Squeeze Pro-style compression before expansion; intraday squeezes on 30m, 1h, or 4h are bonus confirmation only
+- At least 5 consecutive active Daily squeeze dots before expansion; intraday squeezes on 30m, 1h, or 4h are bonus confirmation only
 - Daily entry proximity: current price must be above the Daily 21 EMA and no more than 1 ATR above it
 - Lower-timeframe entry proximity on 30m, 1h, and 4h is bonus confirmation only, not a grading requirement
-- Compression quality from Bollinger/Keltner squeeze state, ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum
+- Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and compression quality
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70

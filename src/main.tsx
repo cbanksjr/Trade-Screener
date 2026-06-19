@@ -189,7 +189,9 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   return [...results].sort((left, right) => {
     const gradeDelta = GRADE_ORDER.indexOf(left.grade) - GRADE_ORDER.indexOf(right.grade);
     if (gradeDelta !== 0) return gradeDelta;
-    if (right.compressionQualityScore !== left.compressionQualityScore) return right.compressionQualityScore - left.compressionQualityScore;
+    const leftDots = dailySqueezeDots(left);
+    const rightDots = dailySqueezeDots(right);
+    if (rightDots !== leftDots) return rightDots - leftDots;
     return left.symbol.localeCompare(right.symbol);
   });
 }
@@ -230,7 +232,7 @@ function ResultRow({ result, activeSymbol, onSelect }: {
       <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
       <span>
         <strong>{result.symbol}</strong>
-        <small>{money(result.price)} · {result.longCallDecision} · Compression {result.compressionQualityScore}</small>
+        <small>{money(result.price)} · {result.longCallDecision} · Daily dots {dailySqueezeDots(result)}</small>
       </span>
     </div>
   );
@@ -251,7 +253,7 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <Metric label="4h Sqz" value={timeframeSqueeze(result, "4h")} />
           <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
-          <Metric label="Compression" value={result.compressionQualityScore + " / " + result.compressionQualityStatus} />
+          <Metric label="Daily Dots" value={dailySqueezeDots(result) + " active"} />
           <Metric label="Momentum" value={formatNumber(result.indicators.momentum)} />
           <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
@@ -514,6 +516,10 @@ function timeframeLabel(value: string | undefined): string {
 function timeframeSqueeze(result: ScanResult, timeframe: string): string {
   const status = result.squeezeStatusByTimeframe.find((item) => item.timeframe === timeframe);
   return status ? String(status.squeezeState) + " / " + timeframeLabel(status.bias) : "Unavailable";
+}
+
+function dailySqueezeDots(result: ScanResult): number {
+  return result.dailySqueezeDotCount ?? result.compressionQualityScore;
 }
 
 function money(value: number): string {
