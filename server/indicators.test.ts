@@ -98,6 +98,26 @@ describe("layer decision engine", () => {
     expect(result.reasonsSupportingTrade.join(" ")).not.toContain("Bonus intraday squeeze");
   });
 
+  it("does not require lower timeframes to be within 1 ATR for grading", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "LOWEREXT",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("LOWEREXT"),
+      optionable: true,
+      options: demoOptions("LOWEREXT", price),
+      lowerTimeframes: bullishLowerTimeframes("none", false)
+    });
+
+    expect(result.squeezeStatusByTimeframe.filter((item) => ["30m", "1h", "4h"].includes(item.timeframe)).every((item) => item.withinOneAtrOfEma21 === false)).toBe(true);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the 1 ATR entry zone from the 21 EMA on 30m");
+  });
+
   it("treats lower-timeframe squeeze as bonus confirmation only", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
@@ -311,11 +331,11 @@ function strongFundamentals(symbol: string) {
   };
 }
 
-function bullishLowerTimeframes(squeezeState: SqueezeState): LowerTimeframeConfluence {
+function bullishLowerTimeframes(squeezeState: SqueezeState, withinOneAtrOfEma21 = true): LowerTimeframeConfluence {
   return {
-    thirtyMinute: bullishContext("30m", squeezeState),
-    oneHour: bullishContext("1h", squeezeState),
-    fourHour: bullishContext("4h", squeezeState)
+    thirtyMinute: bullishContext("30m", squeezeState, withinOneAtrOfEma21),
+    oneHour: bullishContext("1h", squeezeState, withinOneAtrOfEma21),
+    fourHour: bullishContext("4h", squeezeState, withinOneAtrOfEma21)
   };
 }
 
@@ -327,11 +347,11 @@ function bearishLowerTimeframes(): LowerTimeframeConfluence {
   };
 }
 
-function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeState: SqueezeState): LowerTimeframeContext {
+function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeState: SqueezeState, withinOneAtrOfEma21 = true): LowerTimeframeContext {
   return {
     timeframe,
     bias: "bullish",
-    price: 105,
+    price: withinOneAtrOfEma21 ? 105 : 110,
     ema8: 104,
     ema21: 103,
     ema34: 102,
@@ -340,12 +360,12 @@ function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeSt
     positiveEmaStack: true,
     priceAboveEmaStack: true,
     atr14: 3,
-    atrDistanceFromEma21: 0.67,
-    withinOneAtrOfEma21: true,
+    atrDistanceFromEma21: withinOneAtrOfEma21 ? 0.67 : 2.33,
+    withinOneAtrOfEma21,
     compressionScore: squeezeState === "none" ? 60 : 85,
     compressionStatus: squeezeState === "none" ? "Neutral" : "Bullish",
     squeezeState,
-    detail: timeframe + " is bullish and inside the 1 ATR entry zone."
+    detail: timeframe + " is bullish and " + (withinOneAtrOfEma21 ? "inside" : "outside") + " the 1 ATR entry zone."
   };
 }
 

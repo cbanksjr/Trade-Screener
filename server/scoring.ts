@@ -143,12 +143,12 @@ function evaluateMarketStructure(contexts: LowerTimeframeContext[], dailyContext
   const bullish = available.filter((context) => context.bias === "bullish").length;
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   const bearish = available.some((context) => context.bias === "bearish");
-  const entryAligned = available.filter((context) => context.withinOneAtrOfEma21).length;
+  const lowerEntryAligned = available.filter((context) => context.timeframe !== "daily" && context.withinOneAtrOfEma21).length;
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
-  if (bullish === available.length && entryAligned === available.length && weeklyStatus !== "Bearish") return layer("Squeeze Market Structure", "Bullish", "Daily squeeze is active and all selected lower/daily timeframes are bullish within 1 ATR of the 21 EMA.");
-  if (bullish >= 3 && entryAligned >= 3 && !bearish) return layer("Squeeze Market Structure", "Neutral", "Daily squeeze is active; " + bullish + " of " + available.length + " selected timeframes are bullish and " + entryAligned + " are within the 1 ATR entry zone.");
+  if (bullish === available.length && weeklyStatus !== "Bearish") return layer("Squeeze Market Structure", "Bullish", "Daily squeeze is active and all selected lower/daily timeframes have bullish EMA structure. Lower-timeframe 1 ATR alignment is bonus confirmation on " + lowerEntryAligned + " timeframe(s).");
+  if (bullish >= 3 && !bearish) return layer("Squeeze Market Structure", "Neutral", "Daily squeeze is active; " + bullish + " of " + available.length + " selected timeframes have bullish EMA structure. Lower-timeframe 1 ATR alignment is bonus only.");
   if (bearish) return layer("Squeeze Market Structure", "Bearish", "At least one selected timeframe has bearish EMA structure.");
-  return layer("Squeeze Market Structure", "Conflicting", "Daily squeeze is active, but EMA alignment or 1 ATR entry proximity is mixed across selected timeframes.");
+  return layer("Squeeze Market Structure", "Conflicting", "Daily squeeze is active, but EMA alignment is mixed across selected timeframes.");
 }
 
 function evaluateInstitutional(input: {
@@ -218,7 +218,6 @@ function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqC
 function finalDecision(layerEvaluations: LayerEvaluation[], contexts: LowerTimeframeContext[], dailyContext: LowerTimeframeContext, weeklyStatus: LayerStatus): LongCallDecision {
   const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
   const bullishTimeframes = contexts.filter((context) => context.bias === "bullish").length;
-  const entryAligned = contexts.filter((context) => context.withinOneAtrOfEma21).length;
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   const dailyEntryAligned = dailyContext.withinOneAtrOfEma21;
   const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
@@ -228,13 +227,11 @@ function finalDecision(layerEvaluations: LayerEvaluation[], contexts: LowerTimef
     && byLayer("Compression Quality") === "Bullish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
-    && bullishTimeframes >= 5
-    && entryAligned >= 5
+    && bullishTimeframes === contexts.length
     && weeklyStatus !== "Bearish"
   ) return "Strong Long Call Candidate";
   if (
     bullishTimeframes >= 3
-    && entryAligned >= 3
     && byLayer("Compression Quality") !== "Bearish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
@@ -393,8 +390,10 @@ function supportReasons(layers: LayerEvaluation[], contexts: LowerTimeframeConte
   const reasons = layers.filter((layerItem) => layerItem.status === "Bullish").map((layerItem) => layerItem.layer + ": " + layerItem.detail);
   const daily = contexts.find((context) => context.timeframe === "daily");
   const activeIntraday = contexts.filter((context) => context.timeframe !== "daily" && isSqueezeActive(context.squeezeState)).map((context) => context.timeframe);
+  const lowerEntryAligned = contexts.filter((context) => context.timeframe !== "daily" && context.withinOneAtrOfEma21).map((context) => context.timeframe);
   if (daily && isSqueezeActive(daily.squeezeState)) reasons.push("Daily squeeze is active, which is required for swing qualification.");
   if (activeIntraday.length) reasons.push("Bonus intraday squeeze confirmation on " + activeIntraday.join(", ") + ".");
+  if (lowerEntryAligned.length) reasons.push("Bonus lower-timeframe 1 ATR alignment on " + lowerEntryAligned.join(", ") + ".");
   if (isSqueezeActive(weeklyContext.squeezeState)) reasons.push("Weekly squeeze adds bonus confirmation.");
   if (option) reasons.push("Recommended call has OI " + option.openInterest + ", spread " + option.spreadPct.toFixed(1) + "%, delta " + (option.delta?.toFixed(2) ?? "unavailable") + ".");
   return reasons.slice(0, 6);
@@ -406,7 +405,7 @@ function riskReasons(layers: LayerEvaluation[], contexts: LowerTimeframeContext[
   if (daily && !isSqueezeActive(daily.squeezeState)) reasons.push("Daily squeeze is not active; swing setup should be avoided.");
   const notBullish = contexts.filter((context) => context.bias !== "bullish").map((context) => context.timeframe);
   if (notBullish.length) reasons.push("Not fully aligned on " + notBullish.join(", ") + ".");
-  const extended = contexts.filter((context) => context.bias !== "unavailable" && !context.withinOneAtrOfEma21).map((context) => context.timeframe);
+  const extended = contexts.filter((context) => context.timeframe === "daily" && context.bias !== "unavailable" && !context.withinOneAtrOfEma21).map((context) => context.timeframe);
   if (extended.length) reasons.push("Outside the 1 ATR entry zone from the 21 EMA on " + extended.join(", ") + ".");
   if (weeklyContext.bias === "bearish") reasons.push("Weekly bearish structure reduces setup quality.");
   if (!option) reasons.push("No preferred call contract was found.");
