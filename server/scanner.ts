@@ -1,11 +1,11 @@
-import type { LowerTimeframeConfluence, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
 import { defaultSettings, gradeSetup } from "./scoring";
-import { fetchCallOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
+import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
-import { aggregateDailyCandlesToWeeks, buildLowerTimeframeConfluence } from "./timeframes";
+import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
 
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
@@ -235,8 +235,6 @@ async function scanSymbol(input: {
       return { warnings, usedLive, usedDemo };
     }
 
-    const lowerTimeframeWarnings: string[] = [];
-    const lowerTimeframePromise = canUseLiveSchwab ? loadLowerTimeframeConfluence(symbol, lowerTimeframeWarnings) : Promise.resolve(undefined);
     let candles = canUseLiveSchwab ? await fetchHistory(symbol) : [];
     if (candles.length >= 50) {
       candlesSource = "schwab";
@@ -252,8 +250,6 @@ async function scanSymbol(input: {
 
     const price = quote?.price ?? candles[candles.length - 1].close;
     const weekly = weeklySqueezeFromDaily(candles);
-    const lowerTimeframes = await lowerTimeframePromise;
-    warnings.push(...lowerTimeframeWarnings.map((warning) => symbol + ": " + warning));
 
     let options: Awaited<ReturnType<typeof fetchCallOptions>> = [];
     if (canUseLiveSchwab) {
@@ -282,7 +278,6 @@ async function scanSymbol(input: {
       fundamentals: mergeFundamentals(symbol, quote),
       optionable: options.length > 0,
       options,
-      lowerTimeframes,
       weeklyIndicators: weekly.indicators,
       weeklySqueezeWarning: weekly.warning,
       spyCandles: input.spyCandles,
@@ -344,8 +339,8 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
         detail: dotCount === undefined
           ? "Run scan for dot count."
           : layer.status === "Bearish"
-            ? "At least 5 consecutive active daily squeeze dots are required; current count is " + dotCount + ". Intraday squeezes are bonus only."
-            : "Daily chart has " + dotCount + " consecutive active squeeze dots. Lower-timeframe squeezes are bonus only."
+            ? "At least 5 consecutive active daily squeeze dots are required; current count is " + dotCount + "."
+            : "Daily chart has " + dotCount + " consecutive active squeeze dots."
       };
     })
   };
@@ -411,20 +406,6 @@ async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awa
     warnings.add(readError(error, "QQQ macro history request failed."));
   }
   return output;
-}
-
-async function loadLowerTimeframeConfluence(symbol: string, warnings: string[]): Promise<LowerTimeframeConfluence | undefined> {
-  try {
-    const intradayCandles = await fetchIntradayHistory(symbol, 30);
-    const confluence = buildLowerTimeframeConfluence(intradayCandles);
-    if (confluence.thirtyMinute.bias === "unavailable") warnings.push("30m confluence unavailable: " + confluence.thirtyMinute.detail);
-    if (confluence.oneHour.bias === "unavailable") warnings.push("1h confluence unavailable: " + confluence.oneHour.detail);
-    if (confluence.fourHour.bias === "unavailable") warnings.push("4h confluence unavailable: " + confluence.fourHour.detail);
-    return confluence;
-  } catch (error) {
-    warnings.push(readError(error, "Schwab intraday history request failed."));
-    return undefined;
-  }
 }
 
 function mergeFundamentals(symbol: string, quote?: SchwabQuote) {

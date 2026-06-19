@@ -1,7 +1,4 @@
 timeframes:
-  - 30m
-  - 1h
-  - 4h
   - daily
   - weekly
 require_weekly_squeeze: false

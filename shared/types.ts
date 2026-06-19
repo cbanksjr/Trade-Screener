@@ -2,7 +2,7 @@ export type Grade = "A" | "B";
 export type TradeDirection = "long" | "short";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
-export type ChartTimeframe = "30m" | "1h" | "4h" | "1d" | "1w";
+export type ChartTimeframe = "1d" | "1w";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
 
 export type Candle = {

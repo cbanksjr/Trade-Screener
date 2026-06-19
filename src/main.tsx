@@ -35,10 +35,7 @@ const api = {
 const GRADE_ORDER = ["A", "B"] as const;
 const CHART_TIMEFRAMES: Array<{ label: string; value: ChartTimeframe }> = [
   { label: "1W", value: "1w" },
-  { label: "1D", value: "1d" },
-  { label: "4H", value: "4h" },
-  { label: "1H", value: "1h" },
-  { label: "30M", value: "30m" }
+  { label: "1D", value: "1d" }
 ];
 type ThemeMode = "light" | "dark";
 
@@ -248,9 +245,6 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <p>{result.longCallDecision} · {money(result.price)} · {result.entryRecommendationType}</p>
         </div>
         <div className="indicator-grid">
-          <Metric label="30m Sqz" value={timeframeSqueeze(result, "30m")} />
-          <Metric label="1h Sqz" value={timeframeSqueeze(result, "1h")} />
-          <Metric label="4h Sqz" value={timeframeSqueeze(result, "4h")} />
           <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
           <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
@@ -537,8 +531,8 @@ function layerDetail(result: ScanResult, layer: { layer: string; detail: string;
   if (layer.layer !== "Compression Quality") return layer.detail;
   const dots = dailySqueezeDotCount(result);
   if (dots === null) return "Run scan for dot count.";
-  if (layer.status === "Bearish") return "At least 5 consecutive active Daily squeeze dots are required; current count is " + dots + ". Intraday squeezes are bonus only.";
-  return "Daily chart has " + dots + " consecutive active squeeze dots. Lower-timeframe squeezes are bonus only.";
+  if (layer.status === "Bearish") return "At least 5 consecutive active Daily squeeze dots are required; current count is " + dots + ".";
+  return "Daily chart has " + dots + " consecutive active squeeze dots.";
 }
 
 function money(value: number): string {

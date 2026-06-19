@@ -9,8 +9,8 @@ import cron from "node-cron";
 import { config } from "./config";
 import { readCachedScanResponse, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
 import { initDb } from "./sqlite";
-import { fetchChartHistory, fetchFundamentalAnalysis, fetchIntradayHistory, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
-import { aggregateDailyCandlesToWeeks, aggregateSequentialCandles } from "./timeframes";
+import { fetchChartHistory, fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
+import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
 import type { Candle, ChartTimeframe } from "../shared/types";
 
@@ -141,14 +141,11 @@ function redirectToClient(res: express.Response, schwab: "connected" | "error", 
 
 async function loadChartCandles(symbol: string, timeframe: ChartTimeframe): Promise<Candle[]> {
   if (timeframe === "1d") return fetchChartHistory(symbol);
-  if (timeframe === "1w") return aggregateDailyCandlesToWeeks(await fetchChartHistory(symbol));
-  const intraday = await fetchIntradayHistory(symbol, 30);
-  if (timeframe === "30m") return intraday;
-  return aggregateSequentialCandles(intraday, timeframe === "1h" ? 2 : 8, { includeIncomplete: false });
+  return aggregateDailyCandlesToWeeks(await fetchChartHistory(symbol));
 }
 
 function chartTimeframe(value: string): ChartTimeframe {
-  return value === "30m" || value === "1h" || value === "4h" || value === "1w" ? value : "1d";
+  return value === "1w" ? value : "1d";
 }
 
 if (config.isProduction) {

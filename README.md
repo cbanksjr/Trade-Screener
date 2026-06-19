@@ -27,7 +27,7 @@ Then restart the dev server. The local API runs HTTPS by default for Schwab OAut
 The scan uses Schwab for:
 
 - `/marketdata/v1/quotes` for quote and fundamental market data
-- `/marketdata/v1/pricehistory` for daily OHLCV history plus 30-minute intraday candles aggregated into 1h and 4h context
+- `/marketdata/v1/pricehistory` for daily OHLCV history and weekly context aggregated from daily candles
 - `/marketdata/v1/chains` for 30-180 DTE swing call chains with Greeks
 
 ## Hosting
@@ -71,10 +71,9 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Market cap >= $2B when Schwab provides market cap
 - Average dollar volume >= $600M, from Schwab `average volume x last price` when available
 - Long setup: price above the 8, 21, 34, 55, and 89 EMAs with a positive EMA stack
-- Selected timeframes: 30m, 1h, 4h, daily, and weekly
-- At least 5 consecutive active Daily squeeze dots before expansion; intraday squeezes on 30m, 1h, or 4h are bonus confirmation only
+- Selected timeframes: daily and weekly
+- At least 5 consecutive active Daily squeeze dots before expansion
 - Daily entry proximity: current price must be above the Daily 21 EMA and no more than 1 ATR above it
-- Lower-timeframe entry proximity on 30m, 1h, and 4h is bonus confirmation only, not a grading requirement
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots

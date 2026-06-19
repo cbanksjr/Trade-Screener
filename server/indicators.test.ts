@@ -49,6 +49,7 @@ describe("layer decision engine", () => {
       optionable: true,
       options: demoOptions("BULL", price),
       lowerTimeframes,
+      weeklyIndicators: weeklyIndicator("bullish"),
       spyCandles: bullishCompressionCandles(),
       qqqCandles: bullishCompressionCandles()
     });
@@ -79,7 +80,7 @@ describe("layer decision engine", () => {
     expect(result.reasonsAgainstTrade.join(" ")).toContain("Daily squeeze is not active");
   });
 
-  it("qualifies when daily squeeze is active and lower timeframes are bullish without their own squeezes", () => {
+  it("qualifies when daily and weekly are bullish without lower-timeframe requirements", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -90,7 +91,8 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("DAILYSQZ"),
       optionable: true,
       options: demoOptions("DAILYSQZ", price),
-      lowerTimeframes: bullishLowerTimeframes("none")
+      lowerTimeframes: bullishLowerTimeframes("none"),
+      weeklyIndicators: weeklyIndicator("bullish")
     });
 
     expect(isSqueezeActive(result.indicators.squeezeState)).toBe(true);
@@ -121,7 +123,7 @@ describe("layer decision engine", () => {
     expect(result.reasonsAgainstTrade.join(" ")).toContain("At least 5 consecutive active daily squeeze dots are required");
   });
 
-  it("does not require lower timeframes to be within 1 ATR for grading", () => {
+  it("ignores lower-timeframe 1 ATR proximity for grading", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -132,16 +134,17 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("LOWEREXT"),
       optionable: true,
       options: demoOptions("LOWEREXT", price),
-      lowerTimeframes: bullishLowerTimeframes("none", false)
+      lowerTimeframes: bullishLowerTimeframes("none", false),
+      weeklyIndicators: weeklyIndicator("bullish")
     });
 
-    expect(result.squeezeStatusByTimeframe.filter((item) => ["30m", "1h", "4h"].includes(item.timeframe)).every((item) => item.withinOneAtrOfEma21 === false)).toBe(true);
+    expect(result.squeezeStatusByTimeframe.map((item) => item.timeframe)).toEqual(["daily", "weekly"]);
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
     expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the 1 ATR entry zone from the 21 EMA on 30m");
   });
 
-  it("assigns A when daily qualifies and at least 2 lower timeframes are bullish", () => {
+  it("assigns A when daily qualifies and weekly is bullish without lower-timeframe data", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -152,14 +155,14 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("TWOBULL"),
       optionable: true,
       options: demoOptions("TWOBULL", price),
-      lowerTimeframes: mixedLowerTimeframes(2)
+      weeklyIndicators: weeklyIndicator("bullish")
     });
 
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
   });
 
-  it("assigns B when daily qualifies and only 1 lower timeframe is bullish", () => {
+  it("assigns B when daily qualifies and weekly context is unavailable", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -169,15 +172,14 @@ describe("layer decision engine", () => {
       currentPrice: price,
       fundamentals: strongFundamentals("ONEBULL"),
       optionable: true,
-      options: demoOptions("ONEBULL", price),
-      lowerTimeframes: mixedLowerTimeframes(1)
+      options: demoOptions("ONEBULL", price)
     });
 
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.grade).toBe("B");
   });
 
-  it("treats lower-timeframe squeeze as bonus confirmation only", () => {
+  it("ignores lower-timeframe squeeze for grading and reasons", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -188,14 +190,15 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("BONUSSQZ"),
       optionable: true,
       options: demoOptions("BONUSSQZ", price),
-      lowerTimeframes: bullishLowerTimeframes("high")
+      lowerTimeframes: bullishLowerTimeframes("high"),
+      weeklyIndicators: weeklyIndicator("bullish")
     });
 
-    expect(result.longCallDecision).not.toBe("Avoid");
-    expect(result.reasonsSupportingTrade.join(" ")).toContain("Bonus intraday squeeze confirmation");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.reasonsSupportingTrade.join(" ")).not.toContain("Bonus intraday squeeze confirmation");
   });
 
-  it("blocks broadly bearish lower-timeframe structure", () => {
+  it("does not block A grades because of bearish lower-timeframe legacy data", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -206,11 +209,13 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("BEARLOWER"),
       optionable: true,
       options: demoOptions("BEARLOWER", price),
-      lowerTimeframes: bearishLowerTimeframes()
+      lowerTimeframes: bearishLowerTimeframes(),
+      weeklyIndicators: weeklyIndicator("bullish")
     });
 
-    expect(result.longCallDecision).toBe("Avoid");
-    expect(result.reasonsAgainstTrade.join(" ")).toContain("bearish EMA structure");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
+    expect(result.reasonsAgainstTrade.join(" ")).not.toContain("bearish EMA structure");
   });
 
   it("does not qualify on intraday squeeze when daily squeeze is absent", () => {
@@ -283,6 +288,24 @@ describe("layer decision engine", () => {
 
     expect(result.weeklyContextSummary).toContain("Weekly context unavailable");
     expect(result.rules.some((rule) => rule.id === "weekly-squeeze")).toBe(false);
+  });
+
+  it("blocks candidates when weekly structure is bearish", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "WEEKBEAR",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("WEEKBEAR"),
+      optionable: true,
+      options: demoOptions("WEEKBEAR", price),
+      weeklyIndicators: weeklyIndicator("bearish")
+    });
+
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("Weekly bearish structure blocks");
   });
 
   it("marks poor institutional context below qualified quality", () => {
@@ -387,6 +410,33 @@ function strongFundamentals(symbol: string) {
     beta: 1.2,
     marketCap: 20_000_000_000,
     avgDollarVolume20d: 900_000_000
+  };
+}
+
+function weeklyIndicator(bias: "bullish" | "bearish" | "neutral", squeezeState: SqueezeState = "none") {
+  const emaValues = bias === "bullish"
+    ? { ema8: 120, ema21: 115, ema34: 110, ema55: 105, ema89: 100 }
+    : bias === "bearish"
+      ? { ema8: 160, ema21: 161, ema34: 162, ema55: 163, ema89: 164 }
+      : { ema8: 120, ema21: 121, ema34: 110, ema55: 105, ema89: 100 };
+  return {
+    ...emaValues,
+    atr14: 8,
+    atrContracting: true,
+    bbUpper: 151,
+    bbLower: 147,
+    bbWidth: 2.7,
+    bbContracting: true,
+    kcLowUpper: 153,
+    kcLowLower: 145,
+    kcMidUpper: 154,
+    kcMidLower: 144,
+    kcHighUpper: 155,
+    kcHighLower: 143,
+    momentum: 1,
+    momentumImproving: true,
+    candleRangeContracting: true,
+    squeezeState
   };
 }
 
