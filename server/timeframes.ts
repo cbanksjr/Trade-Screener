@@ -57,6 +57,9 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
       ema89: null,
       positiveEmaStack: false,
       priceAboveEmaStack: false,
+      atr14: null,
+      atrDistanceFromEma21: null,
+      withinOneAtrOfEma21: false,
       compressionScore: 0,
       compressionStatus: "Insufficient Data",
       squeezeState: "none",
@@ -72,6 +75,8 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
     && price > indicators.ema34
     && price > indicators.ema55
     && price > indicators.ema89;
+  const atrDistanceFromEma21 = indicators.atr14 > 0 ? (price - indicators.ema21) / indicators.atr14 : Number.POSITIVE_INFINITY;
+  const withinOneAtrOfEma21 = price >= indicators.ema21 && atrDistanceFromEma21 <= 1;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
   const bias = lowerTimeframeBias(positiveEmaStack, priceAboveEmaStack);
@@ -86,13 +91,23 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
     ema89: indicators.ema89,
     positiveEmaStack,
     priceAboveEmaStack,
+    atr14: indicators.atr14,
+    atrDistanceFromEma21: round(atrDistanceFromEma21),
+    withinOneAtrOfEma21,
     compressionScore,
     compressionStatus,
     squeezeState: indicators.squeezeState,
     detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", EMAs "
       + [indicators.ema8, indicators.ema21, indicators.ema34, indicators.ema55, indicators.ema89].join("/")
-      + ", squeeze " + indicators.squeezeState + "."
+      + ", squeeze " + indicators.squeezeState
+      + ", " + (withinOneAtrOfEma21 ? "inside" : "outside")
+      + " the 1 ATR entry zone from the 21 EMA."
   };
+}
+
+function round(value: number, places = 2): number {
+  if (!Number.isFinite(value)) return value;
+  return Number(value.toFixed(places));
 }
 
 function lowerTimeframeBias(positiveEmaStack: boolean, priceAboveEmaStack: boolean): TimeframeBias {

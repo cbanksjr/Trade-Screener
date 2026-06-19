@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Candle } from "../shared/types";
+import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeState } from "../shared/types";
 import { demoOptions } from "./demoData";
 import { latestIndicators, squeezeState } from "./indicators";
 import { gradeSetup, isSqueezeActive } from "./scoring";
@@ -37,9 +37,10 @@ describe("layer decision engine", () => {
   });
 
   it("returns A or B grades from new criteria without weighted setup scoring", () => {
-    const candles = bullishCompressionCandles();
-    const price = candles[candles.length - 1].close;
-    const lowerTimeframes = buildLowerTimeframeConfluence(intradayCandles("up", 90));
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const lowerTimeframes = bullishLowerTimeframes("none");
     const result = gradeSetup({
       symbol: "BULL",
       candles,
@@ -57,6 +58,98 @@ describe("layer decision engine", () => {
     expect(result.layerEvaluations).toHaveLength(5);
     expect(result.compressionQualityScore).toBeGreaterThanOrEqual(0);
     expect(result.maxScore).toBe(100);
+  });
+
+  it("requires daily squeeze for swing candidates", () => {
+    const candles = bullishCompressionCandles();
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "NODAILY",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("NODAILY"),
+      optionable: true,
+      options: demoOptions("NODAILY", price),
+      lowerTimeframes: bullishLowerTimeframes("low")
+    });
+
+    expect(result.indicators.squeezeState).not.toBe("low");
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("Daily squeeze is not active");
+  });
+
+  it("qualifies when daily squeeze is active and lower timeframes are bullish without their own squeezes", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "DAILYSQZ",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("DAILYSQZ"),
+      optionable: true,
+      options: demoOptions("DAILYSQZ", price),
+      lowerTimeframes: bullishLowerTimeframes("none")
+    });
+
+    expect(isSqueezeActive(result.indicators.squeezeState)).toBe(true);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+  });
+
+  it("does not qualify on intraday squeeze when daily squeeze is absent", () => {
+    const candles = bullishCompressionCandles();
+    const price = candles[candles.length - 1].close;
+    const result = gradeSetup({
+      symbol: "INTRADAYONLY",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("INTRADAYONLY"),
+      optionable: true,
+      options: demoOptions("INTRADAYONLY", price),
+      lowerTimeframes: bullishLowerTimeframes("high")
+    });
+
+    expect(result.lowerTimeframes?.fifteenMinute.squeezeState).toBe("high");
+    expect(result.longCallDecision).toBe("Avoid");
+  });
+
+  it("requires current price to be within 1 ATR of the 21 EMA for entry", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.8;
+    const result = gradeSetup({
+      symbol: "ONEATR",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("ONEATR"),
+      optionable: true,
+      options: demoOptions("ONEATR", price),
+      lowerTimeframes: bullishLowerTimeframes("none")
+    });
+
+    expect(result.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(true);
+    expect(result.longCallDecision).not.toBe("Avoid");
+    expect(result.suggestedEntryArea).toContain("1 ATR");
+  });
+
+  it("flags entries extended beyond 1 ATR from the 21 EMA", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 1.2;
+    const result = gradeSetup({
+      symbol: "EXTENDED",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("EXTENDED"),
+      optionable: true,
+      options: demoOptions("EXTENDED", price),
+      lowerTimeframes: bullishLowerTimeframes("none")
+    });
+
+    expect(result.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(false);
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("Outside the 1 ATR entry zone");
   });
 
   it("keeps weekly squeeze as bonus context instead of a requirement", () => {
@@ -114,6 +207,23 @@ function bullishCompressionCandles(): Candle[] {
   return candles;
 }
 
+function activeDailySqueezeCandles(): Candle[] {
+  const candles: Candle[] = [];
+  for (let index = 0; index < 180; index += 1) {
+    const close = index < 140 ? 100 + index * 0.35 : 149 + Math.sin(index / 2) * 0.08;
+    const range = index < 140 ? 1.5 : 2.6;
+    candles.push({
+      date: "2026-04-" + String(index + 1).padStart(2, "0"),
+      open: close - 0.05,
+      high: close + range,
+      low: close - range,
+      close,
+      volume: 25_000_000
+    });
+  }
+  return candles;
+}
+
 function intradayCandles(direction: "up" | "down", days = 90): Candle[] {
   const candles: Candle[] = [];
   const start = Date.UTC(2026, 0, 5, 14, 30);
@@ -140,5 +250,36 @@ function strongFundamentals(symbol: string) {
     beta: 1.2,
     marketCap: 20_000_000_000,
     avgDollarVolume20d: 900_000_000
+  };
+}
+
+function bullishLowerTimeframes(squeezeState: SqueezeState): LowerTimeframeConfluence {
+  return {
+    fifteenMinute: bullishContext("15m", squeezeState),
+    thirtyMinute: bullishContext("30m", squeezeState),
+    oneHour: bullishContext("1h", squeezeState),
+    fourHour: bullishContext("4h", squeezeState)
+  };
+}
+
+function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeState: SqueezeState): LowerTimeframeContext {
+  return {
+    timeframe,
+    bias: "bullish",
+    price: 105,
+    ema8: 104,
+    ema21: 103,
+    ema34: 102,
+    ema55: 101,
+    ema89: 100,
+    positiveEmaStack: true,
+    priceAboveEmaStack: true,
+    atr14: 3,
+    atrDistanceFromEma21: 0.67,
+    withinOneAtrOfEma21: true,
+    compressionScore: squeezeState === "none" ? 60 : 85,
+    compressionStatus: squeezeState === "none" ? "Neutral" : "Bullish",
+    squeezeState,
+    detail: timeframe + " is bullish and inside the 1 ATR entry zone."
   };
 }

@@ -64,6 +64,9 @@ export type LowerTimeframeContext = {
   ema89: number | null;
   positiveEmaStack: boolean;
   priceAboveEmaStack: boolean;
+  atr14: number | null;
+  atrDistanceFromEma21: number | null;
+  withinOneAtrOfEma21: boolean;
   compressionScore: number;
   compressionStatus: LayerStatus;
   squeezeState?: SqueezeState;
@@ -122,6 +125,7 @@ export type TimeframeSqueezeStatus = {
   bias: TimeframeBias;
   priceAboveEmaStack: boolean;
   positiveEmaStack: boolean;
+  withinOneAtrOfEma21: boolean;
   compressionStatus: LayerStatus;
   detail: string;
 };

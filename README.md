@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard only displays qualified `A` or `B` compression candidates. `A` means a strong long-call candidate with broad multi-timeframe bullish alignment, active compression, and acceptable options liquidity. `B` means a moderate but still qualified long-call candidate. Watchlist and Avoid results are excluded from the visible candidate list.
+The Dashboard only displays qualified `A` or `B` compression candidates. `A` means a strong long-call candidate with broad multi-timeframe bullish alignment, an active Daily squeeze, price inside the 1 ATR entry zone from the 21 EMA, and acceptable options liquidity. `B` means a moderate but still qualified long-call candidate. Watchlist and Avoid results are excluded from the visible candidate list.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -74,7 +74,8 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Average dollar volume >= $600M, from Schwab `average volume x last price` when available
 - Long setup: price above the 8, 21, 34, 55, and 89 EMAs with a positive EMA stack
 - Selected timeframes: 15m, 30m, 1h, 4h, daily, and weekly
-- Active Squeeze Pro-style compression before expansion on at least one selected non-weekly timeframe
+- Active Daily Squeeze Pro-style compression before expansion; intraday squeezes on 15m, 30m, 1h, or 4h are bonus confirmation only
+- Entry proximity: current price must be above the 21 EMA and no more than 1 ATR above the 21 EMA
 - Compression quality from Bollinger/Keltner squeeze state, ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and compression quality

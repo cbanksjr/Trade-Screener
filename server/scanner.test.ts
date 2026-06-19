@@ -165,12 +165,12 @@ function qualifyingResult(symbol: string, daily = indicator("low"), weekly = ind
     weeklyIndicators: weekly,
     lowerTimeframes: undefined,
     squeezeStatusByTimeframe: [
-      { timeframe: "15m", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "15m bullish." },
-      { timeframe: "30m", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "30m bullish." },
-      { timeframe: "1h", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "1h bullish." },
-      { timeframe: "4h", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "4h bullish." },
-      { timeframe: "daily", squeezeState: daily.squeezeState, bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "Daily bullish." },
-      { timeframe: "weekly", squeezeState: weekly.squeezeState, bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, compressionStatus: "Bullish", detail: "Weekly bullish." }
+      { timeframe: "15m", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "15m bullish." },
+      { timeframe: "30m", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "30m bullish." },
+      { timeframe: "1h", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "1h bullish." },
+      { timeframe: "4h", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "4h bullish." },
+      { timeframe: "daily", squeezeState: daily.squeezeState, bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "Daily bullish." },
+      { timeframe: "weekly", squeezeState: weekly.squeezeState, bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "Weekly bullish." }
     ],
     weeklyContextSummary: "Weekly chart supports the bullish thesis.",
     compressionQualityScore: 95,

@@ -6,8 +6,10 @@ timeframes:
   - daily
   - weekly
 require_weekly_squeeze: false
+require_daily_squeeze: true
 weekly_squeeze_bonus_confirmation: true
 use_5m_chart: false
 ema_periods: [8, 21, 34, 55, 89]
 require_positive_ema_stack: true
+entry_atr_limit_from_21_ema: 1.0
 data_provider: schwab
