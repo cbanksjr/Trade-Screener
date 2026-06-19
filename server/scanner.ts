@@ -375,9 +375,8 @@ async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awa
 
 async function loadLowerTimeframeConfluence(symbol: string, warnings: string[]): Promise<LowerTimeframeConfluence | undefined> {
   try {
-    const intradayCandles = await fetchIntradayHistory(symbol, 15);
+    const intradayCandles = await fetchIntradayHistory(symbol, 30);
     const confluence = buildLowerTimeframeConfluence(intradayCandles);
-    if (confluence.fifteenMinute.bias === "unavailable") warnings.push("15m confluence unavailable: " + confluence.fifteenMinute.detail);
     if (confluence.thirtyMinute.bias === "unavailable") warnings.push("30m confluence unavailable: " + confluence.thirtyMinute.detail);
     if (confluence.oneHour.bias === "unavailable") warnings.push("1h confluence unavailable: " + confluence.oneHour.detail);
     if (confluence.fourHour.bias === "unavailable") warnings.push("4h confluence unavailable: " + confluence.fourHour.detail);

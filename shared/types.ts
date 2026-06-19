@@ -2,8 +2,8 @@ export type Grade = "A" | "B";
 export type TradeDirection = "long" | "short";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
-export type ChartTimeframe = "15m" | "30m" | "1h" | "4h" | "1d" | "1w";
-export type AnalysisTimeframe = "15m" | "30m" | "1h" | "4h" | "daily" | "weekly";
+export type ChartTimeframe = "30m" | "1h" | "4h" | "1d" | "1w";
+export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
 
 export type Candle = {
   date: string;
@@ -74,7 +74,6 @@ export type LowerTimeframeContext = {
 };
 
 export type LowerTimeframeConfluence = {
-  fifteenMinute: LowerTimeframeContext;
   thirtyMinute: LowerTimeframeContext;
   oneHour: LowerTimeframeContext;
   fourHour: LowerTimeframeContext;
@@ -233,7 +232,6 @@ export type FundamentalAnalysis = {
     longCallDecision?: LongCallDecision;
     dailySqueeze: SqueezeState;
     weeklySqueeze?: SqueezeState;
-    fifteenMinuteSqueeze?: SqueezeState;
     thirtyMinuteSqueeze?: SqueezeState;
     oneHourSqueeze?: SqueezeState;
     fourHourSqueeze?: SqueezeState;

@@ -1,12 +1,10 @@
 import type { AnalysisTimeframe, Candle, LayerStatus, LowerTimeframeConfluence, LowerTimeframeContext, TimeframeBias } from "../shared/types";
 import { latestIndicators } from "./indicators";
 
-export function buildLowerTimeframeConfluence(fifteenMinuteCandles: Candle[]): LowerTimeframeConfluence {
-  const thirtyMinuteCandles = aggregateSequentialCandles(fifteenMinuteCandles, 2, { includeIncomplete: false });
-  const oneHourCandles = aggregateSequentialCandles(fifteenMinuteCandles, 4, { includeIncomplete: false });
-  const fourHourCandles = aggregateSequentialCandles(fifteenMinuteCandles, 16, { includeIncomplete: false });
+export function buildLowerTimeframeConfluence(thirtyMinuteCandles: Candle[]): LowerTimeframeConfluence {
+  const oneHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 2, { includeIncomplete: false });
+  const fourHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 8, { includeIncomplete: false });
   return {
-    fifteenMinute: buildContext("15m", fifteenMinuteCandles),
     thirtyMinute: buildContext("30m", thirtyMinuteCandles),
     oneHour: buildContext("1h", oneHourCandles),
     fourHour: buildContext("4h", fourHourCandles)

@@ -147,7 +147,7 @@ describe("layer decision engine", () => {
       lowerTimeframes: bullishLowerTimeframes("high")
     });
 
-    expect(result.lowerTimeframes?.fifteenMinute.squeezeState).toBe("high");
+    expect(result.lowerTimeframes?.thirtyMinute.squeezeState).toBe("high");
     expect(result.longCallDecision).toBe("Avoid");
   });
 
@@ -286,11 +286,11 @@ function intradayCandles(direction: "up" | "down", days = 90): Candle[] {
   const candles: Candle[] = [];
   const start = Date.UTC(2026, 0, 5, 14, 30);
   for (let day = 0; day < days; day += 1) {
-    for (let slot = 0; slot < 26; slot += 1) {
-      const index = day * 26 + slot;
-      const close = direction === "up" ? 100 + index * 0.04 : 220 - index * 0.04;
+    for (let slot = 0; slot < 13; slot += 1) {
+      const index = day * 13 + slot;
+      const close = direction === "up" ? 100 + index * 0.08 : 220 - index * 0.08;
       candles.push({
-        date: new Date(start + day * 24 * 60 * 60 * 1000 + slot * 15 * 60 * 1000).toISOString(),
+        date: new Date(start + day * 24 * 60 * 60 * 1000 + slot * 30 * 60 * 1000).toISOString(),
         open: close - 0.08,
         high: close + 0.35,
         low: close - 0.35,
@@ -313,7 +313,6 @@ function strongFundamentals(symbol: string) {
 
 function bullishLowerTimeframes(squeezeState: SqueezeState): LowerTimeframeConfluence {
   return {
-    fifteenMinute: bullishContext("15m", squeezeState),
     thirtyMinute: bullishContext("30m", squeezeState),
     oneHour: bullishContext("1h", squeezeState),
     fourHour: bullishContext("4h", squeezeState)
@@ -322,7 +321,6 @@ function bullishLowerTimeframes(squeezeState: SqueezeState): LowerTimeframeConfl
 
 function bearishLowerTimeframes(): LowerTimeframeConfluence {
   return {
-    fifteenMinute: bearishContext("15m"),
     thirtyMinute: bearishContext("30m"),
     oneHour: bearishContext("1h"),
     fourHour: bearishContext("4h")

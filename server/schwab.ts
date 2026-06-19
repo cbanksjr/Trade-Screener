@@ -568,7 +568,6 @@ function scanContext(result: ScanResult): FundamentalAnalysis["scanContext"] {
     longCallDecision: result.longCallDecision,
     dailySqueeze: result.indicators.squeezeState,
     weeklySqueeze: result.weeklyIndicators?.squeezeState,
-    fifteenMinuteSqueeze: result.lowerTimeframes?.fifteenMinute.squeezeState,
     thirtyMinuteSqueeze: result.lowerTimeframes?.thirtyMinute.squeezeState,
     oneHourSqueeze: result.lowerTimeframes?.oneHour.squeezeState,
     fourHourSqueeze: result.lowerTimeframes?.fourHour.squeezeState,

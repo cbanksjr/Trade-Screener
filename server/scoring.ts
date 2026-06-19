@@ -53,7 +53,6 @@ export function gradeSetup(input: {
   const weeklyContext = input.weeklyIndicators ? contextFromIndicators("weekly", input.weeklyIndicators, price) : unavailableContext("weekly", "Weekly context could not be calculated.");
   const lowerTimeframes = input.lowerTimeframes ?? unavailableLowerTimeframes();
   const contexts = [
-    lowerTimeframes.fifteenMinute,
     lowerTimeframes.thirtyMinute,
     lowerTimeframes.oneHour,
     lowerTimeframes.fourHour,
@@ -79,7 +78,7 @@ export function gradeSetup(input: {
   const decision = finalDecision(layerEvaluations, contexts, dailyContext, weeklySupport);
   const grade = decision === "Strong Long Call Candidate" ? "A" : "B";
   const compressionQualityScoreValue = Math.round(average(contexts.map((context) => context.compressionScore)));
-  const warnings = input.lowerTimeframeWarnings ?? (input.lowerTimeframes ? [] : ["Lower-timeframe confluence unavailable; 15m/30m/1h/4h rules were not evaluated."]);
+  const warnings = input.lowerTimeframeWarnings ?? (input.lowerTimeframes ? [] : ["Lower-timeframe confluence unavailable; 30m/1h/4h rules were not evaluated."]);
   if (input.weeklySqueezeWarning) warnings.push(input.weeklySqueezeWarning);
 
   return {
@@ -302,7 +301,6 @@ function weeklySupportStatus(context: LowerTimeframeContext): LayerStatus {
 
 function unavailableLowerTimeframes(): LowerTimeframeConfluence {
   return {
-    fifteenMinute: unavailableContext("15m", "No 15m candles were available."),
     thirtyMinute: unavailableContext("30m", "No 30m candles were available."),
     oneHour: unavailableContext("1h", "No 1h candles were available."),
     fourHour: unavailableContext("4h", "No 4h candles were available.")

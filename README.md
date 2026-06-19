@@ -30,8 +30,6 @@ The scan uses Schwab for:
 - `/marketdata/v1/pricehistory` for daily OHLCV history plus 15-minute intraday candles aggregated into 30m, 1h, and 4h context
 - `/marketdata/v1/chains` for 30-180 DTE swing call chains with Greeks
 
-The **See More** fundamentals page uses Schwab only. Fields Schwab does not return are omitted from the page instead of being filled by a supplemental provider.
-
 ## Hosting
 
 For a hosted private deployment, use **Supabase Free Postgres** for persistence and a **Render Free Web Service** for the app. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted deployments should use Supabase so scan results, Schwab OAuth tokens, and cached universe data survive redeploys.
@@ -73,8 +71,8 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Market cap >= $2B when Schwab provides market cap
 - Average dollar volume >= $600M, from Schwab `average volume x last price` when available
 - Long setup: price above the 8, 21, 34, 55, and 89 EMAs with a positive EMA stack
-- Selected timeframes: 15m, 30m, 1h, 4h, daily, and weekly
-- Active Daily Squeeze Pro-style compression before expansion; intraday squeezes on 15m, 30m, 1h, or 4h are bonus confirmation only
+- Selected timeframes: 30m, 1h, 4h, daily, and weekly
+- Active Daily Squeeze Pro-style compression before expansion; intraday squeezes on 30m, 1h, or 4h are bonus confirmation only
 - Entry proximity: current price must be above the 21 EMA and no more than 1 ATR above the 21 EMA
 - Compression quality from Bollinger/Keltner squeeze state, ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
