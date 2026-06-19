@@ -141,6 +141,42 @@ describe("layer decision engine", () => {
     expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the 1 ATR entry zone from the 21 EMA on 30m");
   });
 
+  it("assigns A when daily qualifies and at least 2 lower timeframes are bullish", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "TWOBULL",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("TWOBULL"),
+      optionable: true,
+      options: demoOptions("TWOBULL", price),
+      lowerTimeframes: mixedLowerTimeframes(2)
+    });
+
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
+  });
+
+  it("assigns B when daily qualifies and only 1 lower timeframe is bullish", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "ONEBULL",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("ONEBULL"),
+      optionable: true,
+      options: demoOptions("ONEBULL", price),
+      lowerTimeframes: mixedLowerTimeframes(1)
+    });
+
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+  });
+
   it("treats lower-timeframe squeeze as bonus confirmation only", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
@@ -370,6 +406,19 @@ function bearishLowerTimeframes(): LowerTimeframeConfluence {
   };
 }
 
+function mixedLowerTimeframes(bullishCount: number): LowerTimeframeConfluence {
+  const contexts: LowerTimeframeContext[] = [
+    bullishCount >= 1 ? bullishContext("30m", "none") : neutralContext("30m"),
+    bullishCount >= 2 ? bullishContext("1h", "none") : neutralContext("1h"),
+    bullishCount >= 3 ? bullishContext("4h", "none") : neutralContext("4h")
+  ];
+  return {
+    thirtyMinute: contexts[0],
+    oneHour: contexts[1],
+    fourHour: contexts[2]
+  };
+}
+
 function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeState: SqueezeState, withinOneAtrOfEma21 = true): LowerTimeframeContext {
   return {
     timeframe,
@@ -411,6 +460,28 @@ function bearishContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTim
     compressionStatus: "Bearish",
     squeezeState: "none",
     detail: timeframe + " is bearish."
+  };
+}
+
+function neutralContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTimeframeContext {
+  return {
+    timeframe,
+    bias: "neutral",
+    price: 105,
+    ema8: 103,
+    ema21: 104,
+    ema34: 102,
+    ema55: 101,
+    ema89: 100,
+    positiveEmaStack: false,
+    priceAboveEmaStack: true,
+    atr14: 3,
+    atrDistanceFromEma21: 0.33,
+    withinOneAtrOfEma21: true,
+    compressionScore: 50,
+    compressionStatus: "Neutral",
+    squeezeState: "none",
+    detail: timeframe + " is neutral."
   };
 }
 

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { Candle, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
+import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, initDb, replaceScanResults, setScanMetadata } from "./sqlite";
 import { __resetScanStateForTest, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
 
@@ -91,6 +92,55 @@ describe("background scan refresh", () => {
     ]);
 
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["QUALIFIED"]);
+  }));
+
+  it("normalizes old cached compression diagnostic text without using old scores as dots", async () => withDbRestore(async () => {
+    const legacy: ScanResult = {
+      ...qualifyingResult("LEGACY"),
+      compressionQualityScore: 95,
+      maxScore: 100,
+      dailySqueezeDotCount: undefined,
+      alertMessage: "LEGACY Strong Long Call Candidate at $100.00; compression status Bullish.",
+      layerEvaluations: [{
+        layer: "Compression Quality",
+        status: "Bullish",
+        detail: "Daily squeeze is active. Daily compression diagnostic is 95/100."
+      }]
+    };
+    await replaceScanResults([legacy]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.dailySqueezeDotCount).toBeUndefined();
+    expect(result.compressionQualityScore).toBe(95);
+    expect(result.layerEvaluations[0].detail).toBe("Run scan for dot count.");
+    expect(result.alertMessage).toContain("Daily squeeze dots need a fresh scan");
+    expect(result.alertMessage).not.toContain("compression status");
+  }));
+
+  it("recomputes daily squeeze dots from old cached candles when available", async () => withDbRestore(async () => {
+    const candles = activeDailySqueezeCandles();
+    const expectedDots = activeSqueezeDotCount(candles);
+    const legacy: ScanResult = {
+      ...qualifyingResult("DOTS"),
+      candles,
+      compressionQualityScore: 95,
+      maxScore: 100,
+      dailySqueezeDotCount: undefined,
+      layerEvaluations: [{
+        layer: "Compression Quality",
+        status: "Bullish",
+        detail: "Daily squeeze is active. Daily compression diagnostic is 95/100."
+      }]
+    };
+    await replaceScanResults([legacy]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.dailySqueezeDotCount).toBe(expectedDots);
+    expect(result.compressionQualityScore).toBe(expectedDots);
+    expect(result.maxScore).toBe(5);
+    expect(result.layerEvaluations[0].detail).toContain(expectedDots + " consecutive active squeeze dots");
   }));
 
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
@@ -222,4 +272,21 @@ function indicator(squeezeState: "none" | "low" | "mid" | "released") {
     candleRangeContracting: true,
     squeezeState
   };
+}
+
+function activeDailySqueezeCandles(): Candle[] {
+  const candles: Candle[] = [];
+  for (let index = 0; index < 180; index += 1) {
+    const close = index < 140 ? 100 + index * 0.35 : 149 + Math.sin(index / 2) * 0.08;
+    const range = index < 140 ? 1.5 : 2.6;
+    candles.push({
+      date: "2026-04-" + String(index + 1).padStart(2, "0"),
+      open: close - 0.05,
+      high: close + range,
+      low: close - range,
+      close,
+      volume: 25_000_000
+    });
+  }
+  return candles;
 }

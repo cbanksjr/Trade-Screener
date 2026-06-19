@@ -77,7 +77,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Lower-timeframe entry proximity on 30m, 1h, and 4h is bonus confirmation only, not a grading requirement
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
-- Independent layer statuses for market structure, institutional context, options context, macro regime, and compression quality
+- Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 
 The automatic index universe is treated as prequalified if Schwab omits beta or market cap. If Schwab provides beta or market cap below the configured thresholds, the symbol is rejected.

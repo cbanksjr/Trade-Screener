@@ -1,7 +1,7 @@
 import type { LowerTimeframeConfluence, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
-import { latestIndicators } from "./indicators";
+import { activeSqueezeDotCount, latestIndicators } from "./indicators";
 import { defaultSettings, gradeSetup } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchIntradayHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
@@ -134,7 +134,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sortByDecision = (a: ScanResult, b: ScanResult) => {
     const gradeDelta = (a.grade === "A" ? 0 : 1) - (b.grade === "A" ? 0 : 1);
     if (gradeDelta !== 0) return gradeDelta;
-    return (b.dailySqueezeDotCount ?? b.compressionQualityScore) - (a.dailySqueezeDotCount ?? a.compressionQualityScore);
+    return (b.dailySqueezeDotCount ?? -1) - (a.dailySqueezeDotCount ?? -1);
   };
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
@@ -149,7 +149,9 @@ export async function resolveScanSymbols(): Promise<string[]> {
 }
 
 export async function readDisplayResults(): Promise<ScanResult[]> {
-  return (await getCachedResults()).filter((result): result is ScanResult => shouldIncludeResult(result as ScanResult));
+  return (await getCachedResults())
+    .map((result) => normalizeCachedResult(result as ScanResult))
+    .filter((result): result is ScanResult => shouldIncludeResult(result));
 }
 
 export async function __resetScanStateForTest() {
@@ -325,6 +327,44 @@ function shouldIncludeResult(result: ScanResult): boolean {
     && result.setupDirection === "long"
     && (result.longCallDecision === "Strong Long Call Candidate" || result.longCallDecision === "Moderate Long Call Candidate")
     && (result.grade === "A" || result.grade === "B");
+}
+
+function normalizeCachedResult(result: ScanResult): ScanResult {
+  const dotCount = resolveDailySqueezeDotCount(result);
+  const normalized: ScanResult = {
+    ...result,
+    dailySqueezeDotCount: dotCount ?? result.dailySqueezeDotCount,
+    compressionQualityScore: dotCount ?? result.compressionQualityScore,
+    maxScore: dotCount === undefined ? result.maxScore : 5,
+    alertMessage: normalizeAlertMessage(result, dotCount),
+    layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
+      if (layer.layer !== "Compression Quality") return layer;
+      return {
+        ...layer,
+        detail: dotCount === undefined
+          ? "Run scan for dot count."
+          : layer.status === "Bearish"
+            ? "At least 5 consecutive active daily squeeze dots are required; current count is " + dotCount + ". Intraday squeezes are bonus only."
+            : "Daily chart has " + dotCount + " consecutive active squeeze dots. Lower-timeframe squeezes are bonus only."
+      };
+    })
+  };
+  return normalized;
+}
+
+function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {
+  if (typeof result.dailySqueezeDotCount === "number") return result.dailySqueezeDotCount;
+  if (!result.candles?.length) return undefined;
+  try {
+    return activeSqueezeDotCount(result.candles);
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeAlertMessage(result: ScanResult, dotCount: number | undefined): string {
+  const dotText = dotCount === undefined ? "Daily squeeze dots need a fresh scan" : dotCount + " active Daily squeeze dots";
+  return result.symbol + " " + result.longCallDecision + " at $" + result.price.toFixed(2) + "; " + dotText + ". Watch for controlled consolidation before expansion.";
 }
 
 function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>>): { indicators?: ReturnType<typeof latestIndicators>; warning?: string } {

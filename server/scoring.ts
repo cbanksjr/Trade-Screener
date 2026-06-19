@@ -125,7 +125,7 @@ export function gradeSetup(input: {
     target2: round(price + indicators.atr14 * 2.5, 2),
     reasonsSupportingTrade: supportReasons(layerEvaluations, contexts, weeklyContext, recommendedOption),
     reasonsAgainstTrade: riskReasons(layerEvaluations, contexts, weeklyContext, recommendedOption),
-    alertMessage: alertMessage(input.symbol, decision, price, compression.status),
+    alertMessage: alertMessage(input.symbol, decision, price, dailySqueezeDotCount),
     journalRecord: journalRecord(input.symbol, decision, price, contexts, weeklyContext, recommendedOption),
     rules: layerEvaluations.map(layerToRule),
     suggestedOptions: options.slice(0, 5),
@@ -217,21 +217,22 @@ function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqC
 
 function finalDecision(layerEvaluations: LayerEvaluation[], contexts: LowerTimeframeContext[], dailyContext: LowerTimeframeContext, weeklyStatus: LayerStatus): LongCallDecision {
   const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
-  const bullishTimeframes = contexts.filter((context) => context.bias === "bullish").length;
+  const lowerContexts = contexts.filter((context) => context.timeframe !== "daily");
+  const bullishLowerTimeframes = lowerContexts.filter((context) => context.bias === "bullish").length;
+  const bearishLowerTimeframe = lowerContexts.some((context) => context.bias === "bearish");
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   const dailyEntryAligned = dailyContext.withinOneAtrOfEma21;
   const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
-  if (bearishLayer || !dailySqueezeActive || !dailyEntryAligned) return "Avoid";
+  if (bearishLayer || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || bearishLowerTimeframe) return "Avoid";
   if (
-    byLayer("Squeeze Market Structure") === "Bullish"
-    && byLayer("Compression Quality") === "Bullish"
+    byLayer("Compression Quality") === "Bullish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
-    && bullishTimeframes === contexts.length
+    && bullishLowerTimeframes >= 2
     && weeklyStatus !== "Bearish"
   ) return "Strong Long Call Candidate";
   if (
-    bullishTimeframes >= 3
+    bullishLowerTimeframes >= 1
     && byLayer("Compression Quality") !== "Bearish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
@@ -428,8 +429,8 @@ function optionDteLabel(contract: OptionContract): string {
   return contract.dte + " DTE swing";
 }
 
-function alertMessage(symbol: string, decision: LongCallDecision, price: number, compressionStatus: LayerStatus): string {
-  return symbol + " " + decision + " at $" + price.toFixed(2) + "; compression status " + compressionStatus + ". Watch for controlled consolidation before expansion.";
+function alertMessage(symbol: string, decision: LongCallDecision, price: number, dailySqueezeDotCount: number): string {
+  return symbol + " " + decision + " at $" + price.toFixed(2) + "; " + dailySqueezeDotCount + " active Daily squeeze dots. Watch for controlled consolidation before expansion.";
 }
 
 function journalRecord(symbol: string, decision: LongCallDecision, price: number, contexts: LowerTimeframeContext[], weeklyContext: LowerTimeframeContext, option?: OptionContract): string {

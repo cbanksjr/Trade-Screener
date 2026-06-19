@@ -189,8 +189,8 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   return [...results].sort((left, right) => {
     const gradeDelta = GRADE_ORDER.indexOf(left.grade) - GRADE_ORDER.indexOf(right.grade);
     if (gradeDelta !== 0) return gradeDelta;
-    const leftDots = dailySqueezeDots(left);
-    const rightDots = dailySqueezeDots(right);
+    const leftDots = dailySqueezeDotCount(left) ?? -1;
+    const rightDots = dailySqueezeDotCount(right) ?? -1;
     if (rightDots !== leftDots) return rightDots - leftDots;
     return left.symbol.localeCompare(right.symbol);
   });
@@ -232,7 +232,7 @@ function ResultRow({ result, activeSymbol, onSelect }: {
       <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
       <span>
         <strong>{result.symbol}</strong>
-        <small>{money(result.price)} · {result.longCallDecision} · Daily dots {dailySqueezeDots(result)}</small>
+        <small>{money(result.price)} · {result.longCallDecision} · Daily dots {dailySqueezeDotLabel(result)}</small>
       </span>
     </div>
   );
@@ -253,7 +253,7 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <Metric label="4h Sqz" value={timeframeSqueeze(result, "4h")} />
           <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
-          <Metric label="Daily Dots" value={dailySqueezeDots(result) + " active"} />
+          <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
           <Metric label="Momentum" value={formatNumber(result.indicators.momentum)} />
           <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
@@ -292,8 +292,8 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
             <div className="rule" key={layer.layer}>
               {layer.status === "Bullish" || layer.status === "Neutral" ? <CheckCircle2 className="ok" /> : <XCircle className="bad" />}
               <span>
-                <strong>{layer.layer}: {layer.status}</strong>
-                <small>{layer.detail}</small>
+                <strong>{layerLabel(layer.layer)}: {layer.status}</strong>
+                <small>{layerDetail(result, layer)}</small>
               </span>
               <b>{layer.status}</b>
             </div>
@@ -518,8 +518,27 @@ function timeframeSqueeze(result: ScanResult, timeframe: string): string {
   return status ? String(status.squeezeState) + " / " + timeframeLabel(status.bias) : "Unavailable";
 }
 
-function dailySqueezeDots(result: ScanResult): number {
-  return result.dailySqueezeDotCount ?? result.compressionQualityScore;
+function dailySqueezeDotCount(result: ScanResult): number | null {
+  if (typeof result.dailySqueezeDotCount === "number") return result.dailySqueezeDotCount;
+  if (result.maxScore === 5 && result.compressionQualityScore <= 30) return result.compressionQualityScore;
+  return null;
+}
+
+function dailySqueezeDotLabel(result: ScanResult): string {
+  const dots = dailySqueezeDotCount(result);
+  return dots === null ? "Run scan for dot count" : dots + " active";
+}
+
+function layerLabel(layer: string): string {
+  return layer === "Compression Quality" ? "Daily Squeeze Dots" : layer;
+}
+
+function layerDetail(result: ScanResult, layer: { layer: string; detail: string; status: string }): string {
+  if (layer.layer !== "Compression Quality") return layer.detail;
+  const dots = dailySqueezeDotCount(result);
+  if (dots === null) return "Run scan for dot count.";
+  if (layer.status === "Bearish") return "At least 5 consecutive active Daily squeeze dots are required; current count is " + dots + ". Intraday squeezes are bonus only.";
+  return "Daily chart has " + dots + " consecutive active squeeze dots. Lower-timeframe squeezes are bonus only.";
 }
 
 function money(value: number): string {
