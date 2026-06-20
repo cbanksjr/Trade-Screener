@@ -27,6 +27,17 @@ export type Fundamentals = {
   marketCap?: number;
   avgDollarVolume20d?: number;
   lastEarningsDate?: string;
+  sector?: string;
+  sources?: FundamentalFieldSources;
+};
+
+export type FundamentalDataSource = "schwab" | "alphavantage" | "demo";
+export type FundamentalFieldSources = {
+  beta?: FundamentalDataSource;
+  marketCap?: FundamentalDataSource;
+  avgDollarVolume20d?: FundamentalDataSource;
+  lastEarningsDate?: FundamentalDataSource;
+  sector?: FundamentalDataSource;
 };
 
 
@@ -147,6 +158,7 @@ export type ScanResult = {
   beta: number | null;
   marketCap: number | null;
   avgDollarVolume20d: number;
+  fundamentalSources?: FundamentalFieldSources;
   optionable: boolean;
   passesUniverse: boolean;
   grade: Grade;
@@ -225,6 +237,7 @@ export type FundamentalAnalysis = {
   avgDollarVolume: number | null;
   marketCap: number | null;
   beta: number | null;
+  sector?: string;
   eps: number | null;
   peRatio: number | null;
   dividendAmount: number | null;
@@ -234,7 +247,9 @@ export type FundamentalAnalysis = {
   dividendPayDate?: string;
   dividendExDate?: string;
   lastEarningsDate?: string;
-  sourceStatus: "live" | "unavailable";
+  sourceStatus: "live" | "fallback" | "mixed" | "unavailable";
+  fieldSources?: FundamentalFieldSources;
+  sourceNotes?: string[];
   dividendStatus: "pays" | "does_not_pay" | "unknown";
   warnings: string[];
   scanContext?: {

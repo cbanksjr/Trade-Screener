@@ -56,6 +56,7 @@ export function gradeSetup(input: {
   const price = input.currentPrice ?? latest.close;
   const beta = input.fundamentals?.beta;
   const marketCap = input.fundamentals?.marketCap;
+  const sector = input.sector ?? input.fundamentals?.sector;
   const avgDollarVolume20d = input.fundamentals?.avgDollarVolume20d ?? average(input.candles.slice(-20).map((candle) => candle.volume * candle.close));
   const dailyContext = withCurrentPrice(buildTimeframeContext("daily", input.candles), price);
   const weeklyContext = input.weeklyIndicators ? contextFromIndicators("weekly", input.weeklyIndicators, price) : unavailableContext("weekly", "Weekly context could not be calculated.");
@@ -88,7 +89,7 @@ export function gradeSetup(input: {
     avgDollarVolume20d,
     spyCandles: input.spyCandles,
     qqqCandles: input.qqqCandles,
-    sector: input.sector,
+    sector,
     sectorCandles: input.sectorCandles,
     lastEarningsDate: input.fundamentals?.lastEarningsDate
   });
@@ -107,6 +108,7 @@ export function gradeSetup(input: {
     beta: beta ?? null,
     marketCap: marketCap ?? null,
     avgDollarVolume20d: round(avgDollarVolume20d, 0),
+    fundamentalSources: input.fundamentals?.sources,
     optionable: input.optionable,
     passesUniverse: institutional.status !== "Bearish" && institutional.status !== "Insufficient Data",
     grade,

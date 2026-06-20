@@ -272,6 +272,7 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <Metric label="Relative Strength" value={result.relativeStrengthSummary} />
           <Metric label="Institutional" value={result.institutionalContextSummary} />
           <Metric label="Macro" value={result.macroRegimeSummary} />
+          <Metric label="Data Sources" value={fundamentalSourceSummary(result)} />
         </div>
       </section>
 
@@ -553,6 +554,20 @@ function setupScoreValue(result: ScanResult): number {
 
 function setupScoreLabel(result: ScanResult): string {
   return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
+}
+
+function fundamentalSourceSummary(result: ScanResult): string {
+  const sources = result.fundamentalSources;
+  if (!sources) return "Schwab primary; fallback unavailable.";
+  const labels: Array<[keyof NonNullable<ScanResult["fundamentalSources"]>, string]> = [
+    ["beta", "beta"],
+    ["marketCap", "market cap"],
+    ["sector", "sector"],
+    ["lastEarningsDate", "earnings date"]
+  ];
+  const alphaFields = labels.filter(([key]) => sources[key] === "alphavantage").map(([, label]) => label);
+  if (alphaFields.length) return "Schwab primary; AlphaVantage filled " + alphaFields.join(", ") + ".";
+  return "Schwab primary.";
 }
 
 function layerLabel(layer: string): string {

@@ -229,6 +229,42 @@ describe("layer decision engine", () => {
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Insufficient Data");
   });
 
+  it("allows A when AlphaVantage fills sector and earnings context", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "AVFILL",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        symbol: "AVFILL",
+        beta: 1.2,
+        marketCap: 20_000_000_000,
+        avgDollarVolume20d: 900_000_000,
+        sector: "Information Technology",
+        lastEarningsDate: "2027-12-31",
+        sources: {
+          sector: "alphavantage",
+          lastEarningsDate: "alphavantage"
+        }
+      },
+      optionable: true,
+      options: demoOptions("AVFILL", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      sectorCandles: bullishCompressionCandles(),
+      spyCandles: bullishCompressionCandles(),
+      qqqCandles: bullishCompressionCandles()
+    });
+
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
+    expect(result.fundamentalSources).toMatchObject({
+      sector: "alphavantage",
+      lastEarningsDate: "alphavantage"
+    });
+  });
+
   it("blocks setups when earnings are inside the catalyst danger window", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);

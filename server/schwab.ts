@@ -1,7 +1,8 @@
 import { Buffer } from "node:buffer";
+import { createAlphaVantageScanFallback, type AlphaVantageFundamentals } from "./alphaVantage";
 import { config } from "./config";
 import { getSetting, setSetting } from "./sqlite";
-import type { BrokerStatus, Candle, FundamentalAnalysis, OptionContract, ScanResult } from "../shared/types";
+import type { BrokerStatus, Candle, FundamentalAnalysis, FundamentalFieldSources, OptionContract, ScanResult } from "../shared/types";
 
 export type SchwabQuote = {
   symbol: string;
@@ -138,9 +139,20 @@ export async function fetchFundamentalAnalysis(symbol: string, scanResult?: Scan
 
   if (!quote) warnings.push("Schwab did not return fundamentals for " + upperSymbol + ".");
 
+  const alphaVantage = await createAlphaVantageScanFallback();
+  const alphaVantageEnrichment = await alphaVantage.enrich(upperSymbol, {
+    beta: quote?.beta === undefined,
+    marketCap: quote?.marketCap === undefined,
+    sector: true,
+    lastEarningsDate: quote?.lastEarningsDate === undefined
+  });
+  warnings.push(...alphaVantageEnrichment.warnings);
+  await alphaVantage.flush();
+
   return mergeFundamentalAnalysis({
     symbol: upperSymbol,
     schwab: quote,
+    alphaVantage: alphaVantageEnrichment.data,
     scanResult,
     warnings
   });
@@ -277,22 +289,29 @@ export function normalizeFundamentalAnalysis(quote: SchwabQuote, scanResult?: Sc
 export function mergeFundamentalAnalysis(input: {
   symbol: string;
   schwab?: SchwabQuote;
+  alphaVantage?: AlphaVantageFundamentals;
   scanResult?: ScanResult;
   warnings: string[];
 }): FundamentalAnalysis {
   const warnings = [...new Set(input.warnings.filter(Boolean))];
-  const sourceStatus = input.schwab ? "live" : "unavailable";
+  const fieldSources: FundamentalFieldSources = {};
+  const sourceStatus = input.schwab && input.alphaVantage ? "mixed" : input.schwab ? "live" : input.alphaVantage ? "fallback" : "unavailable";
   const symbol = input.schwab?.symbol ?? input.symbol;
+  const marketCap = valueWithSource(input.schwab?.marketCap, "schwab", input.alphaVantage?.marketCap, "alphavantage", fieldSources, "marketCap") ?? null;
+  const beta = valueWithSource(input.schwab?.beta, "schwab", input.alphaVantage?.beta, "alphavantage", fieldSources, "beta") ?? null;
+  const sector = valueWithSource(undefined, "schwab", input.alphaVantage?.sector, "alphavantage", fieldSources, "sector");
+  const lastEarningsDate = valueWithSource(input.schwab?.lastEarningsDate, "schwab", input.alphaVantage?.lastEarningsDate, "alphavantage", fieldSources, "lastEarningsDate");
 
   return {
     symbol,
-    companyName: input.schwab?.companyName,
+    companyName: input.schwab?.companyName ?? input.alphaVantage?.companyName,
     price: input.schwab?.price ?? null,
     volume: input.schwab?.volume ?? null,
     averageVolume: input.schwab?.averageVolume ?? null,
     avgDollarVolume: input.schwab?.avgDollarVolume ?? null,
-    marketCap: input.schwab?.marketCap ?? null,
-    beta: input.schwab?.beta ?? null,
+    marketCap,
+    beta,
+    sector,
     eps: input.schwab?.eps ?? null,
     peRatio: input.schwab?.peRatio ?? null,
     dividendAmount: input.schwab?.dividendAmount ?? null,
@@ -301,12 +320,45 @@ export function mergeFundamentalAnalysis(input: {
     dividendPayAmount: input.schwab?.dividendPayAmount ?? null,
     dividendPayDate: input.schwab?.dividendPayDate,
     dividendExDate: input.schwab?.dividendExDate,
-    lastEarningsDate: input.schwab?.lastEarningsDate,
+    lastEarningsDate,
     sourceStatus,
+    fieldSources,
+    sourceNotes: sourceNotes(fieldSources),
     dividendStatus: dividendStatus(input),
     warnings,
     scanContext: input.scanResult ? scanContext(input.scanResult) : undefined
   };
+}
+
+function valueWithSource<T>(
+  primaryValue: T | undefined,
+  primarySource: FundamentalFieldSources[keyof FundamentalFieldSources],
+  fallbackValue: T | undefined,
+  fallbackSource: FundamentalFieldSources[keyof FundamentalFieldSources],
+  sources: FundamentalFieldSources,
+  key: keyof FundamentalFieldSources
+): T | undefined {
+  if (primaryValue !== undefined && primaryValue !== null) {
+    sources[key] = primarySource;
+    return primaryValue;
+  }
+  if (fallbackValue !== undefined && fallbackValue !== null) {
+    sources[key] = fallbackSource;
+    return fallbackValue;
+  }
+  return undefined;
+}
+
+function sourceNotes(sources: FundamentalFieldSources): string[] {
+  const labels: Array<[keyof FundamentalFieldSources, string]> = [
+    ["beta", "Beta"],
+    ["marketCap", "Market cap"],
+    ["sector", "Sector"],
+    ["lastEarningsDate", "Earnings date"]
+  ];
+  return labels
+    .filter(([key]) => sources[key] === "alphavantage")
+    .map(([, label]) => label + " from AlphaVantage fallback.");
 }
 
 function dividendStatus(input: {

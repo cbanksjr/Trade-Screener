@@ -1,4 +1,5 @@
-import type { Candle, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { Candle, FundamentalFieldSources, Fundamentals, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import { createAlphaVantageScanFallback, type AlphaVantageFundamentals } from "./alphaVantage";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
@@ -124,7 +125,8 @@ export async function runFullScan(): Promise<ScanResponse> {
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
   const benchmarks = canUseLiveSchwab ? await loadBenchmarks(scanWarnings) : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ") };
   const sectorBySymbol = await getDefaultUniverseSectorMap();
-  const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(symbolsToScan, sectorBySymbol, scanWarnings) : new Map<string, Candle[]>();
+  const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
+  const alphaVantage = canUseLiveSchwab ? await createAlphaVantageScanFallback() : undefined;
 
   if (!canUseLiveSchwab) {
     scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 universe with live market data.");
@@ -140,7 +142,9 @@ export async function runFullScan(): Promise<ScanResponse> {
       spyCandles: benchmarks.spyCandles,
       qqqCandles: benchmarks.qqqCandles,
       sector,
-      sectorCandles: sector ? sectorHistories.get(sector) : undefined
+      sectorCandles: sector ? sectorHistories.get(sector) : undefined,
+      sectorHistories,
+      alphaVantage
     });
   });
 
@@ -158,6 +162,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     if (scoreDelta !== 0) return scoreDelta;
     return (b.dailySqueezeDotCount ?? -1) - (a.dailySqueezeDotCount ?? -1);
   };
+  if (alphaVantage) await alphaVantage.flush();
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
     results: results.sort(sortByDecision),
@@ -218,6 +223,8 @@ async function scanSymbol(input: {
   qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>;
   sector?: string;
   sectorCandles?: Candle[];
+  sectorHistories?: Map<string, Candle[]>;
+  alphaVantage?: Awaited<ReturnType<typeof createAlphaVantageScanFallback>>;
 }): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean }> {
   const { symbol, settings, canUseLiveSchwab } = input;
   const warnings: string[] = [];
@@ -246,16 +253,27 @@ async function scanSymbol(input: {
       warnings.push(symbol + ": skipped because Schwab quote price $" + quote.price.toFixed(2) + " is below $" + settings.minPrice + ".");
       return { warnings, usedLive, usedDemo };
     }
-    if (quote?.beta !== undefined && quote.beta < settings.minBeta) {
-      warnings.push(symbol + ": skipped because Schwab beta is below " + settings.minBeta + ".");
-      return { warnings, usedLive, usedDemo };
-    }
-    if (quote?.marketCap !== undefined && quote.marketCap < settings.minMarketCap) {
-      warnings.push(symbol + ": skipped because Schwab market cap is below " + formatMoney(settings.minMarketCap) + ".");
-      return { warnings, usedLive, usedDemo };
-    }
     if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
       warnings.push(symbol + ": skipped because Schwab average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
+      return { warnings, usedLive, usedDemo };
+    }
+
+    const alphaVantage = await input.alphaVantage?.enrich(symbol, {
+      beta: quote?.beta === undefined,
+      marketCap: quote?.marketCap === undefined,
+      sector: !input.sector,
+      lastEarningsDate: quote?.lastEarningsDate === undefined
+    });
+    alphaVantage?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
+    if (alphaVantage?.usedLive) usedLive = true;
+    const fundamentals = mergeFundamentals(symbol, quote, alphaVantage?.data);
+
+    if (fundamentals.beta !== undefined && fundamentals.sources?.beta !== "demo" && fundamentals.beta < settings.minBeta) {
+      warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.beta) + " beta is below " + settings.minBeta + ".");
+      return { warnings, usedLive, usedDemo };
+    }
+    if (fundamentals.marketCap !== undefined && fundamentals.sources?.marketCap !== "demo" && fundamentals.marketCap < settings.minMarketCap) {
+      warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.marketCap) + " market cap is below " + formatMoney(settings.minMarketCap) + ".");
       return { warnings, usedLive, usedDemo };
     }
 
@@ -294,20 +312,21 @@ async function scanSymbol(input: {
       usedDemo = true;
     }
 
+    const sector = input.sector ?? fundamentals.sector;
     const result = gradeSetup({
       symbol,
       companyName: quote?.companyName,
       candles,
       currentPrice: price,
-      fundamentals: mergeFundamentals(symbol, quote),
+      fundamentals,
       optionable: options.length > 0,
       options,
       weeklyIndicators: weekly.indicators,
       weeklySqueezeWarning: weekly.warning,
       spyCandles: input.spyCandles,
       qqqCandles: input.qqqCandles,
-      sector: input.sector,
-      sectorCandles: input.sectorCandles
+      sector,
+      sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined
     });
     result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
     result.warnings.push(...warnings
@@ -439,8 +458,8 @@ async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awa
   return output;
 }
 
-async function loadSectorHistories(symbols: string[], sectorBySymbol: Record<string, string>, warnings: Set<string>): Promise<Map<string, Candle[]>> {
-  const sectors = [...new Set(symbols.map((symbol) => sectorBySymbol[symbol]).filter((sector): sector is string => Boolean(sector)))];
+async function loadSectorHistories(warnings: Set<string>): Promise<Map<string, Candle[]>> {
+  const sectors = Object.keys(SECTOR_ETF_BY_GICS);
   const output = new Map<string, Candle[]>();
   await Promise.all(sectors.map(async (sector) => {
     const etf = SECTOR_ETF_BY_GICS[sector];
@@ -454,15 +473,54 @@ async function loadSectorHistories(symbols: string[], sectorBySymbol: Record<str
   return output;
 }
 
-function mergeFundamentals(symbol: string, quote?: SchwabQuote) {
+export function mergeFundamentals(symbol: string, quote?: SchwabQuote, alphaVantage?: AlphaVantageFundamentals): Fundamentals {
   const demo = demoFundamental(symbol);
+  const sources: FundamentalFieldSources = {};
+  const beta = valueWithSource(quote?.beta, "schwab", alphaVantage?.beta, "alphavantage", demo?.beta, "demo", sources, "beta");
+  const marketCap = valueWithSource(quote?.marketCap, "schwab", alphaVantage?.marketCap, "alphavantage", demo?.marketCap, "demo", sources, "marketCap");
+  const avgDollarVolume20d = valueWithSource(quote?.avgDollarVolume, "schwab", undefined, "alphavantage", demo?.avgDollarVolume20d, "demo", sources, "avgDollarVolume20d");
+  const lastEarningsDate = valueWithSource(quote?.lastEarningsDate, "schwab", alphaVantage?.lastEarningsDate, "alphavantage", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
+  const sector = valueWithSource(undefined, "schwab", alphaVantage?.sector, "alphavantage", demo?.sector, "demo", sources, "sector");
   return {
     symbol,
-    beta: quote?.beta ?? demo?.beta,
-    marketCap: quote?.marketCap ?? demo?.marketCap,
-    avgDollarVolume20d: quote?.avgDollarVolume ?? demo?.avgDollarVolume20d,
-    lastEarningsDate: quote?.lastEarningsDate ?? demo?.lastEarningsDate
+    beta,
+    marketCap,
+    avgDollarVolume20d,
+    lastEarningsDate,
+    sector,
+    sources
   };
+}
+
+function valueWithSource<T>(
+  primaryValue: T | undefined,
+  primarySource: FundamentalFieldSources[keyof FundamentalFieldSources],
+  fallbackValue: T | undefined,
+  fallbackSource: FundamentalFieldSources[keyof FundamentalFieldSources],
+  demoValue: T | undefined,
+  demoSource: FundamentalFieldSources[keyof FundamentalFieldSources],
+  sources: FundamentalFieldSources,
+  key: keyof FundamentalFieldSources
+): T | undefined {
+  if (primaryValue !== undefined && primaryValue !== null) {
+    sources[key] = primarySource;
+    return primaryValue;
+  }
+  if (fallbackValue !== undefined && fallbackValue !== null) {
+    sources[key] = fallbackSource;
+    return fallbackValue;
+  }
+  if (demoValue !== undefined && demoValue !== null) {
+    sources[key] = demoSource;
+    return demoValue;
+  }
+  return undefined;
+}
+
+function sourceLabel(source: FundamentalFieldSources[keyof FundamentalFieldSources]): string {
+  if (source === "alphavantage") return "AlphaVantage fallback";
+  if (source === "schwab") return "Schwab";
+  return "fundamental";
 }
 
 async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {

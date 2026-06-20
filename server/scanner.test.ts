@@ -3,7 +3,7 @@ import type { Candle, ScanResponse, ScanResult, Settings } from "../shared/types
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, initDb, replaceScanResults, setScanMetadata } from "./sqlite";
-import { __resetScanStateForTest, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
+import { __resetScanStateForTest, mergeFundamentals, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
 
 describe("scan symbol resolution", () => {
   it("always uses the automatic S&P 500 + Nasdaq 100 universe", async () => {
@@ -12,6 +12,75 @@ describe("scan symbol resolution", () => {
     expect(symbols.length).toBeGreaterThanOrEqual(defaultUniverseSymbols.length);
     expect(symbols).toContain("AAPL");
     expect(symbols).toContain("NVDA");
+  });
+});
+
+describe("fundamental provider merge", () => {
+  it("keeps Schwab values ahead of AlphaVantage fallback values", () => {
+    const fundamentals = mergeFundamentals("KEEP", {
+      symbol: "KEEP",
+      price: 50,
+      beta: 1.1,
+      marketCap: 10_000_000_000,
+      lastEarningsDate: "2026-08-01"
+    }, {
+      symbol: "KEEP",
+      beta: 1.8,
+      marketCap: 20_000_000_000,
+      sector: "Information Technology",
+      lastEarningsDate: "2026-09-01"
+    });
+
+    expect(fundamentals.beta).toBe(1.1);
+    expect(fundamentals.marketCap).toBe(10_000_000_000);
+    expect(fundamentals.lastEarningsDate).toBe("2026-08-01");
+    expect(fundamentals.sector).toBe("Information Technology");
+    expect(fundamentals.sources).toMatchObject({
+      beta: "schwab",
+      marketCap: "schwab",
+      sector: "alphavantage",
+      lastEarningsDate: "schwab"
+    });
+  });
+
+  it("fills Schwab gaps from AlphaVantage before demo fallback", () => {
+    const fundamentals = mergeFundamentals("GAP", {
+      symbol: "GAP",
+      price: 50
+    }, {
+      symbol: "GAP",
+      beta: 1.3,
+      marketCap: 3_000_000_000,
+      sector: "Consumer Discretionary",
+      lastEarningsDate: "2026-10-10"
+    });
+
+    expect(fundamentals).toMatchObject({
+      beta: 1.3,
+      marketCap: 3_000_000_000,
+      sector: "Consumer Discretionary",
+      lastEarningsDate: "2026-10-10"
+    });
+    expect(fundamentals.sources).toMatchObject({
+      beta: "alphavantage",
+      marketCap: "alphavantage",
+      sector: "alphavantage",
+      lastEarningsDate: "alphavantage"
+    });
+  });
+
+  it("keeps existing demo fallback when Schwab and AlphaVantage are both missing", () => {
+    const fundamentals = mergeFundamentals("AAPL", {
+      symbol: "AAPL",
+      price: 210
+    });
+
+    expect(fundamentals.beta).toBe(1.12);
+    expect(fundamentals.marketCap).toBe(3_100_000_000_000);
+    expect(fundamentals.sources).toMatchObject({
+      beta: "demo",
+      marketCap: "demo"
+    });
   });
 });
 

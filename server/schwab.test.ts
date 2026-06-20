@@ -178,6 +178,40 @@ describe("Schwab response normalizers", () => {
     expect(analysis.scanContext?.grade).toBe("A");
   });
 
+  it("uses AlphaVantage fallback only for missing fundamental analysis fields", () => {
+    const analysis = mergeFundamentalAnalysis({
+      symbol: "FILL",
+      schwab: {
+        symbol: "FILL",
+        price: 50,
+        beta: 1.2,
+        marketCap: 10_000_000_000
+      },
+      alphaVantage: {
+        symbol: "FILL",
+        beta: 1.8,
+        marketCap: 20_000_000_000,
+        sector: "Information Technology",
+        lastEarningsDate: "2026-09-01"
+      },
+      warnings: []
+    });
+
+    expect(analysis.beta).toBe(1.2);
+    expect(analysis.marketCap).toBe(10_000_000_000);
+    expect(analysis.sector).toBe("Information Technology");
+    expect(analysis.lastEarningsDate).toBe("2026-09-01");
+    expect(analysis.sourceStatus).toBe("mixed");
+    expect(analysis.fieldSources).toMatchObject({
+      beta: "schwab",
+      marketCap: "schwab",
+      sector: "alphavantage",
+      lastEarningsDate: "alphavantage"
+    });
+    expect(analysis.sourceNotes).toContain("Sector from AlphaVantage fallback.");
+    expect(analysis.sourceNotes).toContain("Earnings date from AlphaVantage fallback.");
+  });
+
   it("marks explicit zero dividend values as does not pay", () => {
     const [quote] = normalizeSchwabQuotes({
       TSLA: {
