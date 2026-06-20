@@ -3,6 +3,8 @@ import type {
   Fundamentals,
   Grade,
   IndicatorSnapshot,
+  InstitutionalFactor,
+  InstitutionalFactorName,
   LayerEvaluation,
   LayerStatus,
   LongCallDecision,
@@ -18,6 +20,9 @@ import { activeSqueezeDotCount, latestIndicators, round } from "./indicators";
 import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
 
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
+const SETUP_FACTOR_NAMES: InstitutionalFactorName[] = ["Market Regime", "Sector Strength", "Relative Strength", "Liquidity", "Volume Expansion", "Price Structure", "Volatility Fit", "Catalyst Safety"];
+const SETUP_FACTOR_WEIGHT = 100 / SETUP_FACTOR_NAMES.length;
+const EARNINGS_DANGER_DAYS = 10;
 
 export const defaultSettings = {
   minPrice: 20,
@@ -41,6 +46,8 @@ export function gradeSetup(input: {
   weeklySqueezeWarning?: string;
   spyCandles?: Candle[];
   qqqCandles?: Candle[];
+  sector?: string;
+  sectorCandles?: Candle[];
   strictFundamentals?: boolean;
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
@@ -69,7 +76,23 @@ export function gradeSetup(input: {
   const macro = evaluateMacro(input.spyCandles, input.qqqCandles);
   const relativeStrengthSummary = evaluateRelativeStrength(input.candles, input.spyCandles, input.qqqCandles);
   const layerEvaluations = [marketStructure, institutional, optionLayer, macro, compression];
-  const decision = finalDecision(layerEvaluations, dailyContext, weeklyContext, weeklySupport);
+  const setupScore = evaluateSetupScore({
+    candles: input.candles,
+    dailyContext,
+    indicators,
+    dailySqueezeDotCount,
+    marketRegime: macro,
+    institutional,
+    optionLayer,
+    options,
+    avgDollarVolume20d,
+    spyCandles: input.spyCandles,
+    qqqCandles: input.qqqCandles,
+    sector: input.sector,
+    sectorCandles: input.sectorCandles,
+    lastEarningsDate: input.fundamentals?.lastEarningsDate
+  });
+  const decision = finalDecision(layerEvaluations, dailyContext, weeklyContext, weeklySupport, setupScore);
   const grade = decision === "Strong Long Call Candidate" ? "A" : "B";
   const compressionQualityScoreValue = dailySqueezeDotCount;
   const warnings = input.lowerTimeframeWarnings ?? [];
@@ -103,6 +126,9 @@ export function gradeSetup(input: {
     dailySqueezeDotCount,
     compressionQualityScore: compressionQualityScoreValue,
     compressionQualityStatus: compression.status,
+    setupScore: setupScore.score,
+    setupScoreStatus: setupScore.status,
+    institutionalFactors: setupScore.factors,
     multiTimeframeAlignmentSummary: alignmentSummary(dailyContext, weeklyContext),
     relativeStrengthSummary,
     institutionalContextSummary: institutional.detail,
@@ -203,18 +229,19 @@ function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqC
   return "20-period relative strength: " + spyText + " and " + qqqText + ".";
 }
 
-function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, weeklyStatus: LayerStatus): LongCallDecision {
+function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, weeklyStatus: LayerStatus, setupScore: SetupScoreResult): LongCallDecision {
   const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   const dailyEntryAligned = dailyContext.withinOneAtrOfEma21;
   const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
-  if (bearishLayer || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyStatus === "Bearish") return "Avoid";
+  if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyStatus === "Bearish") return "Avoid";
   if (
     byLayer("Compression Quality") === "Bullish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
     && byLayer("Macro Regime") !== "Bearish"
     && weeklyContext.bias === "bullish"
+    && !setupScore.capA
   ) return "Strong Long Call Candidate";
   if (
     byLayer("Compression Quality") !== "Bearish"
@@ -223,6 +250,132 @@ function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerT
     && byLayer("Macro Regime") !== "Bearish"
   ) return "Moderate Long Call Candidate";
   return "Watchlist Candidate";
+}
+
+type SetupScoreResult = {
+  score: number;
+  status: LayerStatus;
+  factors: InstitutionalFactor[];
+  capA: boolean;
+  catalystBlock: boolean;
+};
+
+function evaluateSetupScore(input: {
+  candles: Candle[];
+  dailyContext: LowerTimeframeContext;
+  indicators: IndicatorSnapshot;
+  dailySqueezeDotCount: number;
+  marketRegime: LayerEvaluation;
+  institutional: LayerEvaluation;
+  optionLayer: LayerEvaluation;
+  options: OptionContract[];
+  avgDollarVolume20d: number;
+  spyCandles?: Candle[];
+  qqqCandles?: Candle[];
+  sector?: string;
+  sectorCandles?: Candle[];
+  lastEarningsDate?: string;
+}): SetupScoreResult {
+  const factors = [
+    factor("Market Regime", input.marketRegime.status, input.marketRegime.detail),
+    evaluateSectorStrength(input.sector, input.sectorCandles, input.spyCandles),
+    evaluateRelativeStrengthFactor(input.candles, input.spyCandles, input.qqqCandles),
+    evaluateLiquidityFactor(input.avgDollarVolume20d, input.optionLayer, input.options[0]),
+    evaluateVolumeExpansion(input.candles),
+    evaluatePriceStructure(input.dailyContext),
+    evaluateVolatilityFit(input.indicators, input.dailySqueezeDotCount),
+    evaluateCatalystSafety(input.lastEarningsDate)
+  ];
+  const scored = factors.map((item) => ({ ...item, contribution: factorContribution(item.status) }));
+  const score = round(scored.reduce((sum, item) => sum + item.contribution, 0), 0);
+  const catalyst = scored.find((item) => item.name === "Catalyst Safety");
+  const capA = scored.some((item) => (item.name === "Sector Strength" || item.name === "Catalyst Safety") && item.status === "Insufficient Data");
+  const catalystBlock = catalyst?.status === "Bearish";
+  return {
+    score,
+    status: score >= 75 ? "Bullish" : score >= 50 ? "Neutral" : "Bearish",
+    factors: scored,
+    capA,
+    catalystBlock
+  };
+}
+
+function evaluateSectorStrength(sector?: string, sectorCandles?: Candle[], spyCandles?: Candle[]): InstitutionalFactor {
+  if (!sector) return factor("Sector Strength", "Insufficient Data", "Sector unavailable; A grade capped.");
+  if (!sectorCandles?.length || !spyCandles?.length) return factor("Sector Strength", "Insufficient Data", sector + " sector history unavailable; A grade capped.");
+  const sectorReturn = percentReturn(sectorCandles.slice(-20));
+  const spyReturn = percentReturn(spyCandles.slice(-20));
+  const spread = sectorReturn - spyReturn;
+  if (spread >= 0) return factor("Sector Strength", "Bullish", sector + " sector outperforming SPY over 20 periods.");
+  if (spread >= -0.01) return factor("Sector Strength", "Neutral", sector + " sector is roughly in line with SPY.");
+  return factor("Sector Strength", "Bearish", sector + " sector underperforming SPY over 20 periods.");
+}
+
+function evaluateRelativeStrengthFactor(candles: Candle[], spyCandles?: Candle[], qqqCandles?: Candle[]): InstitutionalFactor {
+  if (!spyCandles?.length || !qqqCandles?.length) return factor("Relative Strength", "Insufficient Data", "SPY/QQQ comparison unavailable.");
+  const symbolReturn = percentReturn(candles.slice(-20));
+  const spyReturn = percentReturn(spyCandles.slice(-20));
+  const qqqReturn = percentReturn(qqqCandles.slice(-20));
+  const beats = [symbolReturn >= spyReturn, symbolReturn >= qqqReturn].filter(Boolean).length;
+  if (beats === 2) return factor("Relative Strength", "Bullish", "Outperforming SPY and QQQ over 20 periods.");
+  if (beats === 1) return factor("Relative Strength", "Neutral", "Outperforming one of SPY/QQQ over 20 periods.");
+  return factor("Relative Strength", "Bearish", "Underperforming SPY and QQQ over 20 periods.");
+}
+
+function evaluateLiquidityFactor(avgDollarVolume20d: number, optionLayer: LayerEvaluation, option?: OptionContract): InstitutionalFactor {
+  const stockLiquid = avgDollarVolume20d >= defaultSettings.minAvgDollarVolume;
+  if (!stockLiquid || optionLayer.status === "Bearish") return factor("Liquidity", "Bearish", "Stock or option liquidity failed preferred filters.");
+  if (optionLayer.status === "Bullish") return factor("Liquidity", "Bullish", "High dollar volume and strong option liquidity.");
+  return factor("Liquidity", "Neutral", "Stock liquidity passes; option chain is usable but not ideal" + (option ? "." : " or unavailable."));
+}
+
+function evaluateVolumeExpansion(candles: Candle[]): InstitutionalFactor {
+  if (candles.length < 45) return factor("Volume Expansion", "Insufficient Data", "Not enough volume history.");
+  const latestVolume = candles.at(-1)?.volume ?? 0;
+  const recent = average(candles.slice(-5).map((candle) => candle.volume));
+  const baseline = average(candles.slice(-25, -5).map((candle) => candle.volume));
+  if (baseline <= 0) return factor("Volume Expansion", "Insufficient Data", "Volume baseline unavailable.");
+  if (latestVolume >= baseline * 1.25 && recent >= baseline * 1.1) return factor("Volume Expansion", "Bullish", "Volume expanding above recent baseline.");
+  if (latestVolume >= baseline * 0.8 || recent >= baseline * 0.9) return factor("Volume Expansion", "Neutral", "Volume is steady but not clearly expanding.");
+  return factor("Volume Expansion", "Bearish", "Volume is below recent baseline.");
+}
+
+function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFactor {
+  if (context.bias === "bullish" && context.withinOneAtrOfEma21) return factor("Price Structure", "Bullish", "Daily structure bullish and inside 1 ATR.");
+  if (context.bias === "bullish") return factor("Price Structure", "Neutral", "Daily structure bullish but entry is extended from the 21 EMA.");
+  return factor("Price Structure", "Bearish", "Daily EMA structure is not bullish.");
+}
+
+function evaluateVolatilityFit(indicators: IndicatorSnapshot, dailySqueezeDotCount: number): InstitutionalFactor {
+  if (dailySqueezeDotCount < 5) return factor("Volatility Fit", "Bearish", "Daily squeeze dot count is below 5.");
+  const supportive = [indicators.atrContracting, indicators.bbContracting, indicators.candleRangeContracting, indicators.momentumImproving].filter(Boolean).length;
+  if (supportive >= 3) return factor("Volatility Fit", "Bullish", "Daily squeeze active with contraction and improving momentum.");
+  if (supportive >= 1) return factor("Volatility Fit", "Neutral", "Daily squeeze active; contraction/momentum support is mixed.");
+  return factor("Volatility Fit", "Bearish", "Daily squeeze active but contraction/momentum support is weak.");
+}
+
+function evaluateCatalystSafety(lastEarningsDate?: string): InstitutionalFactor {
+  if (!lastEarningsDate) return factor("Catalyst Safety", "Insufficient Data", "Earnings date unavailable; A grade capped.");
+  const days = daysUntil(lastEarningsDate);
+  if (days === undefined || days < 0) return factor("Catalyst Safety", "Insufficient Data", "Future earnings date unavailable; A grade capped.");
+  if (days <= EARNINGS_DANGER_DAYS) return factor("Catalyst Safety", "Bearish", "Earnings are within " + EARNINGS_DANGER_DAYS + " days.");
+  return factor("Catalyst Safety", "Bullish", "No earnings event inside the next " + EARNINGS_DANGER_DAYS + " days.");
+}
+
+function factor(name: InstitutionalFactorName, status: LayerStatus, detail: string): InstitutionalFactor {
+  return { name, status, contribution: 0, detail };
+}
+
+function factorContribution(status: LayerStatus): number {
+  if (status === "Bullish") return SETUP_FACTOR_WEIGHT;
+  if (status === "Neutral" || status === "Insufficient Data") return SETUP_FACTOR_WEIGHT / 2;
+  return 0;
+}
+
+function daysUntil(value: string): number | undefined {
+  const parsed = new Date(value);
+  if (!Number.isFinite(parsed.getTime())) return undefined;
+  return Math.ceil((parsed.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
 }
 
 export function rankCallOptions(options: OptionContract[], price: number): OptionContract[] {

@@ -483,6 +483,70 @@ small,
   overflow-wrap: anywhere;
 }
 
+.factor-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+}
+
+.factor-card {
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 7px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.factor-card strong,
+.factor-card small,
+.factor-card b {
+  overflow-wrap: anywhere;
+}
+
+.factor-card small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.factor-card b {
+  color: var(--text);
+  font-size: 0.86rem;
+}
+
+.status-pill {
+  border-radius: 999px;
+  color: var(--text);
+  font-size: 0.68rem;
+  font-weight: 800;
+  justify-self: start;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  text-transform: uppercase;
+}
+
+.status-bullish {
+  background: color-mix(in srgb, var(--accent) 20%, var(--panel));
+  color: var(--accent-strong);
+}
+
+.status-neutral,
+.status-insufficient-data {
+  background: color-mix(in srgb, var(--warning) 18%, var(--panel));
+  color: var(--warning);
+}
+
+.status-bearish,
+.status-conflicting {
+  background: color-mix(in srgb, var(--danger) 16%, var(--panel));
+  color: var(--danger);
+}
+
+.empty-copy {
+  color: var(--muted);
+}
+
 .chart-panel {
   contain: layout paint;
   height: clamp(420px, 38vw, 540px);

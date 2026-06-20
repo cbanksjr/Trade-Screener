@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard only displays qualified `A` or `B` compression candidates. `A` means a strong long-call candidate with broad multi-timeframe bullish alignment, an active Daily squeeze, daily price inside the 1 ATR entry zone from the 21 EMA, and acceptable options liquidity. `B` means a moderate but still qualified long-call candidate. Watchlist and Avoid results are excluded from the visible candidate list.
+The Dashboard only displays qualified `A` or `B` compression candidates. `A` means a strong long-call candidate with a qualified Daily squeeze setup, supportive Weekly context, daily price inside the 1 ATR entry zone from the 21 EMA, acceptable options liquidity, and complete institutional context. `B` means a moderate but still qualified long-call candidate. Missing sector or earnings data can cap an otherwise strong setup at `B`, but does not exclude it. Watchlist and Avoid results are excluded from the visible candidate list.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -77,9 +77,14 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
+- Institutional setup score from 0-100 across eight equal-weight factors: market regime, sector strength, relative strength, liquidity, volume expansion, price structure, volatility fit, and catalyst safety
+- Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
+- Catalyst safety uses Schwab earnings date when available; earnings inside the configured danger window block the setup, while unavailable earnings data caps A grades
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 
 The automatic index universe is treated as prequalified if Schwab omits beta or market cap. If Schwab provides beta or market cap below the configured thresholds, the symbol is rejected.
+
+Momentum is the current Daily Squeeze Momentum-style value. The app compares the latest close against a 20-period midpoint baseline, then marks `momentumImproving` true when the current value is higher than the same calculation from 5 Daily bars ago.
 
 ## Notes
 

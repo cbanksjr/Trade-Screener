@@ -7,6 +7,7 @@ export type UniverseCache = {
   source: string;
   added: string[];
   removed: string[];
+  sectorBySymbol?: Record<string, string>;
 };
 
 const UNIVERSE_SETTING = "defaultUniverseCache";
@@ -18,6 +19,11 @@ export function getDefaultUniverseName(): string {
 
 export async function getDefaultUniverseSymbols(): Promise<string[]> {
   return resolveDefaultUniverseSymbols(await getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined));
+}
+
+export async function getDefaultUniverseSectorMap(): Promise<Record<string, string>> {
+  const cached = await getSetting<UniverseCache | undefined>(UNIVERSE_SETTING, undefined);
+  return cached?.sectorBySymbol ?? {};
 }
 
 export function resolveDefaultUniverseSymbols(cached?: UniverseCache): string[] {
@@ -48,8 +54,9 @@ export async function refreshDefaultUniverse(): Promise<UniverseCache> {
     fetchText("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"),
     fetchText("https://stockanalysis.com/list/nasdaq-100-stocks/")
   ]);
+  const sp500 = parseSp500Constituents(sp500Html);
   const refreshed = normalizeSymbols([
-    ...parseSp500Symbols(sp500Html),
+    ...sp500.symbols,
     ...parseNasdaq100Symbols(nasdaqHtml)
   ]);
   if (refreshed.length < MIN_REFRESHED_SYMBOLS) {
@@ -62,16 +69,35 @@ export async function refreshDefaultUniverse(): Promise<UniverseCache> {
     updatedAt: new Date().toISOString(),
     source: "public S&P 500 + Nasdaq 100 pages",
     added: refreshed.filter((symbol) => !previous.includes(symbol)),
-    removed: previous.filter((symbol) => !refreshed.includes(symbol))
+    removed: previous.filter((symbol) => !refreshed.includes(symbol)),
+    sectorBySymbol: sp500.sectorBySymbol
   };
   await setSetting(UNIVERSE_SETTING, next);
   return next;
 }
 
 export function parseSp500Symbols(html: string): string[] {
+  return parseSp500Constituents(html).symbols;
+}
+
+export function parseSp500Constituents(html: string): { symbols: string[]; sectorBySymbol: Record<string, string> } {
   const table = html.match(/<table[^>]+id="constituents"[\s\S]*?<\/table>/i)?.[0] ?? html;
-  const symbols = [...table.matchAll(/<td>\s*<a[^>]*>\s*([A-Z][A-Z.]{0,5})\s*<\/a>\s*<\/td>/g)].map((match) => match[1]);
-  return normalizeSymbols(symbols);
+  const sectorBySymbol: Record<string, string> = {};
+  const rows = [...table.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)];
+  const symbols: string[] = [];
+  for (const row of rows) {
+    const cells = [...row[1].matchAll(/<td[^>]*>([\s\S]*?)<\/td>/gi)].map((cell) => stripTags(cell[1]));
+    const symbol = cells[0]?.trim().toUpperCase();
+    const sector = cells[2]?.trim();
+    if (symbol && isTradableSymbol(symbol)) {
+      symbols.push(symbol);
+      if (sector) sectorBySymbol[symbol] = sector;
+    }
+  }
+  if (!symbols.length) {
+    symbols.push(...[...table.matchAll(/<td>\s*<a[^>]*>\s*([A-Z][A-Z.]{0,5})\s*<\/a>\s*<\/td>/g)].map((match) => match[1]));
+  }
+  return { symbols: normalizeSymbols(symbols), sectorBySymbol };
 }
 
 export function parseNasdaq100Symbols(html: string): string[] {
@@ -94,6 +120,10 @@ function normalizeSymbols(symbols: string[]): string[] {
 
 function isTradableSymbol(symbol: string): boolean {
   return /^[A-Z][A-Z.]{0,5}$/.test(symbol);
+}
+
+function stripTags(value: string): string {
+  return value.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 }
 
 async function fetchText(url: string): Promise<string> {

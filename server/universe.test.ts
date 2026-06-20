@@ -1,12 +1,27 @@
 import { describe, expect, it } from "vitest";
 import { defaultUniverseSymbols } from "./defaultUniverse";
-import { isLastDayOfMonth, parseNasdaq100Symbols, parseSp500Symbols, resolveDefaultUniverseSymbols, type UniverseCache } from "./universe";
+import { isLastDayOfMonth, parseNasdaq100Symbols, parseSp500Constituents, parseSp500Symbols, resolveDefaultUniverseSymbols, type UniverseCache } from "./universe";
 
 describe("default universe refresh helpers", () => {
   it("parses S&P 500 symbols from the public table markup", () => {
     const symbols = parseSp500Symbols('<table id="constituents"><tr><td><a href="/wiki/3M">MMM</a></td></tr><tr><td><a href="/wiki/Apple">AAPL</a></td></tr></table>');
 
     expect(symbols).toEqual(["AAPL", "MMM"]);
+  });
+
+  it("parses S&P 500 GICS sector data from the public table markup", () => {
+    const constituents = parseSp500Constituents(`
+      <table id="constituents">
+        <tr><td><a href="/wiki/Apple">AAPL</a></td><td>Apple Inc.</td><td>Information Technology</td></tr>
+        <tr><td><a href="/wiki/JPMorgan_Chase">JPM</a></td><td>JPMorgan Chase</td><td>Financials</td></tr>
+      </table>
+    `);
+
+    expect(constituents.symbols).toEqual(["AAPL", "JPM"]);
+    expect(constituents.sectorBySymbol).toEqual({
+      AAPL: "Information Technology",
+      JPM: "Financials"
+    });
   });
 
   it("parses Nasdaq 100 symbols from public stock rows", () => {

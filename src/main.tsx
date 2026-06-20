@@ -189,6 +189,8 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
     const leftDots = dailySqueezeDotCount(left) ?? -1;
     const rightDots = dailySqueezeDotCount(right) ?? -1;
     if (rightDots !== leftDots) return rightDots - leftDots;
+    const scoreDelta = setupScoreValue(right) - setupScoreValue(left);
+    if (scoreDelta !== 0) return scoreDelta;
     return left.symbol.localeCompare(right.symbol);
   });
 }
@@ -229,7 +231,7 @@ function ResultRow({ result, activeSymbol, onSelect }: {
       <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
       <span>
         <strong>{result.symbol}</strong>
-        <small>{money(result.price)} · {result.longCallDecision} · Daily dots {dailySqueezeDotLabel(result)}</small>
+        <small>{money(result.price)} · {result.longCallDecision} · Daily dots {dailySqueezeDotLabel(result)} · Setup {setupScoreLabel(result)}</small>
       </span>
     </div>
   );
@@ -248,6 +250,7 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
           <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
+          <Metric label="Setup Score" value={setupScoreLabel(result)} />
           <Metric label="Momentum" value={formatNumber(result.indicators.momentum)} />
           <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
@@ -270,6 +273,27 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <Metric label="Institutional" value={result.institutionalContextSummary} />
           <Metric label="Macro" value={result.macroRegimeSummary} />
         </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <h2>Why This Grade / Setup Score</h2>
+          <span>{setupScoreLabel(result)} · {result.setupScoreStatus ?? "Insufficient Data"}</span>
+        </div>
+        {result.institutionalFactors?.length ? (
+          <div className="factor-grid">
+            {result.institutionalFactors.map((factor) => (
+              <div className="factor-card" key={factor.name}>
+                <span className={"status-pill status-" + factor.status.toLowerCase().replaceAll(" ", "-")}>{factor.status}</span>
+                <strong>{factor.name}</strong>
+                <small>{factor.detail}</small>
+                <b>{formatNumber(factor.contribution, { maximumFractionDigits: 1 })} pts</b>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-copy">Run scan for setup score.</p>
+        )}
       </section>
 
       <section className="panel chart-panel">
@@ -521,6 +545,14 @@ function dailySqueezeDotCount(result: ScanResult): number | null {
 function dailySqueezeDotLabel(result: ScanResult): string {
   const dots = dailySqueezeDotCount(result);
   return dots === null ? "Run scan for dot count" : dots + " active";
+}
+
+function setupScoreValue(result: ScanResult): number {
+  return typeof result.setupScore === "number" ? result.setupScore : 0;
+}
+
+function setupScoreLabel(result: ScanResult): string {
+  return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
 }
 
 function layerLabel(layer: string): string {

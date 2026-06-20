@@ -1,4 +1,4 @@
-import type { ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { Candle, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
@@ -6,10 +6,23 @@ import { defaultSettings, gradeSetup } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
-import { getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
+import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols } from "./universe";
 
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
+const SECTOR_ETF_BY_GICS: Record<string, string> = {
+  "Communication Services": "XLC",
+  "Consumer Discretionary": "XLY",
+  "Consumer Staples": "XLP",
+  Energy: "XLE",
+  Financials: "XLF",
+  "Health Care": "XLV",
+  Industrials: "XLI",
+  "Information Technology": "XLK",
+  Materials: "XLB",
+  "Real Estate": "XLRE",
+  Utilities: "XLU"
+};
 let activeScan: Promise<void> | null = null;
 
 export async function readSettings(): Promise<Settings> {
@@ -110,19 +123,26 @@ export async function runFullScan(): Promise<ScanResponse> {
   const canUseLiveSchwab = hasSchwabCredentials() && await hasSchwabTokens();
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
   const benchmarks = canUseLiveSchwab ? await loadBenchmarks(scanWarnings) : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ") };
+  const sectorBySymbol = await getDefaultUniverseSectorMap();
+  const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(symbolsToScan, sectorBySymbol, scanWarnings) : new Map<string, Candle[]>();
 
   if (!canUseLiveSchwab) {
     scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 universe with live market data.");
   }
 
-  const outcomes = await mapLimit(symbolsToScan, SCAN_CONCURRENCY, (symbol) => scanSymbol({
-    symbol,
-    settings,
-    canUseLiveSchwab,
-    quote: quoteMap.get(symbol),
-    spyCandles: benchmarks.spyCandles,
-    qqqCandles: benchmarks.qqqCandles
-  }));
+  const outcomes = await mapLimit(symbolsToScan, SCAN_CONCURRENCY, (symbol) => {
+    const sector = sectorBySymbol[symbol];
+    return scanSymbol({
+      symbol,
+      settings,
+      canUseLiveSchwab,
+      quote: quoteMap.get(symbol),
+      spyCandles: benchmarks.spyCandles,
+      qqqCandles: benchmarks.qqqCandles,
+      sector,
+      sectorCandles: sector ? sectorHistories.get(sector) : undefined
+    });
+  });
 
   for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
@@ -134,6 +154,8 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sortByDecision = (a: ScanResult, b: ScanResult) => {
     const gradeDelta = (a.grade === "A" ? 0 : 1) - (b.grade === "A" ? 0 : 1);
     if (gradeDelta !== 0) return gradeDelta;
+    const scoreDelta = (b.setupScore ?? -1) - (a.setupScore ?? -1);
+    if (scoreDelta !== 0) return scoreDelta;
     return (b.dailySqueezeDotCount ?? -1) - (a.dailySqueezeDotCount ?? -1);
   };
   return withScanMetadata({
@@ -194,6 +216,8 @@ async function scanSymbol(input: {
   quote?: SchwabQuote;
   spyCandles?: Awaited<ReturnType<typeof fetchHistory>>;
   qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>;
+  sector?: string;
+  sectorCandles?: Candle[];
 }): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean }> {
   const { symbol, settings, canUseLiveSchwab } = input;
   const warnings: string[] = [];
@@ -281,7 +305,9 @@ async function scanSymbol(input: {
       weeklyIndicators: weekly.indicators,
       weeklySqueezeWarning: weekly.warning,
       spyCandles: input.spyCandles,
-      qqqCandles: input.qqqCandles
+      qqqCandles: input.qqqCandles,
+      sector: input.sector,
+      sectorCandles: input.sectorCandles
     });
     result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
     result.warnings.push(...warnings
@@ -308,7 +334,9 @@ async function scanSymbol(input: {
       weeklyIndicators: weekly.indicators,
       weeklySqueezeWarning: weekly.warning,
       spyCandles: input.spyCandles,
-      qqqCandles: input.qqqCandles
+      qqqCandles: input.qqqCandles,
+      sector: input.sector,
+      sectorCandles: input.sectorCandles
     });
     fallback.dataSource = "demo";
     fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
@@ -331,6 +359,9 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     dailySqueezeDotCount: dotCount ?? result.dailySqueezeDotCount,
     compressionQualityScore: dotCount ?? result.compressionQualityScore,
     maxScore: dotCount === undefined ? result.maxScore : 5,
+    setupScore: typeof result.setupScore === "number" ? result.setupScore : result.score,
+    setupScoreStatus: result.setupScoreStatus ?? "Insufficient Data",
+    institutionalFactors: result.institutionalFactors ?? [],
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -408,13 +439,29 @@ async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awa
   return output;
 }
 
+async function loadSectorHistories(symbols: string[], sectorBySymbol: Record<string, string>, warnings: Set<string>): Promise<Map<string, Candle[]>> {
+  const sectors = [...new Set(symbols.map((symbol) => sectorBySymbol[symbol]).filter((sector): sector is string => Boolean(sector)))];
+  const output = new Map<string, Candle[]>();
+  await Promise.all(sectors.map(async (sector) => {
+    const etf = SECTOR_ETF_BY_GICS[sector];
+    if (!etf) return;
+    try {
+      output.set(sector, await fetchHistory(etf));
+    } catch (error) {
+      warnings.add(readError(error, sector + " sector ETF history request failed."));
+    }
+  }));
+  return output;
+}
+
 function mergeFundamentals(symbol: string, quote?: SchwabQuote) {
   const demo = demoFundamental(symbol);
   return {
     symbol,
     beta: quote?.beta ?? demo?.beta,
     marketCap: quote?.marketCap ?? demo?.marketCap,
-    avgDollarVolume20d: quote?.avgDollarVolume ?? demo?.avgDollarVolume20d
+    avgDollarVolume20d: quote?.avgDollarVolume ?? demo?.avgDollarVolume20d,
+    lastEarningsDate: quote?.lastEarningsDate ?? demo?.lastEarningsDate
   };
 }
 

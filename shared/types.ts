@@ -26,6 +26,7 @@ export type Fundamentals = {
   beta?: number;
   marketCap?: number;
   avgDollarVolume20d?: number;
+  lastEarningsDate?: string;
 };
 
 
@@ -52,6 +53,14 @@ export type TimeframeBias = "bullish" | "bearish" | "neutral" | "unavailable";
 export type LayerStatus = "Bullish" | "Neutral" | "Bearish" | "Conflicting" | "Insufficient Data";
 export type LongCallDecision = "Strong Long Call Candidate" | "Moderate Long Call Candidate" | "Watchlist Candidate" | "Avoid";
 export type EntryRecommendationType = "Early Compression Entry" | "Mid Compression Entry" | "High Conviction Compression Entry" | "Compression Watchlist" | "Avoid";
+export type InstitutionalFactorName = "Market Regime" | "Sector Strength" | "Relative Strength" | "Liquidity" | "Volume Expansion" | "Price Structure" | "Volatility Fit" | "Catalyst Safety";
+
+export type InstitutionalFactor = {
+  name: InstitutionalFactorName;
+  status: LayerStatus;
+  contribution: number;
+  detail: string;
+};
 
 export type LowerTimeframeContext = {
   timeframe: AnalysisTimeframe;
@@ -154,6 +163,9 @@ export type ScanResult = {
   dailySqueezeDotCount?: number;
   compressionQualityScore: number;
   compressionQualityStatus: LayerStatus;
+  setupScore: number;
+  setupScoreStatus: LayerStatus;
+  institutionalFactors: InstitutionalFactor[];
   multiTimeframeAlignmentSummary: string;
   relativeStrengthSummary: string;
   institutionalContextSummary: string;

@@ -50,8 +50,7 @@ describe("layer decision engine", () => {
       options: demoOptions("BULL", price),
       lowerTimeframes,
       weeklyIndicators: weeklyIndicator("bullish"),
-      spyCandles: bullishCompressionCandles(),
-      qqqCandles: bullishCompressionCandles()
+      ...institutionalSetupContext()
     });
 
     expect(["A", "B"]).toContain(result.grade);
@@ -92,7 +91,8 @@ describe("layer decision engine", () => {
       optionable: true,
       options: demoOptions("DAILYSQZ", price),
       lowerTimeframes: bullishLowerTimeframes("none"),
-      weeklyIndicators: weeklyIndicator("bullish")
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
 
     expect(isSqueezeActive(result.indicators.squeezeState)).toBe(true);
@@ -135,7 +135,8 @@ describe("layer decision engine", () => {
       optionable: true,
       options: demoOptions("LOWEREXT", price),
       lowerTimeframes: bullishLowerTimeframes("none", false),
-      weeklyIndicators: weeklyIndicator("bullish")
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
 
     expect(result.squeezeStatusByTimeframe.map((item) => item.timeframe)).toEqual(["daily", "weekly"]);
@@ -155,7 +156,8 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("TWOBULL"),
       optionable: true,
       options: demoOptions("TWOBULL", price),
-      weeklyIndicators: weeklyIndicator("bullish")
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
 
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
@@ -179,6 +181,139 @@ describe("layer decision engine", () => {
     expect(result.grade).toBe("B");
   });
 
+  it("calculates equal-weight institutional setup score factors", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "SCORE",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("SCORE"),
+      optionable: true,
+      options: demoOptions("SCORE", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.institutionalFactors).toHaveLength(8);
+    expect(result.institutionalFactors.find((factor) => factor.status === "Bullish")?.contribution).toBeCloseTo(12.5);
+    expect(result.setupScore).toBe(Math.round(result.institutionalFactors.reduce((sum, factor) => sum + factor.contribution, 0)));
+    expect(result.setupScoreStatus).toBe("Bullish");
+  });
+
+  it("caps A when sector or earnings data is missing but still allows B", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "CAPA",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        symbol: "CAPA",
+        beta: 1.2,
+        marketCap: 20_000_000_000,
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("CAPA", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      spyCandles: bullishCompressionCandles(),
+      qqqCandles: bullishCompressionCandles()
+    });
+
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Sector Strength")?.status).toBe("Insufficient Data");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Insufficient Data");
+  });
+
+  it("blocks setups when earnings are inside the catalyst danger window", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const nearEarnings = new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString();
+    const result = gradeSetup({
+      symbol: "EARN",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        ...strongFundamentals("EARN"),
+        lastEarningsDate: nearEarnings
+      },
+      optionable: true,
+      options: demoOptions("EARN", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bearish");
+  });
+
+  it("classifies sector strength versus SPY", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const sectorStatus = (sectorCandles: Candle[]) => gradeSetup({
+      symbol: "SECTOR",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("SECTOR"),
+      optionable: true,
+      options: demoOptions("SECTOR", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      sector: "Information Technology",
+      sectorCandles,
+      spyCandles: returnCandles(100, 0.01),
+      qqqCandles: bullishCompressionCandles()
+    }).institutionalFactors.find((factor) => factor.name === "Sector Strength")?.status;
+
+    expect(sectorStatus(returnCandles(100, 0.03))).toBe("Bullish");
+    expect(sectorStatus(returnCandles(100, 0.005))).toBe("Neutral");
+    expect(sectorStatus(returnCandles(100, -0.04))).toBe("Bearish");
+  });
+
+  it("marks volume expansion bullish when recent volume exceeds baseline", () => {
+    const candles = volumeExpandedCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "VOL",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("VOL"),
+      optionable: true,
+      options: demoOptions("VOL", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.institutionalFactors.find((factor) => factor.name === "Volume Expansion")?.status).toBe("Bullish");
+  });
+
+  it("keeps momentum explanation tied to the current daily momentum calculation", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "MOMO",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("MOMO"),
+      optionable: true,
+      options: demoOptions("MOMO", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+    const volatilityFit = result.institutionalFactors.find((factor) => factor.name === "Volatility Fit");
+
+    expect(typeof result.indicators.momentum).toBe("number");
+    expect(typeof result.indicators.momentumImproving).toBe("boolean");
+    expect(volatilityFit?.detail).toContain("momentum");
+  });
+
   it("ignores lower-timeframe squeeze for grading and reasons", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
@@ -191,7 +326,8 @@ describe("layer decision engine", () => {
       optionable: true,
       options: demoOptions("BONUSSQZ", price),
       lowerTimeframes: bullishLowerTimeframes("high"),
-      weeklyIndicators: weeklyIndicator("bullish")
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
 
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
@@ -210,7 +346,8 @@ describe("layer decision engine", () => {
       optionable: true,
       options: demoOptions("BEARLOWER", price),
       lowerTimeframes: bearishLowerTimeframes(),
-      weeklyIndicators: weeklyIndicator("bullish")
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
 
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
@@ -384,6 +521,39 @@ function activeDailySqueezeCandles(): Candle[] {
   return candles;
 }
 
+function volumeExpandedCandles(): Candle[] {
+  return activeDailySqueezeCandles().map((candle, index) => ({
+    ...candle,
+    volume: index >= 175 ? 36_000_000 : 25_000_000
+  }));
+}
+
+function returnCandles(start: number, totalReturn: number): Candle[] {
+  const candles: Candle[] = [];
+  for (let index = 0; index < 40; index += 1) {
+    const progress = index / 39;
+    const close = start * (1 + totalReturn * progress);
+    candles.push({
+      date: "2026-02-" + String(index + 1).padStart(2, "0"),
+      open: close - 0.1,
+      high: close + 0.5,
+      low: close - 0.5,
+      close,
+      volume: 10_000_000
+    });
+  }
+  return candles;
+}
+
+function institutionalSetupContext() {
+  return {
+    sector: "Information Technology",
+    sectorCandles: bullishCompressionCandles(),
+    spyCandles: bullishCompressionCandles(),
+    qqqCandles: bullishCompressionCandles()
+  };
+}
+
 function intradayCandles(direction: "up" | "down", days = 90): Candle[] {
   const candles: Candle[] = [];
   const start = Date.UTC(2026, 0, 5, 14, 30);
@@ -409,7 +579,8 @@ function strongFundamentals(symbol: string) {
     symbol,
     beta: 1.2,
     marketCap: 20_000_000_000,
-    avgDollarVolume20d: 900_000_000
+    avgDollarVolume20d: 900_000_000,
+    lastEarningsDate: "2027-12-31"
   };
 }
 
