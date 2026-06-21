@@ -31,7 +31,7 @@ export type Fundamentals = {
   sources?: FundamentalFieldSources;
 };
 
-export type FundamentalDataSource = "schwab" | "alphavantage" | "demo";
+export type FundamentalDataSource = "schwab" | "fmp" | "demo";
 export type FundamentalFieldSources = {
   beta?: FundamentalDataSource;
   marketCap?: FundamentalDataSource;

@@ -1,15 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { createAlphaVantageFallback, normalizeAlphaVantageOverview, parseAlphaVantageEarningsCalendar, type AlphaVantageCache } from "./alphaVantage";
+import { createFmpFallback, normalizeFmpEarnings, normalizeFmpProfile, type FmpCache } from "./fmp";
 
-describe("AlphaVantage fallback fundamentals", () => {
-  it("normalizes overview numeric strings and core fields", () => {
-    expect(normalizeAlphaVantageOverview({
-      Symbol: "MSFT",
-      Name: "Microsoft Corporation",
-      Beta: "0.91",
-      MarketCapitalization: "3050000000000",
-      Sector: "Technology"
-    })).toEqual({
+describe("FMP fallback fundamentals", () => {
+  it("normalizes profile numeric strings and core fields", () => {
+    expect(normalizeFmpProfile([{
+      symbol: "MSFT",
+      companyName: "Microsoft Corporation",
+      beta: "0.91",
+      mktCap: "3050000000000",
+      sector: "Technology"
+    }])).toEqual({
       symbol: "MSFT",
       companyName: "Microsoft Corporation",
       beta: 0.91,
@@ -18,43 +18,41 @@ describe("AlphaVantage fallback fundamentals", () => {
     });
   });
 
-  it("treats None and empty overview values as unavailable", () => {
-    expect(normalizeAlphaVantageOverview({
-      Symbol: "MISS",
-      Name: "",
-      Beta: "None",
-      MarketCapitalization: "",
-      Sector: "-"
-    })).toBeUndefined();
+  it("treats None and empty profile values as unavailable", () => {
+    expect(normalizeFmpProfile([{
+      symbol: "MISS",
+      companyName: "",
+      beta: "None",
+      mktCap: "",
+      sector: "-"
+    }])).toBeUndefined();
   });
 
-  it("throws readable errors for rate-limit payloads", () => {
-    expect(() => normalizeAlphaVantageOverview({
-      Note: "Thank you for using Alpha Vantage. Our standard API rate limit is 25 requests per day."
-    })).toThrow("standard API rate limit");
+  it("throws readable errors for limit payloads", () => {
+    expect(() => normalizeFmpProfile({
+      "Error Message": "Limit Reach. Please upgrade your plan or visit pricing to increase your limit."
+    })).toThrow("Limit Reach");
   });
 
-  it("parses the next future earnings date from CSV", () => {
-    const csv = [
-      "symbol,name,reportDate,fiscalDateEnding,estimate,currency",
-      "AAPL,Apple Inc,2026-05-01,2026-03-31,1.20,USD",
-      "AAPL,Apple Inc,2026-07-25,2026-06-30,1.40,USD"
-    ].join("\n");
-
-    expect(parseAlphaVantageEarningsCalendar(csv, "AAPL", new Date("2026-06-20T12:00:00Z"))).toBe("2026-07-25");
+  it("selects the next future earnings date", () => {
+    expect(normalizeFmpEarnings([
+      { symbol: "AAPL", date: "2026-05-01" },
+      { symbol: "AAPL", date: "2026-07-25" },
+      { symbol: "MSFT", date: "2026-07-01" }
+    ], "AAPL", new Date("2026-06-20T12:00:00Z"))).toBe("2026-07-25");
   });
 
   it("reuses fresh cached data without spending live calls", async () => {
     let calls = 0;
-    const cache: AlphaVantageCache = {
+    const cache: FmpCache = {
       AAPL: {
         updatedAt: "2026-06-20T12:00:00.000Z",
         data: { symbol: "AAPL", beta: 1.22, marketCap: 3100000000000 }
       }
     };
-    const fallback = createAlphaVantageFallback({
+    const fallback = createFmpFallback({
       apiKey: "test",
-      baseUrl: "https://example.test/query",
+      baseUrl: "https://example.test/stable",
       maxCalls: 1,
       cache,
       now: () => new Date("2026-06-20T13:00:00.000Z"),
@@ -72,9 +70,9 @@ describe("AlphaVantage fallback fundamentals", () => {
   });
 
   it("refreshes stale cached data and updates the cache", async () => {
-    const fallback = createAlphaVantageFallback({
+    const fallback = createFmpFallback({
       apiKey: "test",
-      baseUrl: "https://example.test/query",
+      baseUrl: "https://example.test/stable",
       maxCalls: 1,
       cache: {
         AAPL: {
@@ -83,11 +81,11 @@ describe("AlphaVantage fallback fundamentals", () => {
         }
       },
       now: () => new Date("2026-06-20T13:00:00.000Z"),
-      fetchImpl: async () => new Response(JSON.stringify({
-        Symbol: "AAPL",
-        Beta: "1.44",
-        MarketCapitalization: "3200000000000"
-      }))
+      fetchImpl: async () => new Response(JSON.stringify([{
+        symbol: "AAPL",
+        beta: "1.44",
+        mktCap: "3200000000000"
+      }]))
     });
 
     const result = await fallback.enrich("AAPL", { beta: true, marketCap: true });
@@ -98,9 +96,9 @@ describe("AlphaVantage fallback fundamentals", () => {
   });
 
   it("returns warnings instead of throwing on malformed live responses", async () => {
-    const fallback = createAlphaVantageFallback({
+    const fallback = createFmpFallback({
       apiKey: "test",
-      baseUrl: "https://example.test/query",
+      baseUrl: "https://example.test/stable",
       maxCalls: 1,
       fetchImpl: async () => new Response("not-json")
     });

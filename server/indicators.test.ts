@@ -229,7 +229,7 @@ describe("layer decision engine", () => {
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Insufficient Data");
   });
 
-  it("allows A when AlphaVantage fills sector and earnings context", () => {
+  it("allows A when FMP fills sector and earnings context", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -245,8 +245,8 @@ describe("layer decision engine", () => {
         sector: "Information Technology",
         lastEarningsDate: "2027-12-31",
         sources: {
-          sector: "alphavantage",
-          lastEarningsDate: "alphavantage"
+          sector: "fmp",
+          lastEarningsDate: "fmp"
         }
       },
       optionable: true,
@@ -260,8 +260,8 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
     expect(result.fundamentalSources).toMatchObject({
-      sector: "alphavantage",
-      lastEarningsDate: "alphavantage"
+      sector: "fmp",
+      lastEarningsDate: "fmp"
     });
   });
 

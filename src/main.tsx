@@ -565,8 +565,8 @@ function fundamentalSourceSummary(result: ScanResult): string {
     ["sector", "sector"],
     ["lastEarningsDate", "earnings date"]
   ];
-  const alphaFields = labels.filter(([key]) => sources[key] === "alphavantage").map(([, label]) => label);
-  if (alphaFields.length) return "Schwab primary; AlphaVantage filled " + alphaFields.join(", ") + ".";
+  const fmpFields = labels.filter(([key]) => sources[key] === "fmp").map(([, label]) => label);
+  if (fmpFields.length) return "Schwab primary; FMP filled " + fmpFields.join(", ") + ".";
   return "Schwab primary.";
 }
 

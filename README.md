@@ -20,7 +20,7 @@ SCHWAB_APP_KEY=your_app_key_here
 SCHWAB_APP_SECRET=your_app_secret_here
 SCHWAB_CALLBACK_URL=https://127.0.0.1:4173/api/schwab/callback
 API_HTTPS=true
-ALPHAVANTAGE_API_KEY=your_alpha_vantage_key_here
+FMP_API_KEY=your_fmp_key_here
 ```
 
 Then restart the dev server. The local API runs HTTPS by default for Schwab OAuth and will generate a local self-signed certificate in `certs/` the first time it starts. The app will show whether Schwab is connected. If credentials are present but no token is stored, click **Connect Schwab** and complete the OAuth login. Schwab must be configured with the exact same HTTPS callback URL as `.env`.
@@ -31,7 +31,7 @@ The scan uses Schwab for:
 - `/marketdata/v1/pricehistory` for daily OHLCV history and weekly context aggregated from daily candles
 - `/marketdata/v1/chains` for 30-180 DTE swing call chains with Greeks
 
-AlphaVantage can be used as a cached fallback when Schwab omits core institutional fields. Add `ALPHAVANTAGE_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary, then uses AlphaVantage only to fill missing beta, market cap, sector, and future earnings date. Fallback results are cached for 24 hours and live AlphaVantage calls are capped by `ALPHAVANTAGE_MAX_CALLS_PER_SCAN`, default `20`, to protect standard API limits.
+Financial Modeling Prep can be used as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary, then uses FMP only to fill missing beta, market cap, sector, and future earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `100`, to protect API limits.
 
 ## Hosting
 
@@ -55,6 +55,7 @@ Recommended Supabase + Render setup:
   - `CLIENT_ORIGIN=https://trade-screener-auyv.onrender.com`
   - `SCHWAB_CALLBACK_URL=https://trade-screener-auyv.onrender.com/api/schwab/callback`
   - `SCHWAB_APP_KEY` and `SCHWAB_APP_SECRET`
+  - `FMP_API_KEY`
 
 Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB_CALLBACK_URL`. Render provides public HTTPS, so the app disables its local self-signed HTTPS server in production.
 
@@ -83,10 +84,10 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Institutional setup score from 0-100 across eight equal-weight factors: market regime, sector strength, relative strength, liquidity, volume expansion, price structure, volatility fit, and catalyst safety
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
 - Catalyst safety uses Schwab earnings date when available; earnings inside the configured danger window block the setup, while unavailable earnings data caps A grades
-- AlphaVantage fallback data can satisfy missing beta, market cap, sector, and earnings-date context when Schwab omits those values
+- FMP fallback data can satisfy missing beta, market cap, sector, and earnings-date context when Schwab omits those values
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 
-The automatic index universe is treated as prequalified if Schwab and AlphaVantage both omit beta or market cap. If either provider supplies beta or market cap below the configured thresholds, the symbol is rejected.
+The automatic index universe is treated as prequalified if Schwab and FMP both omit beta or market cap. If either provider supplies beta or market cap below the configured thresholds, the symbol is rejected.
 
 Momentum is the current Daily Squeeze Momentum-style value. The app compares the latest close against a 20-period midpoint baseline, then marks `momentumImproving` true when the current value is higher than the same calculation from 5 Daily bars ago.
 

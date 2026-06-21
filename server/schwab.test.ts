@@ -178,7 +178,7 @@ describe("Schwab response normalizers", () => {
     expect(analysis.scanContext?.grade).toBe("A");
   });
 
-  it("uses AlphaVantage fallback only for missing fundamental analysis fields", () => {
+  it("uses FMP fallback only for missing fundamental analysis fields", () => {
     const analysis = mergeFundamentalAnalysis({
       symbol: "FILL",
       schwab: {
@@ -187,7 +187,7 @@ describe("Schwab response normalizers", () => {
         beta: 1.2,
         marketCap: 10_000_000_000
       },
-      alphaVantage: {
+      fmp: {
         symbol: "FILL",
         beta: 1.8,
         marketCap: 20_000_000_000,
@@ -205,11 +205,11 @@ describe("Schwab response normalizers", () => {
     expect(analysis.fieldSources).toMatchObject({
       beta: "schwab",
       marketCap: "schwab",
-      sector: "alphavantage",
-      lastEarningsDate: "alphavantage"
+      sector: "fmp",
+      lastEarningsDate: "fmp"
     });
-    expect(analysis.sourceNotes).toContain("Sector from AlphaVantage fallback.");
-    expect(analysis.sourceNotes).toContain("Earnings date from AlphaVantage fallback.");
+    expect(analysis.sourceNotes).toContain("Sector from FMP fallback.");
+    expect(analysis.sourceNotes).toContain("Earnings date from FMP fallback.");
   });
 
   it("marks explicit zero dividend values as does not pay", () => {

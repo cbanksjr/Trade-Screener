@@ -16,7 +16,7 @@ describe("scan symbol resolution", () => {
 });
 
 describe("fundamental provider merge", () => {
-  it("keeps Schwab values ahead of AlphaVantage fallback values", () => {
+  it("keeps Schwab values ahead of FMP fallback values", () => {
     const fundamentals = mergeFundamentals("KEEP", {
       symbol: "KEEP",
       price: 50,
@@ -38,12 +38,12 @@ describe("fundamental provider merge", () => {
     expect(fundamentals.sources).toMatchObject({
       beta: "schwab",
       marketCap: "schwab",
-      sector: "alphavantage",
+      sector: "fmp",
       lastEarningsDate: "schwab"
     });
   });
 
-  it("fills Schwab gaps from AlphaVantage before demo fallback", () => {
+  it("fills Schwab gaps from FMP before demo fallback", () => {
     const fundamentals = mergeFundamentals("GAP", {
       symbol: "GAP",
       price: 50
@@ -62,14 +62,14 @@ describe("fundamental provider merge", () => {
       lastEarningsDate: "2026-10-10"
     });
     expect(fundamentals.sources).toMatchObject({
-      beta: "alphavantage",
-      marketCap: "alphavantage",
-      sector: "alphavantage",
-      lastEarningsDate: "alphavantage"
+      beta: "fmp",
+      marketCap: "fmp",
+      sector: "fmp",
+      lastEarningsDate: "fmp"
     });
   });
 
-  it("keeps existing demo fallback when Schwab and AlphaVantage are both missing", () => {
+  it("keeps existing demo fallback when Schwab and FMP are both missing", () => {
     const fundamentals = mergeFundamentals("AAPL", {
       symbol: "AAPL",
       price: 210

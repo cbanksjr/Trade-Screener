@@ -1,7 +1,7 @@
 import type { Candle, FundamentalFieldSources, Fundamentals, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
-import { createAlphaVantageScanFallback, type AlphaVantageFundamentals } from "./alphaVantage";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
+import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
 import { defaultSettings, gradeSetup } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
@@ -126,7 +126,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const benchmarks = canUseLiveSchwab ? await loadBenchmarks(scanWarnings) : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ") };
   const sectorBySymbol = await getDefaultUniverseSectorMap();
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
-  const alphaVantage = canUseLiveSchwab ? await createAlphaVantageScanFallback() : undefined;
+  const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
 
   if (!canUseLiveSchwab) {
     scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 universe with live market data.");
@@ -144,7 +144,7 @@ export async function runFullScan(): Promise<ScanResponse> {
       sector,
       sectorCandles: sector ? sectorHistories.get(sector) : undefined,
       sectorHistories,
-      alphaVantage
+      fmp
     });
   });
 
@@ -162,7 +162,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     if (scoreDelta !== 0) return scoreDelta;
     return (b.dailySqueezeDotCount ?? -1) - (a.dailySqueezeDotCount ?? -1);
   };
-  if (alphaVantage) await alphaVantage.flush();
+  if (fmp) await fmp.flush();
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
     results: results.sort(sortByDecision),
@@ -224,7 +224,7 @@ async function scanSymbol(input: {
   sector?: string;
   sectorCandles?: Candle[];
   sectorHistories?: Map<string, Candle[]>;
-  alphaVantage?: Awaited<ReturnType<typeof createAlphaVantageScanFallback>>;
+  fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
 }): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean }> {
   const { symbol, settings, canUseLiveSchwab } = input;
   const warnings: string[] = [];
@@ -258,15 +258,15 @@ async function scanSymbol(input: {
       return { warnings, usedLive, usedDemo };
     }
 
-    const alphaVantage = await input.alphaVantage?.enrich(symbol, {
+    const fmp = await input.fmp?.enrich(symbol, {
       beta: quote?.beta === undefined,
       marketCap: quote?.marketCap === undefined,
       sector: !input.sector,
       lastEarningsDate: quote?.lastEarningsDate === undefined
     });
-    alphaVantage?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
-    if (alphaVantage?.usedLive) usedLive = true;
-    const fundamentals = mergeFundamentals(symbol, quote, alphaVantage?.data);
+    fmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
+    if (fmp?.usedLive) usedLive = true;
+    const fundamentals = mergeFundamentals(symbol, quote, fmp?.data);
 
     if (fundamentals.beta !== undefined && fundamentals.sources?.beta !== "demo" && fundamentals.beta < settings.minBeta) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.beta) + " beta is below " + settings.minBeta + ".");
@@ -473,14 +473,14 @@ async function loadSectorHistories(warnings: Set<string>): Promise<Map<string, C
   return output;
 }
 
-export function mergeFundamentals(symbol: string, quote?: SchwabQuote, alphaVantage?: AlphaVantageFundamentals): Fundamentals {
+export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: FmpFundamentals): Fundamentals {
   const demo = demoFundamental(symbol);
   const sources: FundamentalFieldSources = {};
-  const beta = valueWithSource(quote?.beta, "schwab", alphaVantage?.beta, "alphavantage", demo?.beta, "demo", sources, "beta");
-  const marketCap = valueWithSource(quote?.marketCap, "schwab", alphaVantage?.marketCap, "alphavantage", demo?.marketCap, "demo", sources, "marketCap");
-  const avgDollarVolume20d = valueWithSource(quote?.avgDollarVolume, "schwab", undefined, "alphavantage", demo?.avgDollarVolume20d, "demo", sources, "avgDollarVolume20d");
-  const lastEarningsDate = valueWithSource(quote?.lastEarningsDate, "schwab", alphaVantage?.lastEarningsDate, "alphavantage", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
-  const sector = valueWithSource(undefined, "schwab", alphaVantage?.sector, "alphavantage", demo?.sector, "demo", sources, "sector");
+  const beta = valueWithSource(quote?.beta, "schwab", fmp?.beta, "fmp", demo?.beta, "demo", sources, "beta");
+  const marketCap = valueWithSource(quote?.marketCap, "schwab", fmp?.marketCap, "fmp", demo?.marketCap, "demo", sources, "marketCap");
+  const avgDollarVolume20d = valueWithSource(quote?.avgDollarVolume, "schwab", undefined, "fmp", demo?.avgDollarVolume20d, "demo", sources, "avgDollarVolume20d");
+  const lastEarningsDate = valueWithSource(quote?.lastEarningsDate, "schwab", fmp?.lastEarningsDate, "fmp", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
+  const sector = valueWithSource(undefined, "schwab", fmp?.sector, "fmp", demo?.sector, "demo", sources, "sector");
   return {
     symbol,
     beta,
@@ -518,7 +518,7 @@ function valueWithSource<T>(
 }
 
 function sourceLabel(source: FundamentalFieldSources[keyof FundamentalFieldSources]): string {
-  if (source === "alphavantage") return "AlphaVantage fallback";
+  if (source === "fmp") return "FMP fallback";
   if (source === "schwab") return "Schwab";
   return "fundamental";
 }

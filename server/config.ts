@@ -19,7 +19,7 @@ export const config = {
   httpsCertPath: process.env.API_HTTPS_CERT_PATH ?? "certs/localhost-cert.pem",
   schwabAuthBaseUrl: process.env.SCHWAB_AUTH_BASE_URL ?? "https://api.schwabapi.com/v1/oauth",
   schwabMarketDataBaseUrl: process.env.SCHWAB_MARKET_DATA_BASE_URL ?? "https://api.schwabapi.com/marketdata/v1",
-  alphaVantageApiKey: process.env.ALPHAVANTAGE_API_KEY ?? "",
-  alphaVantageBaseUrl: process.env.ALPHAVANTAGE_BASE_URL ?? "https://www.alphavantage.co/query",
-  alphaVantageMaxCallsPerScan: Number(process.env.ALPHAVANTAGE_MAX_CALLS_PER_SCAN ?? 20)
+  fmpApiKey: process.env.FMP_API_KEY ?? "",
+  fmpBaseUrl: process.env.FMP_BASE_URL ?? "https://financialmodelingprep.com/stable",
+  fmpMaxCallsPerScan: Number(process.env.FMP_MAX_CALLS_PER_SCAN ?? 100)
 };
