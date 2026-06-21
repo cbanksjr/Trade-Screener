@@ -16,7 +16,7 @@ describe("scan symbol resolution", () => {
 });
 
 describe("fundamental provider merge", () => {
-  it("keeps Schwab values ahead of FMP fallback values except earnings", () => {
+  it("keeps Schwab values ahead of FMP fallback values while FMP supplies next earnings", () => {
     const fundamentals = mergeFundamentals("KEEP", {
       symbol: "KEEP",
       price: 50,
@@ -28,22 +28,24 @@ describe("fundamental provider merge", () => {
       beta: 1.8,
       marketCap: 20_000_000_000,
       sector: "Information Technology",
-      lastEarningsDate: "2026-09-01"
+      nextEarningsDate: "2026-09-01"
     });
 
     expect(fundamentals.beta).toBe(1.1);
     expect(fundamentals.marketCap).toBe(10_000_000_000);
-    expect(fundamentals.lastEarningsDate).toBe("2026-09-01");
+    expect(fundamentals.lastEarningsDate).toBe("2026-08-01");
+    expect(fundamentals.nextEarningsDate).toBe("2026-09-01");
     expect(fundamentals.sector).toBe("Information Technology");
     expect(fundamentals.sources).toMatchObject({
       beta: "schwab",
       marketCap: "schwab",
       sector: "fmp",
-      lastEarningsDate: "fmp"
+      lastEarningsDate: "schwab",
+      nextEarningsDate: "fmp"
     });
   });
 
-  it("uses Schwab earnings when FMP earnings are unavailable", () => {
+  it("does not use Schwab last earnings as next earnings when FMP is unavailable", () => {
     const fundamentals = mergeFundamentals("EARN", {
       symbol: "EARN",
       price: 50,
@@ -53,6 +55,7 @@ describe("fundamental provider merge", () => {
     });
 
     expect(fundamentals.lastEarningsDate).toBe("2026-08-01");
+    expect(fundamentals.nextEarningsDate).toBeUndefined();
     expect(fundamentals.sources).toMatchObject({
       lastEarningsDate: "schwab"
     });
@@ -67,20 +70,20 @@ describe("fundamental provider merge", () => {
       beta: 1.3,
       marketCap: 3_000_000_000,
       sector: "Consumer Discretionary",
-      lastEarningsDate: "2026-10-10"
+      nextEarningsDate: "2026-10-10"
     });
 
     expect(fundamentals).toMatchObject({
       beta: 1.3,
       marketCap: 3_000_000_000,
       sector: "Consumer Discretionary",
-      lastEarningsDate: "2026-10-10"
+      nextEarningsDate: "2026-10-10"
     });
     expect(fundamentals.sources).toMatchObject({
       beta: "fmp",
       marketCap: "fmp",
       sector: "fmp",
-      lastEarningsDate: "fmp"
+      nextEarningsDate: "fmp"
     });
   });
 

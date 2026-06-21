@@ -105,7 +105,7 @@ describe("FMP fallback fundamentals", () => {
     expect(fallback.cache().AAPL.data.beta).toBe(1.44);
   });
 
-  it("fetches earnings when fresh cached profile lacks earnings", async () => {
+  it("fetches next earnings when fresh cached profile lacks earnings", async () => {
     const requests: string[] = [];
     const fallback = createFmpFallback({
       apiKey: "test",
@@ -127,13 +127,13 @@ describe("FMP fallback fundamentals", () => {
       }
     });
 
-    const result = await fallback.enrich("AAPL", { lastEarningsDate: true });
+    const result = await fallback.enrich("AAPL", { nextEarningsDate: true });
 
-    expect(requests).toEqual(["/stable/earnings"]);
-    expect(result.data).toMatchObject({ lastEarningsDate: "2026-07-25" });
+    expect(requests).toEqual(["/stable/earnings-calendar"]);
+    expect(result.data).toMatchObject({ nextEarningsDate: "2026-07-25" });
     expect(fallback.cache().AAPL.data).toMatchObject({
       sector: "Information Technology",
-      lastEarningsDate: "2026-07-25"
+      nextEarningsDate: "2026-07-25"
     });
   });
 
@@ -146,7 +146,7 @@ describe("FMP fallback fundamentals", () => {
       cache: {
         AAPL: {
           updatedAt: "2026-06-20T12:00:00.000Z",
-          data: { symbol: "AAPL", lastEarningsDate: "2026-07-25" }
+          data: { symbol: "AAPL", nextEarningsDate: "2026-07-25" }
         }
       },
       now: () => new Date("2026-06-20T13:00:00.000Z"),
@@ -169,8 +169,23 @@ describe("FMP fallback fundamentals", () => {
     expect(result.data).toMatchObject({ companyName: "Apple Inc.", sector: "Information Technology" });
     expect(fallback.cache().AAPL.data).toMatchObject({
       sector: "Information Technology",
-      lastEarningsDate: "2026-07-25"
+      nextEarningsDate: "2026-07-25"
     });
+  });
+
+  it("returns clear warnings for rate-limited earnings responses without caching them as valid", async () => {
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      fetchImpl: async () => new Response(JSON.stringify({ error: "rate limit" }), { status: 429 })
+    });
+
+    const result = await fallback.enrich("AAPL", { nextEarningsDate: true });
+
+    expect(result.data).toBeUndefined();
+    expect(result.warnings.join(" ")).toContain("rate limited");
+    expect(fallback.cache().AAPL).toBeUndefined();
   });
 
   it("returns warnings instead of throwing on malformed live responses", async () => {

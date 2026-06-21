@@ -91,7 +91,7 @@ export function gradeSetup(input: {
     qqqCandles: input.qqqCandles,
     sector,
     sectorCandles: input.sectorCandles,
-    lastEarningsDate: input.fundamentals?.lastEarningsDate
+    nextEarningsDate: input.fundamentals?.nextEarningsDate
   });
   const decision = finalDecision(layerEvaluations, dailyContext, weeklyContext, weeklySupport, setupScore);
   const grade = decision === "Strong Long Call Candidate" ? "A" : "B";
@@ -276,7 +276,7 @@ function evaluateSetupScore(input: {
   qqqCandles?: Candle[];
   sector?: string;
   sectorCandles?: Candle[];
-  lastEarningsDate?: string;
+  nextEarningsDate?: string;
 }): SetupScoreResult {
   const factors = [
     factor("Market Regime", input.marketRegime.status, input.marketRegime.detail),
@@ -286,7 +286,7 @@ function evaluateSetupScore(input: {
     evaluateVolumeExpansion(input.candles),
     evaluatePriceStructure(input.dailyContext),
     evaluateVolatilityFit(input.indicators, input.dailySqueezeDotCount),
-    evaluateCatalystSafety(input.lastEarningsDate)
+    evaluateCatalystSafety(input.nextEarningsDate)
   ];
   const scored = factors.map((item) => ({ ...item, contribution: factorContribution(item.status) }));
   const score = round(scored.reduce((sum, item) => sum + item.contribution, 0), 0);
@@ -356,10 +356,10 @@ function evaluateVolatilityFit(indicators: IndicatorSnapshot, dailySqueezeDotCou
   return factor("Volatility Fit", "Bearish", "Daily squeeze active but contraction/momentum support is weak.");
 }
 
-function evaluateCatalystSafety(lastEarningsDate?: string): InstitutionalFactor {
-  if (!lastEarningsDate) return factor("Catalyst Safety", "Insufficient Data", "Earnings date unavailable; A grade capped.");
-  const days = daysUntil(lastEarningsDate);
-  if (days === undefined || days < 0) return factor("Catalyst Safety", "Insufficient Data", "Future earnings date unavailable; A grade capped.");
+function evaluateCatalystSafety(nextEarningsDate?: string): InstitutionalFactor {
+  if (!nextEarningsDate) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
+  const days = daysUntil(nextEarningsDate);
+  if (days === undefined || days < 0) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
   if (days <= EARNINGS_DANGER_DAYS) return factor("Catalyst Safety", "Bearish", "Earnings are within " + EARNINGS_DANGER_DAYS + " days.");
   return factor("Catalyst Safety", "Bullish", "No earnings event inside the next " + EARNINGS_DANGER_DAYS + " days.");
 }

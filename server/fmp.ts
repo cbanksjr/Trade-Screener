@@ -7,14 +7,14 @@ export type FmpFundamentals = {
   beta?: number;
   marketCap?: number;
   sector?: string;
-  lastEarningsDate?: string;
+  nextEarningsDate?: string;
 };
 
 export type FmpNeededFields = {
   beta?: boolean;
   marketCap?: boolean;
   sector?: boolean;
-  lastEarningsDate?: boolean;
+  nextEarningsDate?: boolean;
 };
 
 export type FmpCacheEntry = {
@@ -98,26 +98,29 @@ export function createFmpFallback(input: {
       }
     }
 
-    if (needed.lastEarningsDate && !output.lastEarningsDate) {
+    if (needed.nextEarningsDate && !output.nextEarningsDate) {
       const call = await callWithBudget(() => fetchNextEarningsDate(upperSymbol, input, fetchImpl, now()));
       if (call.warning) warnings.push(call.warning);
       if (call.data) {
-        output.lastEarningsDate = call.data.lastEarningsDate;
+        output.nextEarningsDate = call.data.nextEarningsDate;
         usedLive = true;
       }
     }
 
     if (hasFundamentalData(output)) {
-      cache[upperSymbol] = {
-        updatedAt: now().toISOString(),
-        data: {
-          ...(cached?.data ?? { symbol: upperSymbol }),
-          ...output,
-          symbol: upperSymbol
-        }
-      };
-      dirty = true;
-      return { data: filterNeeded(cache[upperSymbol].data, needed), warnings, usedLive };
+      if (usedLive || !cached) {
+        cache[upperSymbol] = {
+          updatedAt: now().toISOString(),
+          data: {
+            ...(cached?.data ?? { symbol: upperSymbol }),
+            ...output,
+            symbol: upperSymbol
+          }
+        };
+        dirty = true;
+        return { data: filterNeeded(cache[upperSymbol].data, needed), warnings, usedLive };
+      }
+      return { data: filterNeeded(output, needed), warnings, usedLive };
     }
 
     if (!warnings.length && needsAnyField(needed) && remainingCalls <= 0) {
@@ -198,15 +201,21 @@ async function fetchProfile(symbol: string, input: { apiKey: string; baseUrl: st
 }
 
 async function fetchNextEarningsDate(symbol: string, input: { apiKey: string; baseUrl: string }, fetchImpl: FetchLike, now: Date): Promise<FmpFundamentals | undefined> {
-  const data = await fmpJson(input.baseUrl, "earnings", { symbol, apikey: input.apiKey }, fetchImpl);
-  const lastEarningsDate = normalizeFmpEarnings(data, symbol, now);
-  return lastEarningsDate ? { symbol, lastEarningsDate } : undefined;
+  const data = await fmpJson(input.baseUrl, "earnings-calendar", {
+    symbol,
+    from: toDateString(now),
+    to: toDateString(new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000)),
+    apikey: input.apiKey
+  }, fetchImpl);
+  const nextEarningsDate = normalizeFmpEarnings(data, symbol, now);
+  return nextEarningsDate ? { symbol, nextEarningsDate } : undefined;
 }
 
 async function fmpJson(baseUrl: string, path: string, params: Record<string, string>, fetchImpl: FetchLike): Promise<unknown> {
   const url = fmpUrl(baseUrl, path, params);
   const response = await fetchImpl(url);
   const text = await response.text();
+  if (response.status === 429) throw new Error(`FMP ${path} request was rate limited.`);
   if (!response.ok) throw new Error(`FMP request failed: ${response.status} ${response.statusText}`);
   try {
     return JSON.parse(text) as unknown;
@@ -227,11 +236,11 @@ function needsProfile(needed: FmpNeededFields): boolean {
 }
 
 function needsAnyField(needed: FmpNeededFields): boolean {
-  return Boolean(needsProfile(needed) || needed.lastEarningsDate);
+  return Boolean(needsProfile(needed) || needed.nextEarningsDate);
 }
 
 function hasNeededFields(data: FmpFundamentals, needed: FmpNeededFields): boolean {
-  return hasNeededProfileFields(data, needed) && (!needed.lastEarningsDate || Boolean(data.lastEarningsDate));
+  return hasNeededProfileFields(data, needed) && (!needed.nextEarningsDate || Boolean(data.nextEarningsDate));
 }
 
 function hasNeededProfileFields(data: FmpFundamentals, needed: FmpNeededFields): boolean {
@@ -245,7 +254,7 @@ function filterNeeded(data: FmpFundamentals, needed: FmpNeededFields): FmpFundam
   if (needed.beta) output.beta = data.beta;
   if (needed.marketCap) output.marketCap = data.marketCap;
   if (needed.sector) output.sector = data.sector;
-  if (needed.lastEarningsDate) output.lastEarningsDate = data.lastEarningsDate;
+  if (needed.nextEarningsDate) output.nextEarningsDate = data.nextEarningsDate;
   if (needed.sector) output.companyName = data.companyName;
   return hasFundamentalData(output) ? output : undefined;
 }
@@ -259,8 +268,12 @@ function hasFundamentalData(data: FmpFundamentals): boolean {
   return data.beta !== undefined
     || data.marketCap !== undefined
     || Boolean(data.sector)
-    || Boolean(data.lastEarningsDate)
+    || Boolean(data.nextEarningsDate)
     || Boolean(data.companyName);
+}
+
+function toDateString(date: Date): string {
+  return date.toISOString().slice(0, 10);
 }
 
 function fmpPayloadWarning(payload: unknown): string | undefined {

@@ -27,6 +27,7 @@ export type Fundamentals = {
   marketCap?: number;
   avgDollarVolume20d?: number;
   lastEarningsDate?: string;
+  nextEarningsDate?: string;
   sector?: string;
   sources?: FundamentalFieldSources;
 };
@@ -37,6 +38,7 @@ export type FundamentalFieldSources = {
   marketCap?: FundamentalDataSource;
   avgDollarVolume20d?: FundamentalDataSource;
   lastEarningsDate?: FundamentalDataSource;
+  nextEarningsDate?: FundamentalDataSource;
   sector?: FundamentalDataSource;
 };
 
@@ -247,6 +249,7 @@ export type FundamentalAnalysis = {
   dividendPayDate?: string;
   dividendExDate?: string;
   lastEarningsDate?: string;
+  nextEarningsDate?: string;
   sourceStatus: "live" | "fallback" | "mixed" | "unavailable";
   fieldSources?: FundamentalFieldSources;
   sourceNotes?: string[];

@@ -144,7 +144,7 @@ export async function fetchFundamentalAnalysis(symbol: string, scanResult?: Scan
     beta: quote?.beta === undefined,
     marketCap: quote?.marketCap === undefined,
     sector: true,
-    lastEarningsDate: quote?.lastEarningsDate === undefined
+    nextEarningsDate: true
   });
   warnings.push(...fmpEnrichment.warnings);
   await fmp.flush();
@@ -300,7 +300,8 @@ export function mergeFundamentalAnalysis(input: {
   const marketCap = valueWithSource(input.schwab?.marketCap, "schwab", input.fmp?.marketCap, "fmp", fieldSources, "marketCap") ?? null;
   const beta = valueWithSource(input.schwab?.beta, "schwab", input.fmp?.beta, "fmp", fieldSources, "beta") ?? null;
   const sector = valueWithSource(undefined, "schwab", input.fmp?.sector, "fmp", fieldSources, "sector");
-  const lastEarningsDate = valueWithSource(input.fmp?.lastEarningsDate, "fmp", input.schwab?.lastEarningsDate, "schwab", fieldSources, "lastEarningsDate");
+  const lastEarningsDate = valueWithSource(input.schwab?.lastEarningsDate, "schwab", undefined, "fmp", fieldSources, "lastEarningsDate");
+  const nextEarningsDate = valueWithSource(input.fmp?.nextEarningsDate, "fmp", undefined, "schwab", fieldSources, "nextEarningsDate");
 
   return {
     symbol,
@@ -321,6 +322,7 @@ export function mergeFundamentalAnalysis(input: {
     dividendPayDate: input.schwab?.dividendPayDate,
     dividendExDate: input.schwab?.dividendExDate,
     lastEarningsDate,
+    nextEarningsDate,
     sourceStatus,
     fieldSources,
     sourceNotes: sourceNotes(fieldSources),
@@ -354,7 +356,7 @@ function sourceNotes(sources: FundamentalFieldSources): string[] {
     ["beta", "Beta"],
     ["marketCap", "Market cap"],
     ["sector", "Sector"],
-    ["lastEarningsDate", "Earnings date"]
+    ["nextEarningsDate", "Next earnings date"]
   ];
   return labels
     .filter(([key]) => sources[key] === "fmp")

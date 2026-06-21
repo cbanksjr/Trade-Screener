@@ -156,10 +156,10 @@ export async function runFullScan(): Promise<ScanResponse> {
   }
 
   const sortByDecision = (a: ScanResult, b: ScanResult) => {
-    const gradeDelta = (a.grade === "A" ? 0 : 1) - (b.grade === "A" ? 0 : 1);
-    if (gradeDelta !== 0) return gradeDelta;
     const scoreDelta = (b.setupScore ?? -1) - (a.setupScore ?? -1);
     if (scoreDelta !== 0) return scoreDelta;
+    const gradeDelta = (a.grade === "A" ? 0 : 1) - (b.grade === "A" ? 0 : 1);
+    if (gradeDelta !== 0) return gradeDelta;
     return (b.dailySqueezeDotCount ?? -1) - (a.dailySqueezeDotCount ?? -1);
   };
   if (fmp) await fmp.flush();
@@ -312,7 +312,7 @@ async function scanSymbol(input: {
 
     const contextFmp = await input.fmp?.enrich(symbol, {
       sector: !input.sector && fundamentals.sources?.sector !== "fmp",
-      lastEarningsDate: true
+      nextEarningsDate: true
     });
     contextFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (contextFmp?.usedLive) usedLive = true;
@@ -491,7 +491,8 @@ export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: Fmp
   const beta = valueWithSource(quote?.beta, "schwab", fmp?.beta, "fmp", demo?.beta, "demo", sources, "beta");
   const marketCap = valueWithSource(quote?.marketCap, "schwab", fmp?.marketCap, "fmp", demo?.marketCap, "demo", sources, "marketCap");
   const avgDollarVolume20d = valueWithSource(quote?.avgDollarVolume, "schwab", undefined, "fmp", demo?.avgDollarVolume20d, "demo", sources, "avgDollarVolume20d");
-  const lastEarningsDate = valueWithSource(fmp?.lastEarningsDate, "fmp", quote?.lastEarningsDate, "schwab", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
+  const lastEarningsDate = valueWithSource(quote?.lastEarningsDate, "schwab", undefined, "fmp", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
+  const nextEarningsDate = valueWithSource(fmp?.nextEarningsDate, "fmp", undefined, "schwab", demo?.nextEarningsDate, "demo", sources, "nextEarningsDate");
   const sector = valueWithSource(undefined, "schwab", fmp?.sector, "fmp", demo?.sector, "demo", sources, "sector");
   return {
     symbol,
@@ -499,6 +500,7 @@ export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: Fmp
     marketCap,
     avgDollarVolume20d,
     lastEarningsDate,
+    nextEarningsDate,
     sector,
     sources
   };

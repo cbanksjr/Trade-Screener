@@ -31,7 +31,7 @@ The scan uses Schwab for:
 - `/marketdata/v1/pricehistory` for daily OHLCV history and weekly context aggregated from daily candles
 - `/marketdata/v1/chains` for 30-180 DTE swing call chains with Greeks
 
-Financial Modeling Prep can be used as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary, then uses FMP only to fill missing beta, market cap, sector, and future earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `1000`, to protect API limits.
+Financial Modeling Prep can be used as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary, then uses FMP only to fill missing beta, market cap, sector, and next earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `1000`, to protect API limits.
 
 ## Hosting
 
@@ -83,8 +83,8 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across eight equal-weight factors: market regime, sector strength, relative strength, liquidity, volume expansion, price structure, volatility fit, and catalyst safety
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
-- Catalyst safety uses Schwab earnings date when available; earnings inside the configured danger window block the setup, while unavailable earnings data caps A grades
-- FMP fallback data can satisfy missing beta, market cap, sector, and earnings-date context when Schwab omits those values
+- Catalyst safety uses the next earnings date; earnings inside the configured danger window block the setup, while unavailable next-earnings data caps A grades
+- FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 
 The automatic index universe is treated as prequalified if Schwab and FMP both omit beta or market cap. If either provider supplies beta or market cap below the configured thresholds, the symbol is rejected.

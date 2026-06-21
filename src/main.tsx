@@ -184,13 +184,13 @@ function App() {
 
 function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   return [...results].sort((left, right) => {
+    const scoreDelta = setupScoreValue(right) - setupScoreValue(left);
+    if (scoreDelta !== 0) return scoreDelta;
     const gradeDelta = GRADE_ORDER.indexOf(left.grade) - GRADE_ORDER.indexOf(right.grade);
     if (gradeDelta !== 0) return gradeDelta;
     const leftDots = dailySqueezeDotCount(left) ?? -1;
     const rightDots = dailySqueezeDotCount(right) ?? -1;
     if (rightDots !== leftDots) return rightDots - leftDots;
-    const scoreDelta = setupScoreValue(right) - setupScoreValue(left);
-    if (scoreDelta !== 0) return scoreDelta;
     return left.symbol.localeCompare(right.symbol);
   });
 }
@@ -563,7 +563,7 @@ function fundamentalSourceSummary(result: ScanResult): string {
     ["beta", "beta"],
     ["marketCap", "market cap"],
     ["sector", "sector"],
-    ["lastEarningsDate", "earnings date"]
+    ["nextEarningsDate", "next earnings date"]
   ];
   const fmpFields = labels.filter(([key]) => sources[key] === "fmp").map(([, label]) => label);
   if (fmpFields.length) return "Schwab primary; FMP filled " + fmpFields.join(", ") + ".";

@@ -192,7 +192,7 @@ describe("Schwab response normalizers", () => {
         beta: 1.8,
         marketCap: 20_000_000_000,
         sector: "Information Technology",
-        lastEarningsDate: "2026-09-01"
+        nextEarningsDate: "2026-09-01"
       },
       warnings: []
     });
@@ -200,19 +200,19 @@ describe("Schwab response normalizers", () => {
     expect(analysis.beta).toBe(1.2);
     expect(analysis.marketCap).toBe(10_000_000_000);
     expect(analysis.sector).toBe("Information Technology");
-    expect(analysis.lastEarningsDate).toBe("2026-09-01");
+    expect(analysis.nextEarningsDate).toBe("2026-09-01");
     expect(analysis.sourceStatus).toBe("mixed");
     expect(analysis.fieldSources).toMatchObject({
       beta: "schwab",
       marketCap: "schwab",
       sector: "fmp",
-      lastEarningsDate: "fmp"
+      nextEarningsDate: "fmp"
     });
     expect(analysis.sourceNotes).toContain("Sector from FMP fallback.");
-    expect(analysis.sourceNotes).toContain("Earnings date from FMP fallback.");
+    expect(analysis.sourceNotes).toContain("Next earnings date from FMP fallback.");
   });
 
-  it("uses FMP earnings ahead of Schwab earnings", () => {
+  it("keeps Schwab last earnings separate from FMP next earnings", () => {
     const analysis = mergeFundamentalAnalysis({
       symbol: "EARN",
       schwab: {
@@ -222,16 +222,18 @@ describe("Schwab response normalizers", () => {
       },
       fmp: {
         symbol: "EARN",
-        lastEarningsDate: "2026-09-01"
+        nextEarningsDate: "2026-09-01"
       },
       warnings: []
     });
 
-    expect(analysis.lastEarningsDate).toBe("2026-09-01");
+    expect(analysis.lastEarningsDate).toBe("2026-08-01");
+    expect(analysis.nextEarningsDate).toBe("2026-09-01");
     expect(analysis.fieldSources).toMatchObject({
-      lastEarningsDate: "fmp"
+      lastEarningsDate: "schwab",
+      nextEarningsDate: "fmp"
     });
-    expect(analysis.sourceNotes).toContain("Earnings date from FMP fallback.");
+    expect(analysis.sourceNotes).toContain("Next earnings date from FMP fallback.");
   });
 
   it("marks explicit zero dividend values as does not pay", () => {

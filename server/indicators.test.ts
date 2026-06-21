@@ -243,10 +243,10 @@ describe("layer decision engine", () => {
         marketCap: 20_000_000_000,
         avgDollarVolume20d: 900_000_000,
         sector: "Information Technology",
-        lastEarningsDate: "2027-12-31",
+        nextEarningsDate: "2027-12-31",
         sources: {
           sector: "fmp",
-          lastEarningsDate: "fmp"
+          nextEarningsDate: "fmp"
         }
       },
       optionable: true,
@@ -263,7 +263,7 @@ describe("layer decision engine", () => {
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bullish");
     expect(result.fundamentalSources).toMatchObject({
       sector: "fmp",
-      lastEarningsDate: "fmp"
+      nextEarningsDate: "fmp"
     });
   });
 
@@ -278,7 +278,7 @@ describe("layer decision engine", () => {
       currentPrice: price,
       fundamentals: {
         ...strongFundamentals("EARN"),
-        lastEarningsDate: nearEarnings
+        nextEarningsDate: nearEarnings
       },
       optionable: true,
       options: demoOptions("EARN", price),
@@ -618,7 +618,7 @@ function strongFundamentals(symbol: string) {
     beta: 1.2,
     marketCap: 20_000_000_000,
     avgDollarVolume20d: 900_000_000,
-    lastEarningsDate: "2027-12-31"
+    nextEarningsDate: "2027-12-31"
   };
 }
 
