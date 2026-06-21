@@ -34,6 +34,14 @@ type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const CACHE_KEY = "fmpFundamentalsCache";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const FMP_SECTOR_TO_GICS: Record<string, string> = {
+  "basic materials": "Materials",
+  "consumer cyclical": "Consumer Discretionary",
+  "consumer defensive": "Consumer Staples",
+  "financial services": "Financials",
+  healthcare: "Health Care",
+  technology: "Information Technology"
+};
 
 export async function createFmpScanFallback(): Promise<ReturnType<typeof createFmpFallback>> {
   const cache = await getSetting<FmpCache>(CACHE_KEY, {});
@@ -70,17 +78,18 @@ export function createFmpFallback(input: {
     if (!upperSymbol || !needsAnyField(needed)) return { warnings: [], usedLive: false };
 
     const cached = cache[upperSymbol];
-    if (cached && isFresh(cached.updatedAt, now())) {
-      return { data: filterNeeded(cached.data, needed), warnings: [], usedLive: false };
+    const freshCachedData = cached && isFresh(cached.updatedAt, now()) ? cached.data : undefined;
+    if (freshCachedData && hasNeededFields(freshCachedData, needed)) {
+      return { data: filterNeeded(freshCachedData, needed), warnings: [], usedLive: false };
     }
 
     if (!input.apiKey) return { warnings: [], usedLive: false };
 
-    const output: FmpFundamentals = { symbol: upperSymbol };
+    const output: FmpFundamentals = { ...(freshCachedData ?? { symbol: upperSymbol }), symbol: upperSymbol };
     const warnings: string[] = [];
     let usedLive = false;
 
-    if (needsProfile(needed)) {
+    if (needsProfile(needed) && !hasNeededProfileFields(output, needed)) {
       const call = await callWithBudget(() => fetchProfile(upperSymbol, input, fetchImpl));
       if (call.warning) warnings.push(call.warning);
       if (call.data) {
@@ -89,7 +98,7 @@ export function createFmpFallback(input: {
       }
     }
 
-    if (needed.lastEarningsDate) {
+    if (needed.lastEarningsDate && !output.lastEarningsDate) {
       const call = await callWithBudget(() => fetchNextEarningsDate(upperSymbol, input, fetchImpl, now()));
       if (call.warning) warnings.push(call.warning);
       if (call.data) {
@@ -153,7 +162,14 @@ export function normalizeFmpProfile(payload: unknown): FmpFundamentals | undefin
     marketCap: numberValue(item.mktCap, item.marketCap, item.marketCapitalization, item.MarketCapitalization),
     sector: stringValue(item.sector, item.Sector)
   };
+  data.sector = normalizeFmpSector(data.sector);
   return hasFundamentalData(data) ? data : undefined;
+}
+
+export function normalizeFmpSector(sector?: string): string | undefined {
+  const value = stringValue(sector);
+  if (!value) return undefined;
+  return FMP_SECTOR_TO_GICS[value.toLowerCase()] ?? value;
 }
 
 export function normalizeFmpEarnings(payload: unknown, symbol: string, now = new Date()): string | undefined {
@@ -212,6 +228,16 @@ function needsProfile(needed: FmpNeededFields): boolean {
 
 function needsAnyField(needed: FmpNeededFields): boolean {
   return Boolean(needsProfile(needed) || needed.lastEarningsDate);
+}
+
+function hasNeededFields(data: FmpFundamentals, needed: FmpNeededFields): boolean {
+  return hasNeededProfileFields(data, needed) && (!needed.lastEarningsDate || Boolean(data.lastEarningsDate));
+}
+
+function hasNeededProfileFields(data: FmpFundamentals, needed: FmpNeededFields): boolean {
+  return (!needed.beta || data.beta !== undefined)
+    && (!needed.marketCap || data.marketCap !== undefined)
+    && (!needed.sector || Boolean(data.sector));
 }
 
 function filterNeeded(data: FmpFundamentals, needed: FmpNeededFields): FmpFundamentals | undefined {

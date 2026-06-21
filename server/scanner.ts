@@ -258,15 +258,13 @@ async function scanSymbol(input: {
       return { warnings, usedLive, usedDemo };
     }
 
-    const fmp = await input.fmp?.enrich(symbol, {
+    const earlyFmp = await input.fmp?.enrich(symbol, {
       beta: quote?.beta === undefined,
-      marketCap: quote?.marketCap === undefined,
-      sector: !input.sector,
-      lastEarningsDate: quote?.lastEarningsDate === undefined
+      marketCap: quote?.marketCap === undefined
     });
-    fmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
-    if (fmp?.usedLive) usedLive = true;
-    const fundamentals = mergeFundamentals(symbol, quote, fmp?.data);
+    earlyFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
+    if (earlyFmp?.usedLive) usedLive = true;
+    let fundamentals = mergeFundamentals(symbol, quote, earlyFmp?.data);
 
     if (fundamentals.beta !== undefined && fundamentals.sources?.beta !== "demo" && fundamentals.beta < settings.minBeta) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.beta) + " beta is below " + settings.minBeta + ".");
@@ -310,6 +308,20 @@ async function scanSymbol(input: {
       options = demoOptions(symbol, price);
       optionsSource = "demo";
       usedDemo = true;
+    }
+
+    const contextFmp = await input.fmp?.enrich(symbol, {
+      sector: !input.sector && fundamentals.sources?.sector !== "fmp",
+      lastEarningsDate: fundamentals.sources?.lastEarningsDate !== "schwab" && fundamentals.sources?.lastEarningsDate !== "fmp"
+    });
+    contextFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
+    if (contextFmp?.usedLive) usedLive = true;
+    if (contextFmp?.data) {
+      fundamentals = mergeFundamentals(symbol, quote, {
+        ...(earlyFmp?.data ?? { symbol }),
+        ...contextFmp.data,
+        symbol
+      });
     }
 
     const sector = input.sector ?? fundamentals.sector;

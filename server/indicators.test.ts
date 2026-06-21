@@ -259,6 +259,8 @@ describe("layer decision engine", () => {
 
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Sector Strength")?.status).toBe("Bullish");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bullish");
     expect(result.fundamentalSources).toMatchObject({
       sector: "fmp",
       lastEarningsDate: "fmp"

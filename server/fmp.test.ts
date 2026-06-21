@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFmpFallback, normalizeFmpEarnings, normalizeFmpProfile, type FmpCache } from "./fmp";
+import { createFmpFallback, normalizeFmpEarnings, normalizeFmpProfile, normalizeFmpSector, type FmpCache } from "./fmp";
 
 describe("FMP fallback fundamentals", () => {
   it("normalizes profile numeric strings and core fields", () => {
@@ -14,8 +14,18 @@ describe("FMP fallback fundamentals", () => {
       companyName: "Microsoft Corporation",
       beta: 0.91,
       marketCap: 3050000000000,
-      sector: "Technology"
+      sector: "Information Technology"
     });
+  });
+
+  it("normalizes FMP sectors to GICS sector keys", () => {
+    expect(normalizeFmpSector("Technology")).toBe("Information Technology");
+    expect(normalizeFmpSector("Healthcare")).toBe("Health Care");
+    expect(normalizeFmpSector("Financial Services")).toBe("Financials");
+    expect(normalizeFmpSector("Consumer Cyclical")).toBe("Consumer Discretionary");
+    expect(normalizeFmpSector("Consumer Defensive")).toBe("Consumer Staples");
+    expect(normalizeFmpSector("Basic Materials")).toBe("Materials");
+    expect(normalizeFmpSector("Energy")).toBe("Energy");
   });
 
   it("treats None and empty profile values as unavailable", () => {
@@ -93,6 +103,74 @@ describe("FMP fallback fundamentals", () => {
     expect(result.data).toMatchObject({ beta: 1.44, marketCap: 3200000000000 });
     expect(fallback.isDirty()).toBe(true);
     expect(fallback.cache().AAPL.data.beta).toBe(1.44);
+  });
+
+  it("fetches earnings when fresh cached profile lacks earnings", async () => {
+    const requests: string[] = [];
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      cache: {
+        AAPL: {
+          updatedAt: "2026-06-20T12:00:00.000Z",
+          data: { symbol: "AAPL", beta: 1.1, marketCap: 3_000_000_000_000, sector: "Information Technology" }
+        }
+      },
+      now: () => new Date("2026-06-20T13:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = new URL(input.toString());
+        requests.push(url.pathname);
+        return new Response(JSON.stringify([
+          { symbol: "AAPL", date: "2026-07-25" }
+        ]));
+      }
+    });
+
+    const result = await fallback.enrich("AAPL", { lastEarningsDate: true });
+
+    expect(requests).toEqual(["/stable/earnings"]);
+    expect(result.data).toMatchObject({ lastEarningsDate: "2026-07-25" });
+    expect(fallback.cache().AAPL.data).toMatchObject({
+      sector: "Information Technology",
+      lastEarningsDate: "2026-07-25"
+    });
+  });
+
+  it("fetches profile when fresh cached earnings lacks sector", async () => {
+    const requests: string[] = [];
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      cache: {
+        AAPL: {
+          updatedAt: "2026-06-20T12:00:00.000Z",
+          data: { symbol: "AAPL", lastEarningsDate: "2026-07-25" }
+        }
+      },
+      now: () => new Date("2026-06-20T13:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = new URL(input.toString());
+        requests.push(url.pathname);
+        return new Response(JSON.stringify([{
+          symbol: "AAPL",
+          companyName: "Apple Inc.",
+          beta: "1.2",
+          marketCap: "3000000000000",
+          sector: "Technology"
+        }]));
+      }
+    });
+
+    const result = await fallback.enrich("AAPL", { sector: true });
+
+    expect(requests).toEqual(["/stable/profile"]);
+    expect(result.data).toMatchObject({ companyName: "Apple Inc.", sector: "Information Technology" });
+    expect(fallback.cache().AAPL.data).toMatchObject({
+      sector: "Information Technology",
+      lastEarningsDate: "2026-07-25"
+    });
   });
 
   it("returns warnings instead of throwing on malformed live responses", async () => {

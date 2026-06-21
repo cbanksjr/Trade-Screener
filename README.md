@@ -31,7 +31,7 @@ The scan uses Schwab for:
 - `/marketdata/v1/pricehistory` for daily OHLCV history and weekly context aggregated from daily candles
 - `/marketdata/v1/chains` for 30-180 DTE swing call chains with Greeks
 
-Financial Modeling Prep can be used as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary, then uses FMP only to fill missing beta, market cap, sector, and future earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `100`, to protect API limits.
+Financial Modeling Prep can be used as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary, then uses FMP only to fill missing beta, market cap, sector, and future earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `1000`, to protect API limits.
 
 ## Hosting
 
