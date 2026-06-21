@@ -312,7 +312,7 @@ async function scanSymbol(input: {
 
     const contextFmp = await input.fmp?.enrich(symbol, {
       sector: !input.sector && fundamentals.sources?.sector !== "fmp",
-      lastEarningsDate: fundamentals.sources?.lastEarningsDate !== "schwab" && fundamentals.sources?.lastEarningsDate !== "fmp"
+      lastEarningsDate: true
     });
     contextFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (contextFmp?.usedLive) usedLive = true;
@@ -491,7 +491,7 @@ export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: Fmp
   const beta = valueWithSource(quote?.beta, "schwab", fmp?.beta, "fmp", demo?.beta, "demo", sources, "beta");
   const marketCap = valueWithSource(quote?.marketCap, "schwab", fmp?.marketCap, "fmp", demo?.marketCap, "demo", sources, "marketCap");
   const avgDollarVolume20d = valueWithSource(quote?.avgDollarVolume, "schwab", undefined, "fmp", demo?.avgDollarVolume20d, "demo", sources, "avgDollarVolume20d");
-  const lastEarningsDate = valueWithSource(quote?.lastEarningsDate, "schwab", fmp?.lastEarningsDate, "fmp", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
+  const lastEarningsDate = valueWithSource(fmp?.lastEarningsDate, "fmp", quote?.lastEarningsDate, "schwab", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
   const sector = valueWithSource(undefined, "schwab", fmp?.sector, "fmp", demo?.sector, "demo", sources, "sector");
   return {
     symbol,

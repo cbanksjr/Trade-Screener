@@ -212,6 +212,28 @@ describe("Schwab response normalizers", () => {
     expect(analysis.sourceNotes).toContain("Earnings date from FMP fallback.");
   });
 
+  it("uses FMP earnings ahead of Schwab earnings", () => {
+    const analysis = mergeFundamentalAnalysis({
+      symbol: "EARN",
+      schwab: {
+        symbol: "EARN",
+        price: 50,
+        lastEarningsDate: "2026-08-01"
+      },
+      fmp: {
+        symbol: "EARN",
+        lastEarningsDate: "2026-09-01"
+      },
+      warnings: []
+    });
+
+    expect(analysis.lastEarningsDate).toBe("2026-09-01");
+    expect(analysis.fieldSources).toMatchObject({
+      lastEarningsDate: "fmp"
+    });
+    expect(analysis.sourceNotes).toContain("Earnings date from FMP fallback.");
+  });
+
   it("marks explicit zero dividend values as does not pay", () => {
     const [quote] = normalizeSchwabQuotes({
       TSLA: {

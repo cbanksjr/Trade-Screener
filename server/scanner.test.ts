@@ -16,7 +16,7 @@ describe("scan symbol resolution", () => {
 });
 
 describe("fundamental provider merge", () => {
-  it("keeps Schwab values ahead of FMP fallback values", () => {
+  it("keeps Schwab values ahead of FMP fallback values except earnings", () => {
     const fundamentals = mergeFundamentals("KEEP", {
       symbol: "KEEP",
       price: 50,
@@ -33,12 +33,27 @@ describe("fundamental provider merge", () => {
 
     expect(fundamentals.beta).toBe(1.1);
     expect(fundamentals.marketCap).toBe(10_000_000_000);
-    expect(fundamentals.lastEarningsDate).toBe("2026-08-01");
+    expect(fundamentals.lastEarningsDate).toBe("2026-09-01");
     expect(fundamentals.sector).toBe("Information Technology");
     expect(fundamentals.sources).toMatchObject({
       beta: "schwab",
       marketCap: "schwab",
       sector: "fmp",
+      lastEarningsDate: "fmp"
+    });
+  });
+
+  it("uses Schwab earnings when FMP earnings are unavailable", () => {
+    const fundamentals = mergeFundamentals("EARN", {
+      symbol: "EARN",
+      price: 50,
+      lastEarningsDate: "2026-08-01"
+    }, {
+      symbol: "EARN"
+    });
+
+    expect(fundamentals.lastEarningsDate).toBe("2026-08-01");
+    expect(fundamentals.sources).toMatchObject({
       lastEarningsDate: "schwab"
     });
   });

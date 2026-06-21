@@ -300,7 +300,7 @@ export function mergeFundamentalAnalysis(input: {
   const marketCap = valueWithSource(input.schwab?.marketCap, "schwab", input.fmp?.marketCap, "fmp", fieldSources, "marketCap") ?? null;
   const beta = valueWithSource(input.schwab?.beta, "schwab", input.fmp?.beta, "fmp", fieldSources, "beta") ?? null;
   const sector = valueWithSource(undefined, "schwab", input.fmp?.sector, "fmp", fieldSources, "sector");
-  const lastEarningsDate = valueWithSource(input.schwab?.lastEarningsDate, "schwab", input.fmp?.lastEarningsDate, "fmp", fieldSources, "lastEarningsDate");
+  const lastEarningsDate = valueWithSource(input.fmp?.lastEarningsDate, "fmp", input.schwab?.lastEarningsDate, "schwab", fieldSources, "lastEarningsDate");
 
   return {
     symbol,
