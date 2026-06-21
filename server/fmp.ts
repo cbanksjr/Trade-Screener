@@ -30,6 +30,12 @@ export type FmpEnrichment = {
   usedLive: boolean;
 };
 
+export type FmpCalendarResult = {
+  earningsBySymbol: Map<string, string>;
+  warnings: string[];
+  usedLive: boolean;
+};
+
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 const CACHE_KEY = "fmpFundamentalsCache";
@@ -129,6 +135,30 @@ export function createFmpFallback(input: {
     return { warnings, usedLive };
   }
 
+  async function earningsCalendar(symbols: string[]): Promise<FmpCalendarResult> {
+    const wanted = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()).filter(Boolean));
+    if (!wanted.size || !input.apiKey) return { earningsBySymbol: new Map(), warnings: [], usedLive: false };
+
+    const call = await callWithBudget(() => fetchEarningsCalendar(input, fetchImpl, now()));
+    if (call.warning) return { earningsBySymbol: new Map(), warnings: [call.warning], usedLive: false };
+
+    const earningsBySymbol = normalizeFmpEarningsCalendar(call.data, wanted, now());
+    const timestamp = now().toISOString();
+    for (const [symbol, nextEarningsDate] of earningsBySymbol) {
+      const cached = cache[symbol]?.data ?? { symbol };
+      cache[symbol] = {
+        updatedAt: timestamp,
+        data: {
+          ...cached,
+          symbol,
+          nextEarningsDate
+        }
+      };
+    }
+    if (earningsBySymbol.size) dirty = true;
+    return { earningsBySymbol, warnings: [], usedLive: true };
+  }
+
   async function callWithBudget<T>(loader: () => Promise<T>): Promise<{ data?: T; warning?: string }> {
     if (remainingCalls <= 0) return { warning: "FMP fallback call budget exhausted." };
     remainingCalls -= 1;
@@ -141,6 +171,7 @@ export function createFmpFallback(input: {
 
   return {
     enrich,
+    earningsCalendar,
     cache: () => cache,
     isDirty: () => dirty,
     remainingCalls: () => remainingCalls,
@@ -195,6 +226,31 @@ export function normalizeFmpEarnings(payload: unknown, symbol: string, now = new
     .sort()[0];
 }
 
+export function normalizeFmpEarningsCalendar(payload: unknown, symbols: Iterable<string>, now = new Date()): Map<string, string> {
+  const warning = fmpPayloadWarning(payload);
+  if (warning) throw new Error(warning);
+  const wanted = new Set([...symbols].map((symbol) => symbol.trim().toUpperCase()).filter(Boolean));
+  const output = new Map<string, string>();
+  if (!Array.isArray(payload) || !wanted.size) return output;
+
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  const rows = payload
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
+    .map((item) => ({
+      symbol: stringValue(item.symbol, item.Symbol)?.toUpperCase(),
+      date: stringValue(item.date, item.reportDate, item.reportedDate, item.fiscalDateEnding)
+    }))
+    .filter((item): item is { symbol: string; date: string } => typeof item.symbol === "string" && wanted.has(item.symbol) && typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date))
+    .filter((item) => new Date(item.date + "T00:00:00.000Z").getTime() >= today.getTime())
+    .sort((left, right) => left.date.localeCompare(right.date));
+
+  for (const item of rows) {
+    if (!output.has(item.symbol)) output.set(item.symbol, item.date);
+  }
+  return output;
+}
+
 async function fetchProfile(symbol: string, input: { apiKey: string; baseUrl: string }, fetchImpl: FetchLike): Promise<FmpFundamentals | undefined> {
   const data = await fmpJson(input.baseUrl, "profile", { symbol, apikey: input.apiKey }, fetchImpl);
   return normalizeFmpProfile(data);
@@ -209,6 +265,14 @@ async function fetchNextEarningsDate(symbol: string, input: { apiKey: string; ba
   }, fetchImpl);
   const nextEarningsDate = normalizeFmpEarnings(data, symbol, now);
   return nextEarningsDate ? { symbol, nextEarningsDate } : undefined;
+}
+
+async function fetchEarningsCalendar(input: { apiKey: string; baseUrl: string }, fetchImpl: FetchLike, now: Date): Promise<unknown> {
+  return fmpJson(input.baseUrl, "earnings-calendar", {
+    from: toDateString(now),
+    to: toDateString(new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000)),
+    apikey: input.apiKey
+  }, fetchImpl);
 }
 
 async function fmpJson(baseUrl: string, path: string, params: Record<string, string>, fetchImpl: FetchLike): Promise<unknown> {

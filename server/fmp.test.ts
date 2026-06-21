@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createFmpFallback, normalizeFmpEarnings, normalizeFmpProfile, normalizeFmpSector, type FmpCache } from "./fmp";
+import { createFmpFallback, normalizeFmpEarnings, normalizeFmpEarningsCalendar, normalizeFmpProfile, normalizeFmpSector, type FmpCache } from "./fmp";
 
 describe("FMP fallback fundamentals", () => {
   it("normalizes profile numeric strings and core fields", () => {
@@ -50,6 +50,21 @@ describe("FMP fallback fundamentals", () => {
       { symbol: "AAPL", date: "2026-07-25" },
       { symbol: "MSFT", date: "2026-07-01" }
     ], "AAPL", new Date("2026-06-20T12:00:00Z"))).toBe("2026-07-25");
+  });
+
+  it("builds next earnings dates from a shared calendar response", () => {
+    const calendar = normalizeFmpEarningsCalendar([
+      { symbol: "AAPL", date: "2026-05-01" },
+      { symbol: "MSFT", date: "2026-07-01" },
+      { symbol: "AAPL", date: "2026-07-25" },
+      { symbol: "AAPL", date: "2026-10-25" },
+      { symbol: "OTHER", date: "2026-07-10" }
+    ], ["AAPL", "MSFT"], new Date("2026-06-20T12:00:00Z"));
+
+    expect([...calendar.entries()]).toEqual([
+      ["MSFT", "2026-07-01"],
+      ["AAPL", "2026-07-25"]
+    ]);
   });
 
   it("reuses fresh cached data without spending live calls", async () => {
@@ -135,6 +150,37 @@ describe("FMP fallback fundamentals", () => {
       sector: "Information Technology",
       nextEarningsDate: "2026-07-25"
     });
+  });
+
+  it("loads a shared earnings calendar once and updates matching cached symbols", async () => {
+    const requests: string[] = [];
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      now: () => new Date("2026-06-20T13:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = new URL(input.toString());
+        requests.push(url.pathname + "?" + [...url.searchParams.keys()].sort().join(","));
+        return new Response(JSON.stringify([
+          { symbol: "AAPL", date: "2026-07-25" },
+          { symbol: "MSFT", date: "2026-07-01" },
+          { symbol: "OTHER", date: "2026-07-10" }
+        ]));
+      }
+    });
+
+    const result = await fallback.earningsCalendar(["AAPL", "MSFT"]);
+
+    expect(requests).toEqual(["/stable/earnings-calendar?apikey,from,to"]);
+    expect([...result.earningsBySymbol.entries()]).toEqual([
+      ["MSFT", "2026-07-01"],
+      ["AAPL", "2026-07-25"]
+    ]);
+    expect(result.usedLive).toBe(true);
+    expect(fallback.remainingCalls()).toBe(0);
+    expect(fallback.cache().AAPL.data.nextEarningsDate).toBe("2026-07-25");
+    expect(fallback.cache().MSFT.data.nextEarningsDate).toBe("2026-07-01");
   });
 
   it("fetches profile when fresh cached earnings lacks sector", async () => {

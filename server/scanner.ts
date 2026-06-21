@@ -127,6 +127,10 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sectorBySymbol = await getDefaultUniverseSectorMap();
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
+  const fmpEarnings = fmp ? await fmp.earningsCalendar(symbolsToScan) : undefined;
+  const earningsBySymbol = fmpEarnings?.earningsBySymbol ?? new Map<string, string>();
+  fmpEarnings?.warnings.forEach((warning) => scanWarnings.add(warning));
+  if (fmpEarnings?.usedLive) usedLive = true;
 
   if (!canUseLiveSchwab) {
     scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 universe with live market data.");
@@ -144,6 +148,7 @@ export async function runFullScan(): Promise<ScanResponse> {
       sector,
       sectorCandles: sector ? sectorHistories.get(sector) : undefined,
       sectorHistories,
+      nextEarningsDate: earningsBySymbol.get(symbol),
       fmp
     });
   });
@@ -224,6 +229,7 @@ async function scanSymbol(input: {
   sector?: string;
   sectorCandles?: Candle[];
   sectorHistories?: Map<string, Candle[]>;
+  nextEarningsDate?: string;
   fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
 }): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean }> {
   const { symbol, settings, canUseLiveSchwab } = input;
@@ -312,7 +318,7 @@ async function scanSymbol(input: {
 
     const contextFmp = await input.fmp?.enrich(symbol, {
       sector: !input.sector && fundamentals.sources?.sector !== "fmp",
-      nextEarningsDate: true
+      nextEarningsDate: !input.nextEarningsDate
     });
     contextFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (contextFmp?.usedLive) usedLive = true;
@@ -320,6 +326,15 @@ async function scanSymbol(input: {
       fundamentals = mergeFundamentals(symbol, quote, {
         ...(earlyFmp?.data ?? { symbol }),
         ...contextFmp.data,
+        nextEarningsDate: input.nextEarningsDate ?? contextFmp.data.nextEarningsDate,
+        symbol
+      });
+    }
+    if (input.nextEarningsDate && fundamentals.sources?.nextEarningsDate !== "fmp") {
+      fundamentals = mergeFundamentals(symbol, quote, {
+        ...(earlyFmp?.data ?? { symbol }),
+        ...(contextFmp?.data ?? {}),
+        nextEarningsDate: input.nextEarningsDate,
         symbol
       });
     }
