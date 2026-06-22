@@ -11,6 +11,7 @@ import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniver
 
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
+const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
   "Communication Services": "XLC",
   "Consumer Discretionary": "XLY",
@@ -28,16 +29,20 @@ let activeScan: Promise<void> | null = null;
 
 export async function readSettings(): Promise<Settings> {
   const stored = await getSetting<Partial<Settings>>("settings", {});
+  const normalizedStored = stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME
+    ? { ...stored, minAvgDollarVolume: defaultSettings.minAvgDollarVolume }
+    : stored;
+  if (normalizedStored !== stored) await setSetting("settings", normalizedStored);
   const defaultUniverse = await getDefaultUniverseStatus();
   return {
-    minPrice: stored.minPrice ?? defaultSettings.minPrice,
-    minBeta: stored.minBeta ?? defaultSettings.minBeta,
-    minMarketCap: stored.minMarketCap ?? defaultSettings.minMarketCap,
-    minAvgDollarVolume: stored.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
+    minPrice: normalizedStored.minPrice ?? defaultSettings.minPrice,
+    minBeta: normalizedStored.minBeta ?? defaultSettings.minBeta,
+    minMarketCap: normalizedStored.minMarketCap ?? defaultSettings.minMarketCap,
+    minAvgDollarVolume: normalizedStored.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
     brokerBaseUrl: config.schwabMarketDataBaseUrl,
     brokerCallbackUrl: config.schwabCallbackUrl,
     hasBrokerCredentials: hasSchwabCredentials(),
-    useDemoDataWhenMissingApi: stored.useDemoDataWhenMissingApi ?? defaultSettings.useDemoDataWhenMissingApi,
+    useDemoDataWhenMissingApi: normalizedStored.useDemoDataWhenMissingApi ?? defaultSettings.useDemoDataWhenMissingApi,
     defaultUniverseName: defaultUniverse.name,
     defaultUniverseCount: defaultUniverse.count,
     defaultUniverseLastCheckedAt: defaultUniverse.lastCheckedAt

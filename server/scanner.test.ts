@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Candle, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
-import { getCachedResults, getScanMetadata, initDb, replaceScanResults, setScanMetadata } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, initDb, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { __resetScanStateForTest, mergeFundamentals, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
 
 describe("scan symbol resolution", () => {
@@ -100,6 +100,34 @@ describe("fundamental provider merge", () => {
       marketCap: "demo"
     });
   });
+});
+
+describe("settings", () => {
+  it("defaults average dollar volume to $300M", async () => withDbRestore(async () => {
+    await setSetting("settings", {});
+
+    const settings = await readSettings();
+
+    expect(settings.minAvgDollarVolume).toBe(300_000_000);
+  }));
+
+  it("migrates the old $600M average dollar volume default to $300M", async () => withDbRestore(async () => {
+    await setSetting("settings", { minAvgDollarVolume: 600_000_000 });
+
+    const settings = await readSettings();
+    const stored = await getSetting<Partial<Settings>>("settings", {});
+
+    expect(settings.minAvgDollarVolume).toBe(300_000_000);
+    expect(stored.minAvgDollarVolume).toBe(300_000_000);
+  }));
+
+  it("preserves custom average dollar volume settings", async () => withDbRestore(async () => {
+    await setSetting("settings", { minAvgDollarVolume: 450_000_000 });
+
+    const settings = await readSettings();
+
+    expect(settings.minAvgDollarVolume).toBe(450_000_000);
+  }));
 });
 
 describe("background scan refresh", () => {
@@ -257,6 +285,7 @@ async function withDbRestore(run: () => Promise<void>) {
   await initDb();
   const cached = await getCachedResults() as Array<{ symbol: string }>;
   const metadata = await getScanMetadata();
+  const settings = await getSetting<Partial<Settings>>("settings", {});
   try {
     await __resetScanStateForTest();
     await run();
@@ -264,6 +293,7 @@ async function withDbRestore(run: () => Promise<void>) {
     await __resetScanStateForTest();
     await replaceScanResults(cached);
     await setScanMetadata(metadata);
+    await setSetting("settings", settings);
   }
 }
 

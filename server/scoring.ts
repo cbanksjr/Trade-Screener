@@ -29,7 +29,7 @@ export const defaultSettings = {
   minPrice: 20,
   minBeta: 0.75,
   minMarketCap: 2_000_000_000,
-  minAvgDollarVolume: 600_000_000,
+  minAvgDollarVolume: 300_000_000,
   useDemoDataWhenMissingApi: true
 };
 

@@ -73,7 +73,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Price above $20
 - Beta >= 0.75 when Schwab provides beta
 - Market cap >= $2B when Schwab provides market cap
-- Average dollar volume >= $600M, from Schwab `average volume x last price` when available
+- Average dollar volume >= $300M, from Schwab `average volume x last price` when available
 - Long setup: price above the 8, 21, 34, 55, and 89 EMAs with a positive EMA stack
 - Selected timeframes: daily and weekly
 - At least 5 consecutive active Daily squeeze dots before expansion

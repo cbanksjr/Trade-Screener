@@ -522,6 +522,33 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
+  it("uses $300M as the average dollar volume liquidity threshold", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const resultFor = (avgDollarVolume20d: number) => gradeSetup({
+      symbol: "DOLLARVOL" + avgDollarVolume20d,
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        ...strongFundamentals("DOLLARVOL" + avgDollarVolume20d),
+        avgDollarVolume20d
+      },
+      optionable: true,
+      options: [option("DOLLARVOL" + avgDollarVolume20d, 45, 500, 200, 0.55, 4, 102)],
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    const under = resultFor(299_000_000);
+    const exact = resultFor(300_000_000);
+
+    expect(under.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Neutral");
+    expect(under.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bearish");
+    expect(exact.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
+    expect(exact.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bullish");
+  });
+
   it("ranks only 30-180 DTE swing calls and prefers 30-90 when quality is comparable", () => {
     const ranked = rankCallOptions([
       option("SHORT", 14, 500, 200, 0.55, 4, 102),
