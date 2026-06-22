@@ -117,7 +117,7 @@ function App() {
   async function startRefresh(showMessage: boolean) {
     const data = await api.scan();
     applyScanResponse(data);
-    if (showMessage) setMessage(data.isRefreshing ? "Refresh started. Cached results will stay visible while Schwab updates." : "Results are already current.");
+    if (showMessage && !data.isRefreshing) setMessage("Results are already current.");
     api.brokerStatus().then(setBrokerStatus).catch(() => undefined);
   }
 
@@ -159,13 +159,14 @@ function App() {
         <section className="status-strip">
           <Stat icon={<Activity />} label="Scan" value={loading || scanStatus === "running" ? "REFRESHING" : scanStatus.toUpperCase()} />
           <Stat icon={<BarChart3 />} label="Symbols" value={String(results.length)} />
-          <Stat icon={<BarChart3 />} label="Dollar Vol" value={moneyCompact(settings?.minAvgDollarVolume ?? scanDiagnostics?.minAvgDollarVolume)} />
           <Stat icon={<CheckCircle2 />} label="Passing Universe" value={String(results.filter((item) => item.passesUniverse).length)} />
         </section>
 
-        {(loading || scanStatus === "running") && results.length > 0 && <div className="notice">Showing cached results while the fresh scan finishes.</div>}
         {message && <div className="notice">{message}</div>}
-        {scanDiagnostics && <div className="notice">{scanDiagnosticSummary(scanDiagnostics, lastScanFinishedAt)}</div>}
+        <section className="scan-summary" aria-label="Scan summary">
+          <span>Scan Summary</span>
+          <strong>{scanDiagnostics ? scanDiagnosticSummary(scanDiagnostics, lastScanFinishedAt) : "Run a fresh scan to populate scan summary."}</strong>
+        </section>
 
         <section className="workspace">
           <div className="panel list-panel">

@@ -81,7 +81,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
-- Institutional setup score from 0-100 across eight equal-weight factors: market regime, sector strength, relative strength, liquidity, volume expansion, price structure, volatility fit, and catalyst safety
+- Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
 - Catalyst safety uses the next earnings date; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups
 - FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values

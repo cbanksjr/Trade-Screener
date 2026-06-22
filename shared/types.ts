@@ -66,7 +66,7 @@ export type TimeframeBias = "bullish" | "bearish" | "neutral" | "unavailable";
 export type LayerStatus = "Bullish" | "Neutral" | "Bearish" | "Conflicting" | "Insufficient Data";
 export type LongCallDecision = "Strong Long Call Candidate" | "Moderate Long Call Candidate" | "Watchlist Candidate" | "Avoid";
 export type EntryRecommendationType = "Early Compression Entry" | "Mid Compression Entry" | "High Conviction Compression Entry" | "Compression Watchlist" | "Avoid";
-export type InstitutionalFactorName = "Market Regime" | "Sector Strength" | "Relative Strength" | "Liquidity" | "Volume Expansion" | "Price Structure" | "Volatility Fit" | "Catalyst Safety";
+export type InstitutionalFactorName = "Market Regime" | "Sector Strength" | "Relative Strength" | "Liquidity" | "Price Structure" | "Volatility Fit" | "Catalyst Safety";
 
 export type InstitutionalFactor = {
   name: InstitutionalFactorName;

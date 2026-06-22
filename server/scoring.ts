@@ -20,7 +20,7 @@ import { activeSqueezeDotCount, latestIndicators, round } from "./indicators";
 import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
 
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
-const SETUP_FACTOR_NAMES: InstitutionalFactorName[] = ["Market Regime", "Sector Strength", "Relative Strength", "Liquidity", "Volume Expansion", "Price Structure", "Volatility Fit", "Catalyst Safety"];
+const SETUP_FACTOR_NAMES: InstitutionalFactorName[] = ["Market Regime", "Sector Strength", "Relative Strength", "Liquidity", "Price Structure", "Volatility Fit", "Catalyst Safety"];
 const SETUP_FACTOR_WEIGHT = 100 / SETUP_FACTOR_NAMES.length;
 const EARNINGS_AVOID_DAYS = 14;
 const EARNINGS_NEUTRAL_DAYS = 29;
@@ -282,7 +282,6 @@ function evaluateSetupScore(input: {
     evaluateSectorStrength(input.sector, input.sectorCandles, input.spyCandles),
     evaluateRelativeStrengthFactor(input.candles, input.spyCandles, input.qqqCandles),
     evaluateLiquidityFactor(input.avgDollarVolume20d, input.optionLayer, input.options[0]),
-    evaluateVolumeExpansion(input.candles),
     evaluatePriceStructure(input.dailyContext),
     evaluateVolatilityFit(input.indicators, input.dailySqueezeDotCount),
     evaluateCatalystSafety(input.nextEarningsDate)
@@ -328,17 +327,6 @@ function evaluateLiquidityFactor(avgDollarVolume20d: number, optionLayer: LayerE
   if (!stockLiquid || optionLayer.status === "Bearish") return factor("Liquidity", "Bearish", "Stock or option liquidity failed preferred filters.");
   if (optionLayer.status === "Bullish") return factor("Liquidity", "Bullish", "High dollar volume and strong option liquidity.");
   return factor("Liquidity", "Neutral", "Stock liquidity passes; option chain is usable but not ideal" + (option ? "." : " or unavailable."));
-}
-
-function evaluateVolumeExpansion(candles: Candle[]): InstitutionalFactor {
-  if (candles.length < 45) return factor("Volume Expansion", "Insufficient Data", "Not enough volume history.");
-  const latestVolume = candles.at(-1)?.volume ?? 0;
-  const recent = average(candles.slice(-5).map((candle) => candle.volume));
-  const baseline = average(candles.slice(-25, -5).map((candle) => candle.volume));
-  if (baseline <= 0) return factor("Volume Expansion", "Insufficient Data", "Volume baseline unavailable.");
-  if (latestVolume >= baseline * 1.25 && recent >= baseline * 1.1) return factor("Volume Expansion", "Bullish", "Volume expanding above recent baseline.");
-  if (latestVolume >= baseline * 0.8 || recent >= baseline * 0.9) return factor("Volume Expansion", "Neutral", "Volume is steady but not clearly expanding.");
-  return factor("Volume Expansion", "Bearish", "Volume is below recent baseline.");
 }
 
 function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFactor {

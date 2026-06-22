@@ -196,8 +196,8 @@ describe("layer decision engine", () => {
       ...institutionalSetupContext()
     });
 
-    expect(result.institutionalFactors).toHaveLength(8);
-    expect(result.institutionalFactors.find((factor) => factor.status === "Bullish")?.contribution).toBeCloseTo(12.5);
+    expect(result.institutionalFactors).toHaveLength(7);
+    expect(result.institutionalFactors.find((factor) => factor.status === "Bullish")?.contribution).toBeCloseTo(100 / 7);
     expect(result.setupScore).toBe(Math.round(result.institutionalFactors.reduce((sum, factor) => sum + factor.contribution, 0)));
     expect(result.setupScoreStatus).toBe("Bullish");
   });
@@ -331,8 +331,8 @@ describe("layer decision engine", () => {
     expect(sectorStatus(returnCandles(100, -0.04))).toBe("Bearish");
   });
 
-  it("marks volume expansion bullish when recent volume exceeds baseline", () => {
-    const candles = volumeExpandedCandles();
+  it("does not grade volume expansion because squeeze setups can stay quiet before breakout", () => {
+    const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
     const result = gradeSetup({
@@ -346,7 +346,7 @@ describe("layer decision engine", () => {
       ...institutionalSetupContext()
     });
 
-    expect(result.institutionalFactors.find((factor) => factor.name === "Volume Expansion")?.status).toBe("Bullish");
+    expect(result.institutionalFactors.map((factor) => factor.name)).not.toContain("Volume Expansion");
   });
 
   it("keeps momentum explanation tied to the current daily momentum calculation", () => {
@@ -642,13 +642,6 @@ function activeDailySqueezeCandles(): Candle[] {
     });
   }
   return candles;
-}
-
-function volumeExpandedCandles(): Candle[] {
-  return activeDailySqueezeCandles().map((candle, index) => ({
-    ...candle,
-    volume: index >= 175 ? 36_000_000 : 25_000_000
-  }));
 }
 
 function returnCandles(start: number, totalReturn: number): Candle[] {
