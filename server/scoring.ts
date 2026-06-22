@@ -194,12 +194,10 @@ function evaluateInstitutional(input: {
 }
 
 function evaluateOptions(options: OptionContract[]): LayerEvaluation {
-  if (!options.length) return layer("Options Market Context", "Bearish", "No liquid call contract met the selection filters.");
+  if (!options.length) return layer("Options Market Context", "Bearish", "No call contract met the 20% maximum spread filter.");
   const best = options[0];
-  if (best.openInterest >= 250 && best.spreadPct <= 20 && best.delta !== undefined && best.delta >= 0.4 && best.delta <= 0.7) {
-    return layer("Options Market Context", "Bullish", "Best call has healthy liquidity, delta, and spread.");
-  }
-  return layer("Options Market Context", "Neutral", "Usable call liquidity exists, but contract quality is not ideal.");
+  if (best.spreadPct <= 10) return layer("Options Market Context", "Bullish", "Best call spread is " + best.spreadPct.toFixed(1) + "%, inside the 10% institutional-quality threshold.");
+  return layer("Options Market Context", "Neutral", "Best call spread is " + best.spreadPct.toFixed(1) + "%; usable but wider than the 10% institutional-quality threshold.");
 }
 
 function evaluateCompression(dailySqueezeDotCount: number): LayerEvaluation {
@@ -387,7 +385,7 @@ export function rankCallOptions(options: OptionContract[], price: number): Optio
     .filter((contract) => contract.optionType === "call")
     .filter((contract) => contract.bid > 0 && contract.ask > 0)
     .filter((contract) => contract.openInterest >= 50 || contract.volume >= 25)
-    .filter((contract) => contract.spreadPct <= 35)
+    .filter((contract) => contract.spreadPct <= 20)
     .filter((contract) => contract.delta === undefined || (contract.delta >= 0.4 && contract.delta <= 0.7))
     .filter((contract) => contract.dte === undefined || (contract.dte >= 30 && contract.dte <= 180))
     .filter((contract) => contract.strike <= price * 1.12)

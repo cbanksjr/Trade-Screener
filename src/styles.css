@@ -537,6 +537,7 @@ small,
   color: var(--warning);
 }
 
+.status-avoid,
 .status-bearish,
 .status-conflicting {
   background: color-mix(in srgb, var(--danger) 16%, var(--panel));

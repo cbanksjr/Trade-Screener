@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, BarChart3, CheckCircle2, Moon, Play, Sun, XCircle } from "lucide-react";
 import { CandlestickSeries, ColorType, createChart, LineSeries, type CandlestickData, type LineData, type Time, type UTCTimestamp } from "lightweight-charts";
-import type { BrokerStatus, Candle, ChartDataResponse, ChartTimeframe, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { BrokerStatus, Candle, ChartDataResponse, ChartTimeframe, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
 
 const api = {
@@ -272,20 +272,19 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
           <Metric label="Relative Strength" value={result.relativeStrengthSummary} />
           <Metric label="Institutional" value={result.institutionalContextSummary} />
           <Metric label="Macro" value={result.macroRegimeSummary} />
-          <Metric label="Data Sources" value={fundamentalSourceSummary(result)} />
         </div>
       </section>
 
       <section className="panel">
         <div className="panel-head">
           <h2>Why This Grade / Setup Score</h2>
-          <span>{setupScoreLabel(result)} · {result.setupScoreStatus ?? "Insufficient Data"}</span>
+          <span>{setupScoreLabel(result)} · {displayStatus(result.setupScoreStatus)}</span>
         </div>
         {result.institutionalFactors?.length ? (
           <div className="factor-grid">
             {result.institutionalFactors.map((factor) => (
               <div className="factor-card" key={factor.name}>
-                <span className={"status-pill status-" + factor.status.toLowerCase().replaceAll(" ", "-")}>{factor.status}</span>
+                <span className={"status-pill " + statusClass(factor.status)}>{displayStatus(factor.status)}</span>
                 <strong>{factor.name}</strong>
                 <small>{factor.detail}</small>
                 <b>{formatNumber(factor.contribution, { maximumFractionDigits: 1 })} pts</b>
@@ -311,10 +310,10 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
             <div className="rule" key={layer.layer}>
               {layer.status === "Bullish" || layer.status === "Neutral" ? <CheckCircle2 className="ok" /> : <XCircle className="bad" />}
               <span>
-                <strong>{layerLabel(layer.layer)}: {layer.status}</strong>
+                <strong>{layerLabel(layer.layer)}: {displayStatus(layer.status)}</strong>
                 <small>{layerDetail(result, layer)}</small>
               </span>
-              <b>{layer.status}</b>
+              <b>{displayStatus(layer.status)}</b>
             </div>
           ))}
         </div>
@@ -556,18 +555,12 @@ function setupScoreLabel(result: ScanResult): string {
   return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
 }
 
-function fundamentalSourceSummary(result: ScanResult): string {
-  const sources = result.fundamentalSources;
-  if (!sources) return "Schwab primary; fallback unavailable.";
-  const labels: Array<[keyof NonNullable<ScanResult["fundamentalSources"]>, string]> = [
-    ["beta", "beta"],
-    ["marketCap", "market cap"],
-    ["sector", "sector"],
-    ["nextEarningsDate", "next earnings date"]
-  ];
-  const fmpFields = labels.filter(([key]) => sources[key] === "fmp").map(([, label]) => label);
-  if (fmpFields.length) return "Schwab primary; FMP filled " + fmpFields.join(", ") + ".";
-  return "Schwab primary.";
+function displayStatus(status: LayerStatus | undefined): "Bullish" | "Neutral" | "Avoid" {
+  return status === "Bullish" || status === "Neutral" ? status : "Avoid";
+}
+
+function statusClass(status: LayerStatus | undefined): string {
+  return displayStatus(status) === "Bullish" ? "status-bullish" : displayStatus(status) === "Neutral" ? "status-neutral" : "status-avoid";
 }
 
 function layerLabel(layer: string): string {

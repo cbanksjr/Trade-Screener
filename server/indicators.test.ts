@@ -534,13 +534,53 @@ describe("layer decision engine", () => {
     expect(ranked.every((contract) => contract.dte !== undefined && contract.dte >= 30 && contract.dte <= 180)).toBe(true);
   });
 
+  it("uses option spread bands for options market context", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const resultFor = (spreadPct: number) => gradeSetup({
+      symbol: "SPREAD" + spreadPct,
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("SPREAD" + spreadPct),
+      optionable: true,
+      options: [option("SPREAD" + spreadPct, 45, 500, 200, 0.55, spreadPct, 102)],
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    const ten = resultFor(10);
+    const fifteen = resultFor(15);
+    const twenty = resultFor(20);
+    const twentyOne = resultFor(21);
+
+    expect(optionLayer(ten)?.status).toBe("Bullish");
+    expect(optionLayer(ten)?.detail).toBe("Best call spread is 10.0%, inside the 10% institutional-quality threshold.");
+    expect(optionLayer(fifteen)?.status).toBe("Neutral");
+    expect(optionLayer(fifteen)?.detail).toBe("Best call spread is 15.0%; usable but wider than the 10% institutional-quality threshold.");
+    expect(optionLayer(twenty)?.status).toBe("Neutral");
+    expect(optionLayer(twentyOne)?.status).toBe("Bearish");
+    expect(optionLayer(twentyOne)?.detail).toBe("No call contract met the 20% maximum spread filter.");
+    expect(twentyOne.longCallDecision).toBe("Avoid");
+    expect(twentyOne.suggestedOptions).toEqual([]);
+  });
+
   it("allows 91-180 DTE when contract quality is meaningfully better", () => {
     const ranked = rankCallOptions([
-      option("WEAK-60", 60, 60, 25, 0.42, 30, 103),
+      option("WEAK-60", 60, 60, 25, 0.42, 18, 103),
       option("STRONG-150", 150, 2000, 600, 0.55, 3, 103)
     ], 100);
 
     expect(ranked[0].symbol).toBe("STRONG-150");
+  });
+
+  it("filters calls wider than the 20% maximum spread", () => {
+    const ranked = rankCallOptions([
+      option("WIDE", 45, 500, 200, 0.55, 21, 102),
+      option("MAX", 45, 500, 200, 0.55, 20, 102)
+    ], 100);
+
+    expect(ranked.map((contract) => contract.symbol)).toEqual(["MAX"]);
   });
 });
 
@@ -638,6 +678,10 @@ function strongFundamentals(symbol: string) {
     avgDollarVolume20d: 900_000_000,
     nextEarningsDate: futureDate(45)
   };
+}
+
+function optionLayer(result: ReturnType<typeof gradeSetup>) {
+  return result.layerEvaluations.find((item) => item.layer === "Options Market Context");
 }
 
 function futureDate(daysFromNow: number): string {
