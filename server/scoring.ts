@@ -22,7 +22,8 @@ import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore,
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
 const SETUP_FACTOR_NAMES: InstitutionalFactorName[] = ["Market Regime", "Sector Strength", "Relative Strength", "Liquidity", "Volume Expansion", "Price Structure", "Volatility Fit", "Catalyst Safety"];
 const SETUP_FACTOR_WEIGHT = 100 / SETUP_FACTOR_NAMES.length;
-const EARNINGS_DANGER_DAYS = 10;
+const EARNINGS_AVOID_DAYS = 14;
+const EARNINGS_NEUTRAL_DAYS = 29;
 
 export const defaultSettings = {
   minPrice: 20,
@@ -360,8 +361,9 @@ function evaluateCatalystSafety(nextEarningsDate?: string): InstitutionalFactor 
   if (!nextEarningsDate) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
   const days = daysUntil(nextEarningsDate);
   if (days === undefined || days < 0) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
-  if (days <= EARNINGS_DANGER_DAYS) return factor("Catalyst Safety", "Bearish", "Earnings are within " + EARNINGS_DANGER_DAYS + " days.");
-  return factor("Catalyst Safety", "Bullish", "No earnings event inside the next " + EARNINGS_DANGER_DAYS + " days.");
+  if (days <= EARNINGS_AVOID_DAYS) return factor("Catalyst Safety", "Bearish", "Earnings are within " + EARNINGS_AVOID_DAYS + " days.");
+  if (days <= EARNINGS_NEUTRAL_DAYS) return factor("Catalyst Safety", "Neutral", "Earnings are 15-29 days away; catalyst risk is elevated.");
+  return factor("Catalyst Safety", "Bullish", "Next earnings is at least 30 days away.");
 }
 
 function factor(name: InstitutionalFactorName, status: LayerStatus, detail: string): InstitutionalFactor {

@@ -83,7 +83,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across eight equal-weight factors: market regime, sector strength, relative strength, liquidity, volume expansion, price structure, volatility fit, and catalyst safety
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
-- Catalyst safety uses the next earnings date; earnings inside the configured danger window block the setup, while unavailable next-earnings data caps A grades
+- Catalyst safety uses the next earnings date; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups
 - FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 
