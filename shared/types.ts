@@ -180,6 +180,7 @@ export type ScanResult = {
   setupScore: number;
   setupScoreStatus: LayerStatus;
   institutionalFactors: InstitutionalFactor[];
+  gradeCapReasons?: string[];
   multiTimeframeAlignmentSummary: string;
   relativeStrengthSummary: string;
   institutionalContextSummary: string;

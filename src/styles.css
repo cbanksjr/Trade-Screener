@@ -250,31 +250,6 @@ small,
   color: var(--text);
 }
 
-.scan-summary {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: var(--shadow);
-  display: grid;
-  gap: 5px;
-  padding: 13px 15px;
-}
-
-.scan-summary span {
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.scan-summary strong {
-  color: var(--text);
-  font-size: 0.92rem;
-  font-weight: 700;
-  line-height: 1.45;
-}
-
 .notice {
   background: color-mix(in srgb, var(--warning) 14%, var(--panel));
   border: 1px solid color-mix(in srgb, var(--warning) 38%, var(--border));
@@ -512,6 +487,26 @@ small,
   display: grid;
   gap: 10px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+}
+
+.grade-cap {
+  background: color-mix(in srgb, var(--warning) 10%, var(--panel-soft));
+  border: 1px solid color-mix(in srgb, var(--warning) 26%, var(--border));
+  border-radius: 8px;
+  display: grid;
+  gap: 5px;
+  margin-bottom: 12px;
+  padding: 11px 13px;
+}
+
+.grade-cap strong {
+  color: var(--text);
+}
+
+.grade-cap span {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.4;
 }
 
 .factor-card {

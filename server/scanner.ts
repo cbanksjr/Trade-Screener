@@ -3,7 +3,7 @@ import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
-import { defaultSettings, gradeSetup } from "./scoring";
+import { A_SETUP_SCORE_THRESHOLD, B_SETUP_SCORE_THRESHOLD, defaultSettings, gradeSetup } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
@@ -454,14 +454,21 @@ function classifyFilteredResult(result: ScanResult): ScanDiagnosticReason {
 
 function normalizeCachedResult(result: ScanResult): ScanResult {
   const dotCount = resolveDailySqueezeDotCount(result);
+  const setupScore = typeof result.setupScore === "number" ? result.setupScore : result.score;
+  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore);
+  const grade = longCallDecision === "Strong Long Call Candidate" ? "A" : "B";
   const normalized: ScanResult = {
     ...result,
+    grade,
+    longCallDecision,
+    setupQuality: grade === "A" ? "High" : "Moderate",
     dailySqueezeDotCount: dotCount ?? result.dailySqueezeDotCount,
     compressionQualityScore: dotCount ?? result.compressionQualityScore,
     maxScore: dotCount === undefined ? result.maxScore : 5,
-    setupScore: typeof result.setupScore === "number" ? result.setupScore : result.score,
+    setupScore,
     setupScoreStatus: result.setupScoreStatus ?? "Insufficient Data",
     institutionalFactors: result.institutionalFactors ?? [],
+    gradeCapReasons: result.gradeCapReasons ?? cachedGradeCapReasons(result, longCallDecision, setupScore),
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -476,6 +483,25 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     })
   };
   return normalized;
+}
+
+function normalizeCachedDecision(decision: ScanResult["longCallDecision"], setupScore: number): ScanResult["longCallDecision"] {
+  if (decision === "Avoid") return "Avoid";
+  if (setupScore < B_SETUP_SCORE_THRESHOLD) return "Watchlist Candidate";
+  if (decision === "Strong Long Call Candidate" && setupScore < A_SETUP_SCORE_THRESHOLD) return "Moderate Long Call Candidate";
+  return decision;
+}
+
+function cachedGradeCapReasons(result: ScanResult, decision: ScanResult["longCallDecision"], setupScore: number): string[] {
+  if (decision === "Strong Long Call Candidate") return [];
+  const reasons: string[] = [];
+  const weekly = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "weekly");
+  const factor = (name: ScanResult["institutionalFactors"][number]["name"]) => result.institutionalFactors?.find((item) => item.name === name);
+  if (setupScore < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 75.");
+  if (weekly && weekly.bias !== "bullish") reasons.push("Weekly context is not bullish.");
+  if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
+  if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");
+  return reasons;
 }
 
 function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {

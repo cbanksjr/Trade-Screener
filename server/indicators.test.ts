@@ -202,6 +202,79 @@ describe("layer decision engine", () => {
     expect(result.setupScoreStatus).toBe("Bullish");
   });
 
+  it("caps otherwise strong setups at B when setup score is below the A threshold", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "LOWA",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("LOWA"),
+      optionable: true,
+      options: [option("LOWA", 45, 500, 200, 0.55, 15, 102)],
+      weeklyIndicators: weeklyIndicator("bullish"),
+      sector: "Information Technology",
+      sectorCandles: returnCandles(100, 0.005),
+      spyCandles: returnCandles(100, 0.01)
+    });
+
+    expect(result.setupScore).toBeLessThan(75);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain("Setup score below 75.");
+  });
+
+  it("keeps high-score setups at B when A-grade context is capped and explains why", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "HIGHCAP",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        symbol: "HIGHCAP",
+        beta: 1.2,
+        marketCap: 20_000_000_000,
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("HIGHCAP", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      sector: "Information Technology",
+      sectorCandles: activeDailySqueezeCandles(),
+      spyCandles: activeDailySqueezeCandles(),
+      qqqCandles: activeDailySqueezeCandles()
+    });
+
+    expect(result.setupScore).toBeGreaterThanOrEqual(75);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain("Catalyst Safety unavailable.");
+  });
+
+  it("keeps high-score setups at B when weekly context is not bullish and explains why", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const result = gradeSetup({
+      symbol: "WEEKLYCAP",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("WEEKLYCAP"),
+      optionable: true,
+      options: demoOptions("WEEKLYCAP", price),
+      weeklyIndicators: weeklyIndicator("neutral"),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.setupScore).toBeGreaterThanOrEqual(75);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain("Weekly context is not bullish.");
+  });
+
   it("caps A when sector or earnings data is missing but still allows B", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
