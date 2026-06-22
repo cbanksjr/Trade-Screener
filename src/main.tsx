@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, BarChart3, CheckCircle2, Moon, Play, Sun, XCircle } from "lucide-react";
 import { CandlestickSeries, ColorType, createChart, LineSeries, type CandlestickData, type LineData, type Time, type UTCTimestamp } from "lightweight-charts";
-import type { BrokerStatus, Candle, ChartDataResponse, ChartTimeframe, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { BrokerStatus, Candle, ChartDataResponse, ChartTimeframe, LayerStatus, ScanDiagnostics, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
 
 const api = {
@@ -47,6 +47,8 @@ function App() {
   const [message, setMessage] = React.useState("");
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
   const [scanStatus, setScanStatus] = React.useState<string>("idle");
+  const [scanDiagnostics, setScanDiagnostics] = React.useState<ScanDiagnostics | undefined>();
+  const [lastScanFinishedAt, setLastScanFinishedAt] = React.useState<string | undefined>();
   const [theme, setTheme] = React.useState<ThemeMode>(() => localStorage.getItem("theme") === "dark" ? "dark" : "light");
 
   React.useEffect(() => {
@@ -100,6 +102,8 @@ function App() {
     if (data.settings) setSettings(data.settings);
     setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
+    setScanDiagnostics(data.scanDiagnostics);
+    setLastScanFinishedAt(data.lastScanFinishedAt);
     setLoading(Boolean(data.isRefreshing));
   }
 
@@ -155,10 +159,13 @@ function App() {
         <section className="status-strip">
           <Stat icon={<Activity />} label="Scan" value={loading || scanStatus === "running" ? "REFRESHING" : scanStatus.toUpperCase()} />
           <Stat icon={<BarChart3 />} label="Symbols" value={String(results.length)} />
+          <Stat icon={<BarChart3 />} label="Dollar Vol" value={moneyCompact(settings?.minAvgDollarVolume ?? scanDiagnostics?.minAvgDollarVolume)} />
           <Stat icon={<CheckCircle2 />} label="Passing Universe" value={String(results.filter((item) => item.passesUniverse).length)} />
         </section>
 
+        {(loading || scanStatus === "running") && results.length > 0 && <div className="notice">Showing cached results while the fresh scan finishes.</div>}
         {message && <div className="notice">{message}</div>}
+        {scanDiagnostics && <div className="notice">{scanDiagnosticSummary(scanDiagnostics, lastScanFinishedAt)}</div>}
 
         <section className="workspace">
           <div className="panel list-panel">
@@ -541,6 +548,29 @@ function setupScoreLabel(result: ScanResult): string {
   return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
 }
 
+function scanDiagnosticSummary(diagnostics: ScanDiagnostics, lastFinishedAt?: string): string {
+  const skipped = diagnostics.skipped;
+  const topSkips = [
+    ["dollar volume", skipped.avgDollarVolume],
+    ["options", skipped.options],
+    ["spread/liquidity", skipped.spreadLiquidity],
+    ["market structure", skipped.marketStructure],
+    ["catalyst", skipped.catalyst],
+    ["beta", skipped.beta],
+    ["market cap", skipped.marketCap],
+    ["price", skipped.price],
+    ["quote missing", skipped.quoteMissing],
+    ["candle history", skipped.candleHistory],
+    ["sector/data cap", skipped.sectorDataCap],
+    ["final display filter", skipped.finalDisplayFilter],
+    ["other", skipped.other]
+  ].filter(([, value]) => Number(value) > 0).slice(0, 4).map(([label, value]) => label + " " + value).join(", ");
+  const finished = lastFinishedAt ? " Last completed " + new Date(lastFinishedAt).toLocaleString() + "." : "";
+  return "Scanned " + diagnostics.scannedSymbols + " symbols at " + moneyCompact(diagnostics.minAvgDollarVolume) + " min dollar volume; " + diagnostics.qualifiedResults + " qualified"
+    + (topSkips ? ". Top skips: " + topSkips + "." : ".")
+    + finished;
+}
+
 function displayStatus(status: LayerStatus | undefined): "Bullish" | "Neutral" | "Avoid" {
   return status === "Bullish" || status === "Neutral" ? status : "Avoid";
 }
@@ -567,6 +597,13 @@ function money(value: number): string {
     minimumFractionDigits: hasFraction ? 2 : 0,
     maximumFractionDigits: hasFraction ? 6 : 0
   });
+}
+
+function moneyCompact(value: number | undefined): string {
+  if (value === undefined) return "Unavailable";
+  if (value >= 1_000_000_000) return "$" + formatNumber(value / 1_000_000_000, { maximumFractionDigits: 1 }) + "B";
+  if (value >= 1_000_000) return "$" + formatNumber(value / 1_000_000, { maximumFractionDigits: 0 }) + "M";
+  return money(value);
 }
 
 function moneyOrUnavailable(value: number | null | undefined): string {

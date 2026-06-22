@@ -277,8 +277,32 @@ export type ScanMetadata = {
   lastScanFinishedAt?: string;
   lastScanMode?: ScanMode;
   lastScanWarnings?: string[];
+  scanDiagnostics?: ScanDiagnostics;
   nextRefreshAt?: string;
   isRefreshing?: boolean;
+};
+
+export type ScanDiagnosticCounts = {
+  quoteMissing: number;
+  price: number;
+  avgDollarVolume: number;
+  beta: number;
+  marketCap: number;
+  candleHistory: number;
+  options: number;
+  spreadLiquidity: number;
+  marketStructure: number;
+  catalyst: number;
+  sectorDataCap: number;
+  finalDisplayFilter: number;
+  other: number;
+};
+
+export type ScanDiagnostics = {
+  scannedSymbols: number;
+  qualifiedResults: number;
+  minAvgDollarVolume: number;
+  skipped: ScanDiagnosticCounts;
 };
 
 export type ScanResponse = ScanMetadata & {

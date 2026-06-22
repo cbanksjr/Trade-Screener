@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Candle, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { Candle, ScanDiagnostics, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, initDb, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
@@ -269,7 +269,8 @@ describe("background scan refresh", () => {
   }));
 
   it("saves scan metadata after a completed refresh", async () => withDbRestore(async () => {
-    await startScanRefresh(() => fakeResponse([qualifyingResult("META")], ["ok"] ));
+    const diagnostics = fakeDiagnostics({ scannedSymbols: 2, qualifiedResults: 1, avgDollarVolume: 1 });
+    await startScanRefresh(() => fakeResponse([qualifyingResult("META")], ["ok"], diagnostics));
     await settleBackgroundScan();
 
     const metadata = await getScanMetadata();
@@ -278,6 +279,36 @@ describe("background scan refresh", () => {
     expect(metadata.lastScanFinishedAt).toBeTruthy();
     expect(metadata.nextRefreshAt).toBeTruthy();
     expect(metadata.lastScanWarnings).toEqual(["ok"]);
+    expect(metadata.scanDiagnostics).toMatchObject({
+      scannedSymbols: 2,
+      qualifiedResults: 1,
+      minAvgDollarVolume: 300_000_000,
+      skipped: {
+        avgDollarVolume: 1
+      }
+    });
+  }));
+
+  it("returns completed scan diagnostics with cached results", async () => withDbRestore(async () => {
+    await replaceScanResults([qualifyingResult("DIAG")]);
+    await setScanMetadata({
+      scanStatus: "complete",
+      lastScanMode: "live",
+      lastScanFinishedAt: "2026-05-30T12:00:00.000Z",
+      scanDiagnostics: fakeDiagnostics({ scannedSymbols: 603, qualifiedResults: 19, avgDollarVolume: 42, options: 118 })
+    });
+
+    const response = await readCachedScanResponse();
+
+    expect(response.scanDiagnostics).toMatchObject({
+      scannedSymbols: 603,
+      qualifiedResults: 19,
+      minAvgDollarVolume: 300_000_000,
+      skipped: {
+        avgDollarVolume: 42,
+        options: 118
+      }
+    });
   }));
 });
 
@@ -301,13 +332,37 @@ async function settleBackgroundScan() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-async function fakeResponse(results: ScanResult[], warnings: string[] = []): Promise<ScanResponse> {
+async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics): Promise<ScanResponse> {
   return {
     mode: "demo",
     results,
     settings: await readSettings() as Settings,
     warnings,
+    scanDiagnostics,
     scanStatus: "idle"
+  };
+}
+
+function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: number; avgDollarVolume?: number; options?: number }): ScanDiagnostics {
+  return {
+    scannedSymbols: input.scannedSymbols,
+    qualifiedResults: input.qualifiedResults,
+    minAvgDollarVolume: 300_000_000,
+    skipped: {
+      quoteMissing: 0,
+      price: 0,
+      avgDollarVolume: input.avgDollarVolume ?? 0,
+      beta: 0,
+      marketCap: 0,
+      candleHistory: 0,
+      options: input.options ?? 0,
+      spreadLiquidity: 0,
+      marketStructure: 0,
+      catalyst: 0,
+      sectorDataCap: 0,
+      finalDisplayFilter: 0,
+      other: 0
+    }
   };
 }
 

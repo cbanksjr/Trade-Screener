@@ -1,4 +1,4 @@
-import type { Candle, FundamentalFieldSources, Fundamentals, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { Candle, FundamentalFieldSources, Fundamentals, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
@@ -12,6 +12,7 @@ import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniver
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
+type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
   "Communication Services": "XLC",
   "Consumer Discretionary": "XLY",
@@ -104,6 +105,7 @@ export async function readScanMetadata(): Promise<ScanMetadata> {
     lastScanFinishedAt: stored.lastScanFinishedAt,
     lastScanMode: stored.lastScanMode,
     lastScanWarnings: (stored.lastScanWarnings ?? []).filter(shouldShowWarning),
+    scanDiagnostics: stored.scanDiagnostics,
     nextRefreshAt: stored.nextRefreshAt,
     isRefreshing: Boolean(activeScan)
   };
@@ -126,6 +128,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   let usedLive = false;
   let usedDemo = false;
   const symbolsToScan = await resolveScanSymbols();
+  const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgDollarVolume);
   if (symbolsToScan.length < MIN_REFRESHED_SYMBOLS) {
     scanWarnings.add("Scan universe contains only " + symbolsToScan.length + " symbols; expected at least " + MIN_REFRESHED_SYMBOLS + ".");
   }
@@ -163,10 +166,14 @@ export async function runFullScan(): Promise<ScanResponse> {
 
   for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
+    if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
     if (outcome.result && shouldIncludeResult(outcome.result)) results.push(outcome.result);
+    else if (outcome.result) diagnostics.skipped[classifyFilteredResult(outcome.result)] += 1;
+    else if (!outcome.skipReason) diagnostics.skipped.other += 1;
     if (outcome.usedLive) usedLive = true;
     if (outcome.usedDemo) usedDemo = true;
   }
+  diagnostics.qualifiedResults = results.length;
 
   const sortByDecision = (a: ScanResult, b: ScanResult) => {
     const scoreDelta = (b.setupScore ?? -1) - (a.setupScore ?? -1);
@@ -180,7 +187,8 @@ export async function runFullScan(): Promise<ScanResponse> {
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
     results: results.sort(sortByDecision),
     settings,
-    warnings: [...scanWarnings].filter(shouldShowWarning)
+    warnings: [...scanWarnings].filter(shouldShowWarning),
+    scanDiagnostics: diagnostics
   });
 }
 
@@ -210,6 +218,7 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
       lastScanFinishedAt: finishedAt,
       lastScanMode: response.mode,
       lastScanWarnings: response.warnings,
+      scanDiagnostics: response.scanDiagnostics,
       nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
       isRefreshing: false
     });
@@ -239,7 +248,7 @@ async function scanSymbol(input: {
   sectorHistories?: Map<string, Candle[]>;
   nextEarningsDate?: string;
   fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
-}): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean }> {
+}): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason }> {
   const { symbol, settings, canUseLiveSchwab } = input;
   const warnings: string[] = [];
   let usedLive = false;
@@ -260,16 +269,16 @@ async function scanSymbol(input: {
 
     if (canUseLiveSchwab && !quote) {
       warnings.push(symbol + ": Schwab did not return a quote; skipped.");
-      return { warnings, usedLive, usedDemo };
+      return { warnings, usedLive, usedDemo, skipReason: "quoteMissing" };
     }
 
     if (quote && quote.price <= settings.minPrice) {
       warnings.push(symbol + ": skipped because Schwab quote price $" + quote.price.toFixed(2) + " is below $" + settings.minPrice + ".");
-      return { warnings, usedLive, usedDemo };
+      return { warnings, usedLive, usedDemo, skipReason: "price" };
     }
     if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
       warnings.push(symbol + ": skipped because Schwab average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
-      return { warnings, usedLive, usedDemo };
+      return { warnings, usedLive, usedDemo, skipReason: "avgDollarVolume" };
     }
 
     const earlyFmp = await input.fmp?.enrich(symbol, {
@@ -282,11 +291,11 @@ async function scanSymbol(input: {
 
     if (fundamentals.beta !== undefined && fundamentals.sources?.beta !== "demo" && fundamentals.beta < settings.minBeta) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.beta) + " beta is below " + settings.minBeta + ".");
-      return { warnings, usedLive, usedDemo };
+      return { warnings, usedLive, usedDemo, skipReason: "beta" };
     }
     if (fundamentals.marketCap !== undefined && fundamentals.sources?.marketCap !== "demo" && fundamentals.marketCap < settings.minMarketCap) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.marketCap) + " market cap is below " + formatMoney(settings.minMarketCap) + ".");
-      return { warnings, usedLive, usedDemo };
+      return { warnings, usedLive, usedDemo, skipReason: "marketCap" };
     }
 
     let candles = canUseLiveSchwab ? await fetchHistory(symbol) : [];
@@ -373,9 +382,10 @@ async function scanSymbol(input: {
   } catch (error) {
     if (canUseLiveSchwab) {
       warnings.push(symbol + ": " + (error instanceof Error ? error.message : "Scan failed."));
-      return { warnings, usedLive, usedDemo };
+      const message = error instanceof Error ? error.message : "";
+      return { warnings, usedLive, usedDemo, skipReason: message.includes("Not enough candle history") ? "candleHistory" : "other" };
     }
-    if (!allowDemoFallback || !demoFundamental(symbol)) return { warnings, usedLive, usedDemo };
+    if (!allowDemoFallback || !demoFundamental(symbol)) return { warnings, usedLive, usedDemo, skipReason: "other" };
     const candles = demoCandles(symbol);
     const price = candles[candles.length - 1].close;
     const weekly = weeklySqueezeFromDaily(candles);
@@ -404,6 +414,42 @@ function shouldIncludeResult(result: ScanResult): boolean {
     && result.setupDirection === "long"
     && (result.longCallDecision === "Strong Long Call Candidate" || result.longCallDecision === "Moderate Long Call Candidate")
     && (result.grade === "A" || result.grade === "B");
+}
+
+function createScanDiagnostics(scannedSymbols: number, minAvgDollarVolume: number): ScanDiagnostics {
+  return {
+    scannedSymbols,
+    qualifiedResults: 0,
+    minAvgDollarVolume,
+    skipped: {
+      quoteMissing: 0,
+      price: 0,
+      avgDollarVolume: 0,
+      beta: 0,
+      marketCap: 0,
+      candleHistory: 0,
+      options: 0,
+      spreadLiquidity: 0,
+      marketStructure: 0,
+      catalyst: 0,
+      sectorDataCap: 0,
+      finalDisplayFilter: 0,
+      other: 0
+    }
+  };
+}
+
+function classifyFilteredResult(result: ScanResult): ScanDiagnosticReason {
+  const layer = (name: ScanResult["layerEvaluations"][number]["layer"]) => result.layerEvaluations.find((item) => item.layer === name);
+  const factor = (name: ScanResult["institutionalFactors"][number]["name"]) => result.institutionalFactors.find((item) => item.name === name);
+  if (layer("Options Market Context")?.status === "Bearish") return "options";
+  if (factor("Liquidity")?.status === "Bearish") return "spreadLiquidity";
+  if (layer("Squeeze Market Structure")?.status === "Bearish") return "marketStructure";
+  if (factor("Catalyst Safety")?.status === "Bearish") return "catalyst";
+  if (factor("Sector Strength")?.status === "Insufficient Data") return "sectorDataCap";
+  if (!result.passesUniverse) return "finalDisplayFilter";
+  if (result.longCallDecision === "Avoid" || result.longCallDecision === "Watchlist Candidate") return "finalDisplayFilter";
+  return "other";
 }
 
 function normalizeCachedResult(result: ScanResult): ScanResult {
@@ -455,7 +501,7 @@ function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>
   }
 }
 
-async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[] }): Promise<ScanResponse> {
+async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics }): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
   return {
     ...input,
