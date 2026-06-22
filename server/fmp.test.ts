@@ -48,6 +48,7 @@ describe("FMP fallback fundamentals", () => {
     expect(normalizeFmpEarnings([
       { symbol: "AAPL", date: "2026-05-01" },
       { symbol: "AAPL", date: "2026-07-25" },
+      { date: "2026-07-10" },
       { symbol: "MSFT", date: "2026-07-01" }
     ], "AAPL", new Date("2026-06-20T12:00:00Z"))).toBe("2026-07-25");
   });
@@ -135,8 +136,9 @@ describe("FMP fallback fundamentals", () => {
       now: () => new Date("2026-06-20T13:00:00.000Z"),
       fetchImpl: async (input) => {
         const url = new URL(input.toString());
-        requests.push(url.pathname);
+        requests.push(url.pathname + "?" + [...url.searchParams.keys()].sort().join(","));
         return new Response(JSON.stringify([
+          { symbol: "MSFT", date: "2026-07-01" },
           { symbol: "AAPL", date: "2026-07-25" }
         ]));
       }
@@ -144,12 +146,56 @@ describe("FMP fallback fundamentals", () => {
 
     const result = await fallback.enrich("AAPL", { nextEarningsDate: true });
 
-    expect(requests).toEqual(["/stable/earnings-calendar"]);
+    expect(requests).toEqual(["/stable/earnings?apikey,symbol"]);
     expect(result.data).toMatchObject({ nextEarningsDate: "2026-07-25" });
     expect(fallback.cache().AAPL.data).toMatchObject({
       sector: "Information Technology",
       nextEarningsDate: "2026-07-25"
     });
+  });
+
+  it("uses exact-symbol earnings fallback and ignores other symbols", async () => {
+    const requests: string[] = [];
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      now: () => new Date("2026-06-20T13:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = new URL(input.toString());
+        requests.push(url.pathname);
+        return new Response(JSON.stringify([
+          { symbol: "MSFT", date: "2026-07-01" },
+          { symbol: "AAPL", date: "2026-10-25" },
+          { symbol: "AAPL", date: "2026-07-25" },
+          { symbol: "AAPL", date: "2026-05-01" }
+        ]));
+      }
+    });
+
+    const result = await fallback.enrich("AAPL", { nextEarningsDate: true });
+
+    expect(requests).toEqual(["/stable/earnings"]);
+    expect(result.warnings).toEqual([]);
+    expect(result.data?.nextEarningsDate).toBe("2026-07-25");
+  });
+
+  it("warns when exact-symbol earnings fallback has no future date", async () => {
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      now: () => new Date("2026-06-20T13:00:00.000Z"),
+      fetchImpl: async () => new Response(JSON.stringify([
+        { symbol: "MSFT", date: "2026-07-01" },
+        { symbol: "AAPL", date: "2026-05-01" }
+      ]))
+    });
+
+    const result = await fallback.enrich("AAPL", { nextEarningsDate: true });
+
+    expect(result.data).toBeUndefined();
+    expect(result.warnings).toEqual(["Next earnings date unavailable from FMP."]);
   });
 
   it("loads a shared earnings calendar once and updates matching cached symbols", async () => {

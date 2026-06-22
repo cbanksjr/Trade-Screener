@@ -110,6 +110,8 @@ export function createFmpFallback(input: {
       if (call.data) {
         output.nextEarningsDate = call.data.nextEarningsDate;
         usedLive = true;
+      } else if (!call.warning) {
+        warnings.push("Next earnings date unavailable from FMP.");
       }
     }
 
@@ -217,8 +219,8 @@ export function normalizeFmpEarnings(payload: unknown, symbol: string, now = new
   return payload
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
     .filter((item) => {
-      const rowSymbol = stringValue(item.symbol, item.Symbol);
-      return !rowSymbol || rowSymbol.toUpperCase() === upperSymbol;
+      const rowSymbol = stringValue(item.symbol, item.Symbol)?.toUpperCase();
+      return rowSymbol === upperSymbol;
     })
     .map((item) => stringValue(item.date, item.reportDate, item.reportedDate, item.fiscalDateEnding))
     .filter((value): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
@@ -257,10 +259,8 @@ async function fetchProfile(symbol: string, input: { apiKey: string; baseUrl: st
 }
 
 async function fetchNextEarningsDate(symbol: string, input: { apiKey: string; baseUrl: string }, fetchImpl: FetchLike, now: Date): Promise<FmpFundamentals | undefined> {
-  const data = await fmpJson(input.baseUrl, "earnings-calendar", {
+  const data = await fmpJson(input.baseUrl, "earnings", {
     symbol,
-    from: toDateString(now),
-    to: toDateString(new Date(now.getTime() + 180 * 24 * 60 * 60 * 1000)),
     apikey: input.apiKey
   }, fetchImpl);
   const nextEarningsDate = normalizeFmpEarnings(data, symbol, now);
