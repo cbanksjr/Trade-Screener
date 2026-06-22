@@ -1,4 +1,6 @@
 import { defaultUniverseName, defaultUniverseSymbols } from "./defaultUniverse";
+import { config } from "./config";
+import { normalizeFmpSector } from "./fmp";
 import { getSetting, setSetting } from "./sqlite";
 
 export type UniverseCache = {
@@ -11,7 +13,10 @@ export type UniverseCache = {
 };
 
 const UNIVERSE_SETTING = "defaultUniverseCache";
-const MIN_REFRESHED_SYMBOLS = 450;
+export const MIN_REFRESHED_SYMBOLS = 450;
+const FMP_UNIVERSE_SOURCE = "FMP S&P 500 + Nasdaq constituent endpoints";
+const PUBLIC_UNIVERSE_SOURCE = "public S&P 500 + Nasdaq 100 pages";
+type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 
 export function getDefaultUniverseName(): string {
   return defaultUniverseName;
@@ -50,30 +55,53 @@ export async function getDefaultUniverseStatus() {
 }
 
 export async function refreshDefaultUniverse(): Promise<UniverseCache> {
-  const [sp500Html, nasdaqHtml] = await Promise.all([
-    fetchText("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"),
-    fetchText("https://stockanalysis.com/list/nasdaq-100-stocks/")
-  ]);
-  const sp500 = parseSp500Constituents(sp500Html);
-  const refreshed = normalizeSymbols([
-    ...sp500.symbols,
-    ...parseNasdaq100Symbols(nasdaqHtml)
-  ]);
-  if (refreshed.length < MIN_REFRESHED_SYMBOLS) {
-    throw new Error(`Default universe refresh returned only ${refreshed.length} symbols.`);
-  }
-
+  const next = await loadRefreshedUniverse(fetch);
   const previous = await getDefaultUniverseSymbols();
-  const next: UniverseCache = {
-    symbols: refreshed,
+  const cache: UniverseCache = {
+    ...next,
     updatedAt: new Date().toISOString(),
-    source: "public S&P 500 + Nasdaq 100 pages",
-    added: refreshed.filter((symbol) => !previous.includes(symbol)),
-    removed: previous.filter((symbol) => !refreshed.includes(symbol)),
-    sectorBySymbol: sp500.sectorBySymbol
+    added: next.symbols.filter((symbol) => !previous.includes(symbol)),
+    removed: previous.filter((symbol) => !next.symbols.includes(symbol))
   };
-  await setSetting(UNIVERSE_SETTING, next);
-  return next;
+  await setSetting(UNIVERSE_SETTING, cache);
+  return cache;
+}
+
+export async function loadRefreshedUniverse(fetchImpl: FetchLike = fetch, useFmp = Boolean(config.fmpApiKey)): Promise<Omit<UniverseCache, "updatedAt" | "added" | "removed">> {
+  if (useFmp) {
+    try {
+      return assertCompleteUniverse(await loadFmpUniverse(fetchImpl));
+    } catch {
+      // Fall back to public sources when FMP is unavailable, rate-limited, malformed, or incomplete.
+    }
+  }
+  return assertCompleteUniverse(await loadPublicUniverse(fetchImpl));
+}
+
+export function buildFmpUniverse(sp500Payload: unknown, nasdaqPayload: unknown): Omit<UniverseCache, "updatedAt" | "added" | "removed"> {
+  const sp500 = parseFmpConstituents(sp500Payload);
+  const nasdaq = parseFmpConstituents(nasdaqPayload);
+  return {
+    symbols: normalizeSymbols([...sp500.symbols, ...nasdaq.symbols]),
+    source: FMP_UNIVERSE_SOURCE,
+    sectorBySymbol: { ...sp500.sectorBySymbol, ...nasdaq.sectorBySymbol }
+  };
+}
+
+export function parseFmpConstituents(payload: unknown): { symbols: string[]; sectorBySymbol: Record<string, string> } {
+  if (!Array.isArray(payload)) throw new Error("FMP constituent response was not an array.");
+  const symbols: string[] = [];
+  const sectorBySymbol: Record<string, string> = {};
+  for (const item of payload) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const row = item as Record<string, unknown>;
+    const symbol = stringValue(row.symbol, row.Symbol)?.toUpperCase();
+    if (!symbol || !isTradableSymbol(symbol)) continue;
+    symbols.push(symbol);
+    const sector = normalizeFmpSector(stringValue(row.sector, row.Sector));
+    if (sector) sectorBySymbol[symbol] = sector;
+  }
+  return { symbols: normalizeSymbols(symbols), sectorBySymbol };
 }
 
 export function parseSp500Symbols(html: string): string[] {
@@ -108,6 +136,41 @@ export function parseNasdaq100Symbols(html: string): string[] {
   return normalizeSymbols(symbols);
 }
 
+function buildPublicUniverse(sp500Html: string, nasdaqHtml: string): Omit<UniverseCache, "updatedAt" | "added" | "removed"> {
+  const sp500 = parseSp500Constituents(sp500Html);
+  return {
+    symbols: normalizeSymbols([
+      ...sp500.symbols,
+      ...parseNasdaq100Symbols(nasdaqHtml)
+    ]),
+    source: PUBLIC_UNIVERSE_SOURCE,
+    sectorBySymbol: sp500.sectorBySymbol
+  };
+}
+
+async function loadFmpUniverse(fetchImpl: FetchLike): Promise<Omit<UniverseCache, "updatedAt" | "added" | "removed">> {
+  const [sp500, nasdaq] = await Promise.all([
+    fetchJson(fmpUrl("sp500-constituent"), fetchImpl),
+    fetchJson(fmpUrl("nasdaq-constituent"), fetchImpl)
+  ]);
+  return buildFmpUniverse(sp500, nasdaq);
+}
+
+async function loadPublicUniverse(fetchImpl: FetchLike): Promise<Omit<UniverseCache, "updatedAt" | "added" | "removed">> {
+  const [sp500Html, nasdaqHtml] = await Promise.all([
+    fetchText("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies", fetchImpl),
+    fetchText("https://stockanalysis.com/list/nasdaq-100-stocks/", fetchImpl)
+  ]);
+  return buildPublicUniverse(sp500Html, nasdaqHtml);
+}
+
+function assertCompleteUniverse<T extends { symbols: string[] }>(universe: T): T {
+  if (universe.symbols.length < MIN_REFRESHED_SYMBOLS) {
+    throw new Error(`Default universe refresh returned only ${universe.symbols.length} symbols.`);
+  }
+  return universe;
+}
+
 export function isLastDayOfMonth(date = new Date()): boolean {
   const tomorrow = new Date(date);
   tomorrow.setDate(date.getDate() + 1);
@@ -126,12 +189,43 @@ function stripTags(value: string): string {
   return value.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
 }
 
-async function fetchText(url: string): Promise<string> {
-  const response = await fetch(url, {
+async function fetchText(url: string, fetchImpl: FetchLike): Promise<string> {
+  const response = await fetchImpl(url, {
     headers: {
       "User-Agent": "Trade-Screener/1.0"
     }
   });
   if (!response.ok) throw new Error(`Universe source request failed: ${response.status} ${response.statusText}`);
   return response.text();
+}
+
+async function fetchJson(url: URL, fetchImpl: FetchLike): Promise<unknown> {
+  const response = await fetchImpl(url, {
+    headers: {
+      "User-Agent": "Trade-Screener/1.0"
+    }
+  });
+  if (response.status === 429) throw new Error("FMP universe request was rate limited.");
+  if (!response.ok) throw new Error(`FMP universe request failed: ${response.status} ${response.statusText}`);
+  try {
+    return await response.json() as unknown;
+  } catch {
+    throw new Error("FMP universe response was malformed JSON.");
+  }
+}
+
+function fmpUrl(path: string): URL {
+  const root = config.fmpBaseUrl.endsWith("/") ? config.fmpBaseUrl : config.fmpBaseUrl + "/";
+  const url = new URL(path, root);
+  url.searchParams.set("apikey", config.fmpApiKey);
+  return url;
+}
+
+function stringValue(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value !== "string") continue;
+    const trimmed = value.trim();
+    if (trimmed) return trimmed;
+  }
+  return undefined;
 }

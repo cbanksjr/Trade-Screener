@@ -263,20 +263,6 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Setup Summary</h2>
-          <span>{result.setupQuality} quality</span>
-        </div>
-        <div className="summary-grid">
-          <Metric label="Alignment" value={result.multiTimeframeAlignmentSummary} />
-          <Metric label="Weekly" value={result.weeklyContextSummary} />
-          <Metric label="Relative Strength" value={result.relativeStrengthSummary} />
-          <Metric label="Institutional" value={result.institutionalContextSummary} />
-          <Metric label="Macro" value={result.macroRegimeSummary} />
-        </div>
-      </section>
-
-      <section className="panel">
-        <div className="panel-head">
           <h2>Why This Grade / Setup Score</h2>
           <span>{setupScoreLabel(result)} · {displayStatus(result.setupScoreStatus)}</span>
         </div>
