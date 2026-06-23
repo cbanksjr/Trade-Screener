@@ -1,6 +1,6 @@
 # Local Options Swing Screener
 
-A local web app for automatically screening optionable long-call compression candidates using A/B grade badges. It supports long setups against an automatic **S&P 500 + Nasdaq 100** universe.
+A local web app for automatically screening optionable long-call compression candidates using A/B grade badges. It supports long setups against an automatic **S&P 500 + Nasdaq 100 + selected ETFs** universe.
 
 ## Run It
 
@@ -33,6 +33,8 @@ The scan uses Schwab for:
 
 Financial Modeling Prep can be used for index universe refreshes and as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary for market data, then uses FMP to refresh the default universe and fill missing beta, market cap, sector, and next earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `1000`, to protect API limits.
 
+The scanner includes a curated ETF list by default: `SPY`, `QQQ`, `DIA`, `IWM`, `SMH`, `XLK`, `XLF`, `XLV`, `XLE`, `XLY`, `XLI`, `XLC`, `XLP`, `XLU`, `XLB`, and `XLRE`. To override that list, set `ETF_SYMBOLS` to a comma-separated list such as `ETF_SYMBOLS=SPY,QQQ,SMH`.
+
 ## Hosting
 
 For a hosted private deployment, use **Supabase Free Postgres** for persistence and a **Render Free Web Service** for the app. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted deployments should use Supabase so scan results, Schwab OAuth tokens, and cached universe data survive redeploys.
@@ -61,18 +63,19 @@ Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB
 
 ## Automatic Universe
 
-The screener always scans a de-duped **S&P 500 + Nasdaq 100** universe. There is no user-managed universe workflow in this version.
+The screener always scans a de-duped **S&P 500 + Nasdaq 100 + selected ETFs** universe. There is no user-managed stock-universe workflow in this version.
 
 The checked-in universe is a safe last-known-good fallback. On startup, the server attempts to refresh the universe from FMP's S&P 500 and Nasdaq constituent endpoints if no valid cached universe exists. If FMP is unavailable, rate-limited, malformed, or incomplete, it falls back to public S&P 500 and Nasdaq 100 source pages. At the end of every month, it checks again and caches the refreshed symbol list in the configured database. If every live refresh source fails, the app keeps using the last cached list or the bundled fallback.
 
-OpenAI API is not used for universe gathering in this version. The stock universe comes from FMP index constituent endpoints with deterministic public-source parsing and the bundled list as fallbacks, while Schwab remains the market-data source for screening.
+OpenAI API is not used for universe gathering in this version. The stock universe comes from FMP index constituent endpoints with deterministic public-source parsing and the bundled list as fallbacks. ETF candidates come from the curated or configured ETF list. Schwab remains the market-data source for screening.
 
 ## What It Evaluates
 
-- Optionable stock
+- Optionable stock or selected ETF
 - Price above $20
 - Beta >= 0.75 when Schwab provides beta
 - Market cap >= $2B when Schwab provides market cap
+- ETFs bypass beta, market-cap, sector, and single-company earnings requirements
 - Average dollar volume >= $300M, from Schwab `average volume x last price` when available
 - Long setup: price above the 8, 21, 50, and 100 EMAs with a positive EMA stack
 - Selected timeframes: daily and weekly
@@ -83,7 +86,8 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
-- Catalyst safety uses the next earnings date; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups
+- ETF strength compares the ETF directly against SPY over the same 20-period window
+- Catalyst safety uses the next earnings date for stocks; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups. ETFs are treated as not having single-company earnings catalyst risk.
 - FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 

@@ -337,6 +337,35 @@ describe("layer decision engine", () => {
     });
   });
 
+  it("scores ETFs without beta, market cap, sector, or earnings penalties", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "SMH",
+      assetType: "etf",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        symbol: "SMH",
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("SMH", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      spyCandles: activeDailySqueezeCandles(),
+      qqqCandles: activeDailySqueezeCandles()
+    });
+
+    expect(result.assetType).toBe("etf");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
+    expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Sector Strength")?.detail).toBe("SMH ETF outperforming SPY over 20 periods.");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bullish");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("ETF has no single-company earnings date; catalyst risk is not applicable.");
+  });
+
   it("classifies catalyst safety by earnings distance", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);

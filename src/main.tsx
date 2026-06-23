@@ -129,7 +129,7 @@ function App() {
         <header className="topbar">
           <div>
             <h1>Options Swing Screener</h1>
-            <p>Automatic S&amp;P 500 + Nasdaq 100 screening for long squeeze-style setups.</p>
+            <p>Automatic S&amp;P 500 + Nasdaq 100 + selected ETF screening for long squeeze-style setups.</p>
           </div>
           <div className="top-actions">
             <button className="icon-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle color mode">
@@ -221,7 +221,7 @@ function ResultRow({ result, activeSymbol, onSelect }: {
     }} role="button" tabIndex={0}>
       <div className="candidate-card-top">
         <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
-        <strong>{result.symbol}</strong>
+        <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}</span>
         <b>{setupScoreLabel(result)}</b>
       </div>
       <div className="candidate-card-stats">
@@ -239,7 +239,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
       <section className="panel hero-panel">
         <div>
           <span className={"grade large grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
-          <h2>{result.symbol}</h2>
+          <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null}</h2>
           <p>{result.longCallDecision} · {money(result.price)} · {result.entryRecommendationType}</p>
         </div>
         <div className="indicator-grid">

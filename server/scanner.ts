@@ -1,6 +1,7 @@
-import type { Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
+import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
 import { A_SETUP_SCORE_THRESHOLD, B_SETUP_SCORE_THRESHOLD, defaultSettings, gradeSetup } from "./scoring";
@@ -35,6 +36,7 @@ export async function readSettings(): Promise<Settings> {
     : stored;
   if (normalizedStored !== stored) await setSetting("settings", normalizedStored);
   const defaultUniverse = await getDefaultUniverseStatus();
+  const etfSymbols = resolveEtfSymbols(normalizedStored.etfSymbols);
   return {
     minPrice: normalizedStored.minPrice ?? defaultSettings.minPrice,
     minBeta: normalizedStored.minBeta ?? defaultSettings.minBeta,
@@ -44,8 +46,9 @@ export async function readSettings(): Promise<Settings> {
     brokerCallbackUrl: config.schwabCallbackUrl,
     hasBrokerCredentials: hasSchwabCredentials(),
     useDemoDataWhenMissingApi: normalizedStored.useDemoDataWhenMissingApi ?? defaultSettings.useDemoDataWhenMissingApi,
-    defaultUniverseName: defaultUniverse.name,
-    defaultUniverseCount: defaultUniverse.count,
+    etfSymbols,
+    defaultUniverseName: defaultUniverse.name + " + selected ETFs",
+    defaultUniverseCount: defaultUniverse.count + etfSymbols.length,
     defaultUniverseLastCheckedAt: defaultUniverse.lastCheckedAt
   };
 }
@@ -58,7 +61,8 @@ export async function writeSettings(input: Partial<Settings>): Promise<Settings>
     minBeta: input.minBeta ?? current.minBeta,
     minMarketCap: input.minMarketCap ?? current.minMarketCap,
     minAvgDollarVolume: input.minAvgDollarVolume ?? current.minAvgDollarVolume,
-    useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi
+    useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
+    etfSymbols: input.etfSymbols ? resolveEtfSymbols(input.etfSymbols) : current.etfSymbols
   };
   await setSetting("settings", next);
   return readSettings();
@@ -127,7 +131,10 @@ export async function runFullScan(): Promise<ScanResponse> {
   const scanWarnings = new Set<string>();
   let usedLive = false;
   let usedDemo = false;
-  const symbolsToScan = await resolveScanSymbols();
+  const etfSymbols = settings.etfSymbols;
+  const etfSymbolSet = new Set(etfSymbols);
+  const symbolsToScan = await resolveScanSymbols(settings);
+  const stockSymbolsToScan = symbolsToScan.filter((symbol) => !etfSymbolSet.has(symbol));
   const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgDollarVolume);
   if (symbolsToScan.length < MIN_REFRESHED_SYMBOLS) {
     scanWarnings.add("Scan universe contains only " + symbolsToScan.length + " symbols; expected at least " + MIN_REFRESHED_SYMBOLS + ".");
@@ -138,19 +145,21 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sectorBySymbol = await getDefaultUniverseSectorMap();
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
-  const fmpEarnings = fmp ? await fmp.earningsCalendar(symbolsToScan) : undefined;
+  const fmpEarnings = fmp && stockSymbolsToScan.length ? await fmp.earningsCalendar(stockSymbolsToScan) : undefined;
   const earningsBySymbol = fmpEarnings?.earningsBySymbol ?? new Map<string, string>();
   fmpEarnings?.warnings.forEach((warning) => scanWarnings.add(warning));
   if (fmpEarnings?.usedLive) usedLive = true;
 
   if (!canUseLiveSchwab) {
-    scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 universe with live market data.");
+    scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 + selected ETF universe with live market data.");
   }
 
   const outcomes = await mapLimit(symbolsToScan, SCAN_CONCURRENCY, (symbol) => {
     const sector = sectorBySymbol[symbol];
+    const assetType: AssetType = etfSymbolSet.has(symbol) ? "etf" : "stock";
     return scanSymbol({
       symbol,
+      assetType,
       settings,
       canUseLiveSchwab,
       quote: quoteMap.get(symbol),
@@ -192,8 +201,9 @@ export async function runFullScan(): Promise<ScanResponse> {
   });
 }
 
-export async function resolveScanSymbols(): Promise<string[]> {
-  return getDefaultUniverseSymbols();
+export async function resolveScanSymbols(inputSettings?: Settings): Promise<string[]> {
+  const settings = inputSettings ?? await readSettings();
+  return mergeSymbols(await getDefaultUniverseSymbols(), settings.etfSymbols);
 }
 
 export async function readDisplayResults(): Promise<ScanResult[]> {
@@ -238,6 +248,7 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
 
 async function scanSymbol(input: {
   symbol: string;
+  assetType: AssetType;
   settings: Settings;
   canUseLiveSchwab: boolean;
   quote?: SchwabQuote;
@@ -249,7 +260,7 @@ async function scanSymbol(input: {
   nextEarningsDate?: string;
   fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
 }): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason }> {
-  const { symbol, settings, canUseLiveSchwab } = input;
+  const { symbol, settings, canUseLiveSchwab, assetType } = input;
   const warnings: string[] = [];
   let usedLive = false;
   let usedDemo = false;
@@ -281,19 +292,19 @@ async function scanSymbol(input: {
       return { warnings, usedLive, usedDemo, skipReason: "avgDollarVolume" };
     }
 
-    const earlyFmp = await input.fmp?.enrich(symbol, {
-      beta: quote?.beta === undefined,
-      marketCap: quote?.marketCap === undefined
-    });
+    const earlyFmp = assetType === "stock" ? await input.fmp?.enrich(symbol, {
+      beta: assetType === "stock" && quote?.beta === undefined,
+      marketCap: assetType === "stock" && quote?.marketCap === undefined
+    }) : undefined;
     earlyFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (earlyFmp?.usedLive) usedLive = true;
     let fundamentals = mergeFundamentals(symbol, quote, earlyFmp?.data);
 
-    if (fundamentals.beta !== undefined && fundamentals.sources?.beta !== "demo" && fundamentals.beta < settings.minBeta) {
+    if (assetType === "stock" && fundamentals.beta !== undefined && fundamentals.sources?.beta !== "demo" && fundamentals.beta < settings.minBeta) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.beta) + " beta is below " + settings.minBeta + ".");
       return { warnings, usedLive, usedDemo, skipReason: "beta" };
     }
-    if (fundamentals.marketCap !== undefined && fundamentals.sources?.marketCap !== "demo" && fundamentals.marketCap < settings.minMarketCap) {
+    if (assetType === "stock" && fundamentals.marketCap !== undefined && fundamentals.sources?.marketCap !== "demo" && fundamentals.marketCap < settings.minMarketCap) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.marketCap) + " market cap is below " + formatMoney(settings.minMarketCap) + ".");
       return { warnings, usedLive, usedDemo, skipReason: "marketCap" };
     }
@@ -333,10 +344,10 @@ async function scanSymbol(input: {
       usedDemo = true;
     }
 
-    const contextFmp = await input.fmp?.enrich(symbol, {
-      sector: !input.sector && fundamentals.sources?.sector !== "fmp",
-      nextEarningsDate: !input.nextEarningsDate
-    });
+    const contextFmp = assetType === "stock" ? await input.fmp?.enrich(symbol, {
+      sector: assetType === "stock" && !input.sector && fundamentals.sources?.sector !== "fmp",
+      nextEarningsDate: assetType === "stock" && !input.nextEarningsDate
+    }) : undefined;
     contextFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (contextFmp?.usedLive) usedLive = true;
     if (contextFmp?.data) {
@@ -360,6 +371,7 @@ async function scanSymbol(input: {
     const result = gradeSetup({
       symbol,
       companyName: quote?.companyName,
+      assetType,
       candles,
       currentPrice: price,
       fundamentals,
@@ -391,6 +403,7 @@ async function scanSymbol(input: {
     const weekly = weeklySqueezeFromDaily(candles);
     const fallback = gradeSetup({
       symbol,
+      assetType: input.assetType,
       candles,
       fundamentals: demoFundamental(symbol),
       optionable: settings.useDemoDataWhenMissingApi,
@@ -403,6 +416,7 @@ async function scanSymbol(input: {
       sectorCandles: input.sectorCandles
     });
     fallback.dataSource = "demo";
+    fallback.assetType = input.assetType;
     fallback.warnings.push(error instanceof Error ? error.message : "Scan failed.");
     warnings.push(...fallback.warnings.map((warning) => symbol + ": " + warning));
     return { result: fallback, warnings, usedLive, usedDemo: true };
@@ -465,6 +479,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const grade = gradeFromSetupScore(setupScore);
   const normalized: ScanResult = {
     ...result,
+    assetType: result.assetType ?? "stock",
     grade,
     longCallDecision,
     setupQuality: grade === "A" ? "High" : "Moderate",
@@ -491,6 +506,10 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     })
   };
   return normalized;
+}
+
+function mergeSymbols(stockSymbols: string[], etfSymbols: string[]): string[] {
+  return [...new Set([...stockSymbols, ...etfSymbols])].sort();
 }
 
 function normalizeCachedIndicators(indicators: IndicatorSnapshot): IndicatorSnapshot {

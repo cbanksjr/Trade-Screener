@@ -103,6 +103,7 @@ describe("Schwab response normalizers", () => {
       schwab: { symbol: "GAP", price: 50, beta: 1.2 },
       scanResult: {
         symbol: "GAP",
+        assetType: "stock",
         setupDirection: "long",
         dataSource: "schwab",
         price: 51,

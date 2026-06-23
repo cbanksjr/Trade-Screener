@@ -3,15 +3,25 @@ import type { Candle, ScanDiagnostics, ScanResponse, ScanResult, Settings } from
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, initDb, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
+import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
 import { __resetScanStateForTest, mergeFundamentals, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
 
 describe("scan symbol resolution", () => {
-  it("always uses the automatic S&P 500 + Nasdaq 100 universe", async () => {
+  it("uses the automatic S&P 500 + Nasdaq 100 universe plus default ETFs", async () => withDbRestore(async () => {
+    await setSetting("settings", {});
+
     const symbols = await resolveScanSymbols();
 
     expect(symbols.length).toBeGreaterThanOrEqual(defaultUniverseSymbols.length);
     expect(symbols).toContain("AAPL");
     expect(symbols).toContain("NVDA");
+    expect(symbols).toContain("SPY");
+    expect(symbols).toContain("QQQ");
+    expect(symbols).toContain("SMH");
+  }));
+
+  it("normalizes ETF symbols from configuration-style input", () => {
+    expect(parseEtfSymbols("spy, qqq, SMH, bad-symbol!, spy")).toEqual(["QQQ", "SMH", "SPY"]);
   });
 });
 
@@ -127,6 +137,26 @@ describe("settings", () => {
     const settings = await readSettings();
 
     expect(settings.minAvgDollarVolume).toBe(450_000_000);
+  }));
+
+  it("allows settings to override the ETF scan list", async () => withDbRestore(async () => {
+    await setSetting("settings", { etfSymbols: ["spy", "qqq", "bad-symbol!", "SPY"] });
+
+    const settings = await readSettings();
+    const symbols = await resolveScanSymbols(settings);
+
+    expect(settings.etfSymbols).toEqual(["QQQ", "SPY"]);
+    expect(symbols).toContain("SPY");
+    expect(symbols).toContain("QQQ");
+    expect(symbols).not.toContain("SMH");
+  }));
+
+  it("uses the curated ETF list when settings do not override it", async () => withDbRestore(async () => {
+    await setSetting("settings", {});
+
+    const settings = await readSettings();
+
+    expect(settings.etfSymbols).toEqual(defaultEtfSymbols);
   }));
 });
 
@@ -376,6 +406,7 @@ function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: numb
 function qualifyingResult(symbol: string, daily = indicator("low"), weekly = indicator("mid")): ScanResult {
   return {
     symbol,
+    assetType: "stock",
     dataSource: "demo",
     price: 100,
     beta: 1,

@@ -374,6 +374,32 @@ small,
   white-space: nowrap;
 }
 
+.symbol-wrap {
+  align-items: center;
+  display: flex;
+  gap: 6px;
+  min-width: 0;
+}
+
+.symbol-wrap em,
+.asset-badge {
+  background: color-mix(in srgb, var(--accent) 14%, var(--panel));
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 5px;
+  color: var(--accent-strong);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-weight: 900;
+  letter-spacing: 0.03em;
+  line-height: 1;
+  padding: 4px 5px;
+}
+
+.asset-badge {
+  display: inline-flex;
+  transform: translateY(-0.18em);
+}
+
 .candidate-card-top b {
   color: var(--accent-strong);
   font-size: 0.86rem;

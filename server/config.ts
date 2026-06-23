@@ -21,5 +21,6 @@ export const config = {
   schwabMarketDataBaseUrl: process.env.SCHWAB_MARKET_DATA_BASE_URL ?? "https://api.schwabapi.com/marketdata/v1",
   fmpApiKey: process.env.FMP_API_KEY ?? "",
   fmpBaseUrl: process.env.FMP_BASE_URL ?? "https://financialmodelingprep.com/stable",
-  fmpMaxCallsPerScan: Number(process.env.FMP_MAX_CALLS_PER_SCAN ?? 1000)
+  fmpMaxCallsPerScan: Number(process.env.FMP_MAX_CALLS_PER_SCAN ?? 1000),
+  etfSymbols: process.env.ETF_SYMBOLS ?? ""
 };

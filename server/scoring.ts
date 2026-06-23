@@ -1,4 +1,5 @@
 import type {
+  AssetType,
   Candle,
   Fundamentals,
   Grade,
@@ -38,6 +39,7 @@ export const defaultSettings = {
 export function gradeSetup(input: {
   symbol: string;
   companyName?: string;
+  assetType?: AssetType;
   candles: Candle[];
   currentPrice?: number;
   fundamentals?: Fundamentals;
@@ -54,6 +56,7 @@ export function gradeSetup(input: {
   strictFundamentals?: boolean;
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
+  const assetType = input.assetType ?? "stock";
   const dailySqueezeDotCount = activeSqueezeDotCount(input.candles);
   const latest = input.candles[input.candles.length - 1];
   const price = input.currentPrice ?? latest.close;
@@ -72,7 +75,8 @@ export function gradeSetup(input: {
     marketCap,
     avgDollarVolume20d,
     optionable: input.optionable,
-    strictFundamentals: Boolean(input.strictFundamentals)
+    strictFundamentals: Boolean(input.strictFundamentals),
+    assetType
   });
   const marketStructure = evaluateMarketStructure(dailyContext, weeklyContext);
   const optionLayer = evaluateOptions(options);
@@ -92,6 +96,8 @@ export function gradeSetup(input: {
     avgDollarVolume20d,
     spyCandles: input.spyCandles,
     qqqCandles: input.qqqCandles,
+    symbol: input.symbol,
+    assetType,
     sector,
     sectorCandles: input.sectorCandles,
     nextEarningsDate: input.fundamentals?.nextEarningsDate
@@ -108,6 +114,7 @@ export function gradeSetup(input: {
   return {
     symbol: input.symbol,
     companyName: input.companyName,
+    assetType,
     setupDirection: "long",
     dataSource: "demo",
     price,
@@ -184,16 +191,19 @@ function evaluateInstitutional(input: {
   avgDollarVolume20d: number;
   optionable: boolean;
   strictFundamentals: boolean;
+  assetType: AssetType;
 }): LayerEvaluation {
   const priceOk = input.price > defaultSettings.minPrice;
-  const betaOk = input.beta === undefined ? !input.strictFundamentals : input.beta >= defaultSettings.minBeta;
-  const marketCapOk = input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= defaultSettings.minMarketCap;
+  const betaOk = input.assetType === "etf" || (input.beta === undefined ? !input.strictFundamentals : input.beta >= defaultSettings.minBeta);
+  const marketCapOk = input.assetType === "etf" || (input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= defaultSettings.minMarketCap);
   const volumeOk = input.avgDollarVolume20d >= defaultSettings.minAvgDollarVolume;
   const passed = [priceOk, betaOk, marketCapOk, volumeOk, input.optionable].filter(Boolean).length;
-  const detail = "Price $" + input.price.toFixed(2)
-    + ", beta " + (input.beta?.toFixed(2) ?? "unavailable")
-    + ", market cap " + (input.marketCap ? formatMoney(input.marketCap) : "unavailable")
-    + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + ".";
+  const detail = input.assetType === "etf"
+    ? "ETF price $" + input.price.toFixed(2) + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + "; beta and market cap are not required."
+    : "Price $" + input.price.toFixed(2)
+      + ", beta " + (input.beta?.toFixed(2) ?? "unavailable")
+      + ", market cap " + (input.marketCap ? formatMoney(input.marketCap) : "unavailable")
+      + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + ".";
   if (passed === 5) return layer("Institutional Context", "Bullish", detail);
   if (passed >= 4) return layer("Institutional Context", "Neutral", detail);
   return layer("Institutional Context", "Bearish", detail);
@@ -285,18 +295,20 @@ function evaluateSetupScore(input: {
   avgDollarVolume20d: number;
   spyCandles?: Candle[];
   qqqCandles?: Candle[];
+  symbol: string;
+  assetType: AssetType;
   sector?: string;
   sectorCandles?: Candle[];
   nextEarningsDate?: string;
 }): SetupScoreResult {
   const factors = [
     factor("Market Regime", input.marketRegime.status, input.marketRegime.detail),
-    evaluateSectorStrength(input.sector, input.sectorCandles, input.spyCandles),
+    input.assetType === "etf" ? evaluateEtfStrength(input.symbol, input.candles, input.spyCandles) : evaluateSectorStrength(input.sector, input.sectorCandles, input.spyCandles),
     evaluateRelativeStrengthFactor(input.candles, input.spyCandles, input.qqqCandles),
     evaluateLiquidityFactor(input.avgDollarVolume20d, input.optionLayer, input.options[0]),
     evaluatePriceStructure(input.dailyContext),
     evaluateVolatilityFit(input.indicators, input.dailySqueezeDotCount),
-    evaluateCatalystSafety(input.nextEarningsDate)
+    input.assetType === "etf" ? evaluateEtfCatalystSafety() : evaluateCatalystSafety(input.nextEarningsDate)
   ];
   const scored = factors.map((item) => ({ ...item, contribution: factorContribution(item.status) }));
   const score = round(scored.reduce((sum, item) => sum + item.contribution, 0), 0);
@@ -321,6 +333,16 @@ function evaluateSectorStrength(sector?: string, sectorCandles?: Candle[], spyCa
   if (spread >= 0) return factor("Sector Strength", "Bullish", sector + " sector outperforming SPY over 20 periods.");
   if (spread >= -0.01) return factor("Sector Strength", "Neutral", sector + " sector is roughly in line with SPY.");
   return factor("Sector Strength", "Bearish", sector + " sector underperforming SPY over 20 periods.");
+}
+
+function evaluateEtfStrength(symbol: string, candles: Candle[], spyCandles?: Candle[]): InstitutionalFactor {
+  if (!spyCandles?.length) return factor("Sector Strength", "Insufficient Data", "SPY comparison unavailable for ETF relative strength.");
+  const etfReturn = percentReturn(candles.slice(-20));
+  const spyReturn = percentReturn(spyCandles.slice(-20));
+  const spread = etfReturn - spyReturn;
+  if (spread >= 0) return factor("Sector Strength", "Bullish", symbol + " ETF outperforming SPY over 20 periods.");
+  if (spread >= -0.01) return factor("Sector Strength", "Neutral", symbol + " ETF is roughly in line with SPY.");
+  return factor("Sector Strength", "Bearish", symbol + " ETF underperforming SPY over 20 periods.");
 }
 
 function gradeCapReasonsFor(layerEvaluations: LayerEvaluation[], weeklyContext: LowerTimeframeContext, setupScore: SetupScoreResult): string[] {
@@ -374,6 +396,10 @@ function evaluateCatalystSafety(nextEarningsDate?: string): InstitutionalFactor 
   if (days <= EARNINGS_AVOID_DAYS) return factor("Catalyst Safety", "Bearish", "Earnings are within " + EARNINGS_AVOID_DAYS + " days.");
   if (days <= EARNINGS_NEUTRAL_DAYS) return factor("Catalyst Safety", "Neutral", "Earnings are 15-29 days away; catalyst risk is elevated.");
   return factor("Catalyst Safety", "Bullish", "Next earnings is at least 30 days away.");
+}
+
+function evaluateEtfCatalystSafety(): InstitutionalFactor {
+  return factor("Catalyst Safety", "Bullish", "ETF has no single-company earnings date; catalyst risk is not applicable.");
 }
 
 function factor(name: InstitutionalFactorName, status: LayerStatus, detail: string): InstitutionalFactor {

@@ -1,5 +1,6 @@
 export type Grade = "A" | "B" | "C";
 export type TradeDirection = "long" | "short";
+export type AssetType = "stock" | "etf";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
@@ -160,6 +161,7 @@ export type TimeframeSqueezeStatus = {
 export type ScanResult = {
   symbol: string;
   companyName?: string;
+  assetType: AssetType;
   setupDirection: TradeDirection;
   dataSource: "schwab" | "demo" | "mixed";
   price: number;
@@ -220,6 +222,7 @@ export type Settings = {
   brokerCallbackUrl: string;
   hasBrokerCredentials: boolean;
   useDemoDataWhenMissingApi: boolean;
+  etfSymbols: string[];
   defaultUniverseName: string;
   defaultUniverseCount: number;
   defaultUniverseLastCheckedAt?: string;
