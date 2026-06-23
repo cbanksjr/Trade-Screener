@@ -1,4 +1,4 @@
-export type Grade = "A" | "B";
+export type Grade = "A" | "B" | "C";
 export type TradeDirection = "long" | "short";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";

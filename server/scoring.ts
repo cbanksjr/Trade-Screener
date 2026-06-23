@@ -22,8 +22,8 @@ import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore,
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
 const SETUP_FACTOR_NAMES: InstitutionalFactorName[] = ["Market Regime", "Sector Strength", "Relative Strength", "Liquidity", "Price Structure", "Volatility Fit", "Catalyst Safety"];
 const SETUP_FACTOR_WEIGHT = 100 / SETUP_FACTOR_NAMES.length;
-export const A_SETUP_SCORE_THRESHOLD = 75;
-export const B_SETUP_SCORE_THRESHOLD = 50;
+export const A_SETUP_SCORE_THRESHOLD = 90;
+export const B_SETUP_SCORE_THRESHOLD = 80;
 const EARNINGS_AVOID_DAYS = 14;
 const EARNINGS_NEUTRAL_DAYS = 29;
 
@@ -97,7 +97,7 @@ export function gradeSetup(input: {
     nextEarningsDate: input.fundamentals?.nextEarningsDate
   });
   const decision = finalDecision(layerEvaluations, dailyContext, weeklyContext, weeklySupport, setupScore);
-  const grade = decision === "Strong Long Call Candidate" ? "A" : "B";
+  const grade = gradeFromSetupScore(setupScore.score);
   const gradeCapReasons = decision === "Strong Long Call Candidate"
     ? []
     : gradeCapReasonsFor(layerEvaluations, weeklyContext, setupScore);
@@ -241,14 +241,12 @@ function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerT
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   const dailyEntryAligned = dailyContext.withinEmaPocket;
   const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
-  if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyStatus === "Bearish") return "Avoid";
+  if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyContext.bias !== "bullish" || weeklyStatus === "Bearish") return "Avoid";
   if (
     byLayer("Compression Quality") === "Bullish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
     && byLayer("Macro Regime") !== "Bearish"
-    && weeklyContext.bias === "bullish"
-    && !setupScore.capA
     && setupScore.score >= A_SETUP_SCORE_THRESHOLD
   ) return "Strong Long Call Candidate";
   if (
@@ -259,6 +257,12 @@ function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerT
     && setupScore.score >= B_SETUP_SCORE_THRESHOLD
   ) return "Moderate Long Call Candidate";
   return "Watchlist Candidate";
+}
+
+function gradeFromSetupScore(score: number): Grade {
+  if (score >= A_SETUP_SCORE_THRESHOLD) return "A";
+  if (score >= B_SETUP_SCORE_THRESHOLD) return "B";
+  return "C";
 }
 
 type SetupScoreResult = {
@@ -301,7 +305,7 @@ function evaluateSetupScore(input: {
   const catalystBlock = catalyst?.status === "Bearish";
   return {
     score,
-    status: score >= 75 ? "Bullish" : score >= 50 ? "Neutral" : "Bearish",
+    status: score >= A_SETUP_SCORE_THRESHOLD ? "Bullish" : score >= B_SETUP_SCORE_THRESHOLD ? "Neutral" : "Bearish",
     factors: scored,
     capA,
     catalystBlock
@@ -323,7 +327,7 @@ function gradeCapReasonsFor(layerEvaluations: LayerEvaluation[], weeklyContext: 
   const reasons: string[] = [];
   const layer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name);
   const factor = (name: InstitutionalFactorName) => setupScore.factors.find((item) => item.name === name);
-  if (setupScore.score < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 75.");
+  if (setupScore.score < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 90.");
   if (weeklyContext.bias !== "bullish") reasons.push("Weekly context is not bullish.");
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");

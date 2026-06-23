@@ -412,8 +412,13 @@ async function scanSymbol(input: {
 function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.setupDirection === "long"
+    && hasBullishWeeklyContext(result)
     && (result.longCallDecision === "Strong Long Call Candidate" || result.longCallDecision === "Moderate Long Call Candidate")
     && (result.grade === "A" || result.grade === "B");
+}
+
+function hasBullishWeeklyContext(result: ScanResult): boolean {
+  return result.squeezeStatusByTimeframe?.some((item) => item.timeframe === "weekly" && item.bias === "bullish") ?? false;
 }
 
 function createScanDiagnostics(scannedSymbols: number, minAvgDollarVolume: number): ScanDiagnostics {
@@ -445,6 +450,7 @@ function classifyFilteredResult(result: ScanResult): ScanDiagnosticReason {
   if (layer("Options Market Context")?.status === "Bearish") return "options";
   if (factor("Liquidity")?.status === "Bearish") return "spreadLiquidity";
   if (layer("Squeeze Market Structure")?.status === "Bearish") return "marketStructure";
+  if (!hasBullishWeeklyContext(result)) return "marketStructure";
   if (factor("Catalyst Safety")?.status === "Bearish") return "catalyst";
   if (factor("Sector Strength")?.status === "Insufficient Data") return "sectorDataCap";
   if (!result.passesUniverse) return "finalDisplayFilter";
@@ -456,7 +462,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const dotCount = resolveDailySqueezeDotCount(result);
   const setupScore = typeof result.setupScore === "number" ? result.setupScore : result.score;
   const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore);
-  const grade = longCallDecision === "Strong Long Call Candidate" ? "A" : "B";
+  const grade = gradeFromSetupScore(setupScore);
   const normalized: ScanResult = {
     ...result,
     grade,
@@ -503,12 +509,18 @@ function normalizeCachedDecision(decision: ScanResult["longCallDecision"], setup
   return decision;
 }
 
+function gradeFromSetupScore(setupScore: number): ScanResult["grade"] {
+  if (setupScore >= A_SETUP_SCORE_THRESHOLD) return "A";
+  if (setupScore >= B_SETUP_SCORE_THRESHOLD) return "B";
+  return "C";
+}
+
 function cachedGradeCapReasons(result: ScanResult, decision: ScanResult["longCallDecision"], setupScore: number): string[] {
   if (decision === "Strong Long Call Candidate") return [];
   const reasons: string[] = [];
   const weekly = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "weekly");
   const factor = (name: ScanResult["institutionalFactors"][number]["name"]) => result.institutionalFactors?.find((item) => item.name === name);
-  if (setupScore < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 75.");
+  if (setupScore < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 90.");
   if (weekly && weekly.bias !== "bullish") reasons.push("Weekly context is not bullish.");
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");

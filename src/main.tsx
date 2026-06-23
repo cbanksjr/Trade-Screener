@@ -27,7 +27,7 @@ const api = {
   },
 };
 
-const GRADE_ORDER = ["A", "B"] as const;
+const GRADE_ORDER = ["A", "B", "C"] as const;
 type ThemeMode = "light" | "dark";
 
 function App() {

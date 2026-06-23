@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard only displays qualified `A` or `B` compression candidates. `A` means a strong long-call candidate with a qualified Daily squeeze setup, supportive Weekly context, daily price inside the EMA pocket from 0.1% above the 50 EMA to 0.1% below the 8 EMA, acceptable options liquidity, and complete institutional context. `B` means a moderate but still qualified long-call candidate. Missing sector or earnings data can cap an otherwise strong setup at `B`, but does not exclude it. Watchlist and Avoid results are excluded from the visible candidate list.
+The Dashboard only displays qualified `A` or `B` compression candidates with bullish Weekly context. `A` means a setup score of `90-100` with all hard gates satisfied. `B` means a setup score of `80-89` that still passes the trade-safety gates. `C` setups at `79` or below, Watchlist, Avoid, and non-bullish Weekly context results are excluded from the visible candidate list.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -79,7 +79,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - At least 5 consecutive active Daily squeeze dots before expansion
 - Daily entry proximity: current price must be at least 0.1% above the 50 EMA and at least 0.1% below the 8 EMA
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
-- Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
+- Bullish Weekly chart context as required higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY

@@ -199,11 +199,18 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LONG"]);
   }));
 
-  it("only displays A/B qualified strong or moderate candidates", async () => withDbRestore(async () => {
+  it("only displays A/B qualified strong or moderate candidates with bullish weekly context", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
+    const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 79, grade: "C" };
+    const nonBullishWeekly: ScanResult = {
+      ...qualifyingResult("WEEKLYNEUTRAL"),
+      squeezeStatusByTimeframe: qualifyingResult("WEEKLYNEUTRAL").squeezeStatusByTimeframe.map((item) => item.timeframe === "weekly" ? { ...item, bias: "neutral" } : item)
+    };
     await replaceScanResults([
       qualifyingResult("QUALIFIED"),
-      watchlist
+      watchlist,
+      cGrade,
+      nonBullishWeekly
     ]);
 
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["QUALIFIED"]);
