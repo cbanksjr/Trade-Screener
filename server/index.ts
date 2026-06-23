@@ -9,10 +9,8 @@ import cron from "node-cron";
 import { config } from "./config";
 import { readCachedScanResponse, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
 import { initDb } from "./sqlite";
-import { fetchChartHistory, fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
-import { aggregateDailyCandlesToWeeks } from "./timeframes";
+import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
-import type { Candle, ChartTimeframe } from "../shared/types";
 
 await initDb();
 await refreshUniverseIfNeeded();
@@ -109,43 +107,11 @@ app.get("/api/fundamentals/:symbol", async (req, res, next) => {
   }
 });
 
-app.get("/api/chart/:symbol", async (req, res, next) => {
-  try {
-    const symbol = String(req.params.symbol ?? "").trim().toUpperCase();
-    const timeframe = chartTimeframe(String(req.query.timeframe ?? "1d"));
-    const cached = (await readCachedScanResponse()).results.find((result) => result.symbol === symbol);
-    const warnings: string[] = [];
-    let candles: Candle[] = [];
-
-    try {
-      candles = await loadChartCandles(symbol, timeframe);
-    } catch (error) {
-      warnings.push(error instanceof Error ? error.message : "Schwab chart history request failed.");
-      if (cached && (timeframe === "1d" || timeframe === "1w")) {
-        candles = timeframe === "1w" ? aggregateDailyCandlesToWeeks(cached.candles) : cached.candles;
-      }
-    }
-
-    res.json({ symbol, timeframe, candles, warnings });
-  } catch (error) {
-    next(error);
-  }
-});
-
 function redirectToClient(res: express.Response, schwab: "connected" | "error", message?: string) {
   const url = new URL(config.clientOrigin);
   url.searchParams.set("schwab", schwab);
   if (message) url.searchParams.set("message", message.slice(0, 180));
   res.redirect(url.toString());
-}
-
-async function loadChartCandles(symbol: string, timeframe: ChartTimeframe): Promise<Candle[]> {
-  if (timeframe === "1d") return fetchChartHistory(symbol);
-  return aggregateDailyCandlesToWeeks(await fetchChartHistory(symbol));
-}
-
-function chartTimeframe(value: string): ChartTimeframe {
-  return value === "1w" ? value : "1d";
 }
 
 if (config.isProduction) {

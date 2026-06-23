@@ -2,7 +2,6 @@ export type Grade = "A" | "B";
 export type TradeDirection = "long" | "short";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
-export type ChartTimeframe = "1d" | "1w";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
 
 export type Candle = {
@@ -12,13 +11,6 @@ export type Candle = {
   low: number;
   close: number;
   volume: number;
-};
-
-export type ChartDataResponse = {
-  symbol: string;
-  timeframe: ChartTimeframe;
-  candles: Candle[];
-  warnings: string[];
 };
 
 export type Fundamentals = {

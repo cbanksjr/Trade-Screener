@@ -1,8 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, BarChart3, CheckCircle2, Moon, Play, Sun, XCircle } from "lucide-react";
-import { CandlestickSeries, ColorType, createChart, LineSeries, type CandlestickData, type LineData, type Time, type UTCTimestamp } from "lightweight-charts";
-import type { BrokerStatus, Candle, ChartDataResponse, ChartTimeframe, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { BrokerStatus, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
 
 const api = {
@@ -26,17 +25,9 @@ const api = {
     const response = await fetch("/api/schwab/login");
     return response.json();
   },
-  async chart(symbol: string, timeframe: ChartTimeframe): Promise<ChartDataResponse> {
-    const response = await fetch("/api/chart/" + encodeURIComponent(symbol) + "?timeframe=" + encodeURIComponent(timeframe));
-    return response.json();
-  }
 };
 
 const GRADE_ORDER = ["A", "B"] as const;
-const CHART_TIMEFRAMES: Array<{ label: string; value: ChartTimeframe }> = [
-  { label: "1W", value: "1w" },
-  { label: "1D", value: "1d" }
-];
 type ThemeMode = "light" | "dark";
 
 function App() {
@@ -174,7 +165,7 @@ function App() {
           </div>
 
           <div className="detail">
-            {active ? <TickerDetail result={active} theme={theme} /> : <EmptyState runScan={runScan} />}
+            {active ? <TickerDetail result={active} /> : <EmptyState runScan={runScan} />}
           </div>
         </section>
       </section>
@@ -225,19 +216,24 @@ function ResultRow({ result, activeSymbol, onSelect }: {
   onSelect: (symbol: string) => void;
 }) {
   return (
-    <div className={"row " + (result.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(result.symbol)} onKeyDown={(event) => {
+    <div className={"candidate-card " + (result.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(result.symbol)} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") onSelect(result.symbol);
     }} role="button" tabIndex={0}>
-      <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
-      <span>
+      <div className="candidate-card-top">
+        <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
         <strong>{result.symbol}</strong>
-        <small>{money(result.price)} · {result.longCallDecision} · Daily dots {dailySqueezeDotLabel(result)} · Setup {setupScoreLabel(result)}</small>
-      </span>
+        <b>{setupScoreLabel(result)}</b>
+      </div>
+      <div className="candidate-card-stats">
+        <span>{money(result.price)}</span>
+        <span>{dailySqueezeDotLabel(result)} dots</span>
+      </div>
+      <small>{result.longCallDecision}</small>
     </div>
   );
 }
 
-function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode }) {
+function TickerDetail({ result }: { result: ScanResult }) {
   return (
     <>
       <section className="panel hero-panel">
@@ -286,10 +282,6 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
         ) : (
           <p className="empty-copy">Run scan for setup score.</p>
         )}
-      </section>
-
-      <section className="panel chart-panel">
-        <ChartPanel result={result} theme={theme} />
       </section>
 
       <section className="panel">
@@ -344,170 +336,6 @@ function TickerDetail({ result, theme }: { result: ScanResult; theme: ThemeMode 
       </section>
     </>
   );
-}
-
-function ChartPanel({ result, theme }: { result: ScanResult; theme: ThemeMode }) {
-  const [timeframe, setTimeframe] = React.useState<ChartTimeframe>("1d");
-  const [candles, setCandles] = React.useState<Candle[]>(result.candles);
-  const fallbackCandlesRef = React.useRef(result.candles);
-
-  React.useEffect(() => {
-    fallbackCandlesRef.current = result.candles;
-    setTimeframe("1d");
-    setCandles(result.candles);
-  }, [result.symbol]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-    api.chart(result.symbol, timeframe).then((data) => {
-      if (cancelled) return;
-      setCandles(data.candles.length ? data.candles : fallbackCandlesRef.current);
-    }).catch((error) => {
-      if (cancelled) return;
-      console.warn("Chart timeframe could not be loaded:", error);
-      setCandles(fallbackCandlesRef.current);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [result.symbol, timeframe]);
-
-  return (
-    <div className="chart-wrap">
-      <div className="chart-toolbar">
-        <div className="timeframe-tabs">
-          {CHART_TIMEFRAMES.map((item) => (
-            <button className={item.value === timeframe ? "active" : ""} key={item.value} onClick={() => setTimeframe(item.value)}>{item.label}</button>
-          ))}
-        </div>
-      </div>
-      <LightweightPriceChart candles={candles} theme={theme} />
-    </div>
-  );
-}
-
-function LightweightPriceChart({ candles, theme }: { candles: Candle[]; theme: ThemeMode }) {
-  const containerRef = React.useRef<HTMLDivElement | null>(null);
-
-  React.useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const colors = chartPalette(theme);
-    const chartWidth = Math.max(1, container.clientWidth);
-    const chartHeight = Math.max(1, container.clientHeight);
-
-    const chart = createChart(container, {
-      width: chartWidth,
-      height: chartHeight,
-      layout: {
-        background: { type: ColorType.Solid, color: colors.background },
-        fontSize: 11,
-        textColor: colors.text
-      },
-      grid: {
-        vertLines: { color: colors.grid },
-        horzLines: { color: colors.grid }
-      },
-      rightPriceScale: { borderColor: colors.border, minimumWidth: 48 },
-      timeScale: { borderColor: colors.border },
-      localization: { priceFormatter: (price: number) => money(price) }
-    });
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: "#14a06f",
-      downColor: "#d15a5a",
-      borderUpColor: "#14a06f",
-      borderDownColor: "#d15a5a",
-      wickUpColor: "#14a06f",
-      wickDownColor: "#d15a5a"
-    });
-    const chartCandles = candles.map((candle): CandlestickData<Time> => ({
-      time: toChartTime(candle.date),
-      open: candle.open,
-      high: candle.high,
-      low: candle.low,
-      close: candle.close
-    }));
-    series.setData(chartCandles);
-    const ema8Series = chart.addSeries(LineSeries, {
-      color: colors.ema8,
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      title: "8 EMA"
-    });
-    const ema21Series = chart.addSeries(LineSeries, {
-      color: colors.ema21,
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      title: "21 EMA"
-    });
-    const ema34Series = chart.addSeries(LineSeries, {
-      color: colors.ema34,
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      title: "34 EMA"
-    });
-    const ema55Series = chart.addSeries(LineSeries, {
-      color: colors.ema55,
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      title: "55 EMA"
-    });
-    const ema89Series = chart.addSeries(LineSeries, {
-      color: colors.ema89,
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      title: "89 EMA"
-    });
-    ema8Series.setData(emaLineData(candles, 8));
-    ema21Series.setData(emaLineData(candles, 21));
-    ema34Series.setData(emaLineData(candles, 34));
-    ema55Series.setData(emaLineData(candles, 55));
-    ema89Series.setData(emaLineData(candles, 89));
-    chart.timeScale().fitContent();
-    const resizeObserver = new ResizeObserver(() => {
-      chart.resize(Math.max(1, container.clientWidth), Math.max(1, container.clientHeight), true);
-    });
-    resizeObserver.observe(container);
-
-    return () => {
-      resizeObserver.disconnect();
-      chart.remove();
-    };
-  }, [candles, theme]);
-
-  return <div className="lightweight-chart" ref={containerRef} />;
-}
-
-function chartPalette(theme: ThemeMode) {
-  return theme === "dark"
-    ? { background: "#121c22", text: "#99aab3", grid: "#273842", border: "#273842", ema8: "#20c997", ema21: "#6dcadd", ema34: "#f5b84b", ema55: "#e0a526", ema89: "#ef6b6b" }
-    : { background: "#ffffff", text: "#667085", grid: "#e5eaf0", border: "#e5eaf0", ema8: "#047857", ema21: "#1d7a8c", ema34: "#d39b24", ema55: "#b98518", ema89: "#b64141" };
-}
-
-function toChartTime(value: string): Time {
-  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value as Time;
-  return Math.floor(new Date(value).getTime() / 1000) as UTCTimestamp;
-}
-
-function emaLineData(candles: Candle[], period: number): LineData<Time>[] {
-  const multiplier = 2 / (period + 1);
-  const output: LineData<Time>[] = [];
-  let previous: number | undefined;
-  candles.forEach((candle, index) => {
-    previous = index === 0 || previous === undefined ? candle.close : candle.close * multiplier + previous * (1 - multiplier);
-    if (index >= period - 1) {
-      output.push({
-        time: toChartTime(candle.date),
-        value: Number(previous.toFixed(2))
-      });
-    }
-  });
-  return output;
 }
 
 function Metric({ label, value }: { label: string; value: string }) {

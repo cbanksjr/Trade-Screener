@@ -308,7 +308,8 @@ small,
 
 .table {
   display: grid;
-  gap: 8px;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr));
 }
 
 .scroll-list {
@@ -335,40 +336,68 @@ small,
   border-radius: 999px;
 }
 
-.row {
-  align-items: start;
+.candidate-card {
   background: var(--panel-soft);
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--text);
   display: grid;
-  gap: 10px 12px;
-  grid-template-columns: 46px 1fr auto;
-  min-height: 74px;
-  padding: 12px 10px;
+  gap: 9px;
+  min-height: 128px;
+  padding: 12px;
   text-align: left;
   width: 100%;
 }
 
-.row > span {
-  min-width: 0;
-}
-
-.row:hover {
+.candidate-card:hover {
   border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  transform: translateY(-1px);
 }
 
-.row.active {
+.candidate-card.active {
   background: var(--accent-soft);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
 }
 
-.row small,
-.row strong {
-  display: block;
+.candidate-card-top {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: 42px minmax(0, 1fr) auto;
+  min-width: 0;
 }
 
-.row small {
+.candidate-card-top strong {
+  font-size: 1.02rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.candidate-card-top b {
+  color: var(--accent-strong);
+  font-size: 0.86rem;
+}
+
+.candidate-card-stats {
+  display: grid;
+  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.candidate-card-stats span {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  min-width: 0;
+  padding: 7px 8px;
+}
+
+.candidate-card small {
+  color: var(--muted);
   line-height: 1.35;
   overflow-wrap: anywhere;
 }
@@ -568,84 +597,6 @@ small,
   color: var(--muted);
 }
 
-.chart-panel {
-  contain: layout paint;
-  height: clamp(420px, 38vw, 540px);
-  isolation: isolate;
-  overflow: hidden;
-  z-index: 0;
-}
-
-.chart-wrap {
-  display: grid;
-  gap: 8px;
-  grid-template-rows: auto auto minmax(0, 1fr);
-  height: 100%;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.chart-toolbar {
-  align-items: center;
-  display: flex;
-  gap: 12px;
-  justify-content: flex-start;
-  min-height: 34px;
-}
-
-.chart-toolbar span,
-.chart-warning {
-  color: var(--muted);
-  font-size: 0.82rem;
-}
-
-.timeframe-tabs {
-  background: var(--panel-soft);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  padding: 3px;
-}
-
-.timeframe-tabs button {
-  background: transparent;
-  border-radius: 6px;
-  color: var(--muted);
-  font-size: 0.78rem;
-  font-weight: 800;
-  min-height: 28px;
-  min-width: 38px;
-}
-
-.timeframe-tabs button.active {
-  background: var(--panel);
-  box-shadow: var(--shadow);
-  color: var(--accent-strong);
-}
-
-.chart-warning {
-  color: var(--warning);
-}
-
-.lightweight-chart {
-  contain: layout paint;
-  grid-row: 3;
-  height: 100%;
-  isolation: isolate;
-  min-height: 0;
-  overflow: hidden;
-  position: relative;
-  width: 100%;
-}
-
-.lightweight-chart > div {
-  max-height: 100%;
-  max-width: 100%;
-  overflow: hidden;
-}
-
 .inline-warnings {
   color: var(--danger);
   display: grid;
@@ -731,10 +682,6 @@ small,
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
-  .chart-panel {
-    height: clamp(360px, 46vw, 500px);
-  }
-
   .contract {
     grid-template-columns: minmax(180px, 1fr) minmax(160px, 1fr);
   }
@@ -794,7 +741,7 @@ small,
     overflow-y: auto;
   }
 
-  .row {
+  .candidate-card {
     min-height: 82px;
     padding: 13px 11px;
   }
@@ -824,10 +771,6 @@ small,
 
   .metric {
     min-height: 50px;
-  }
-
-  .chart-panel {
-    height: clamp(320px, 68vw, 430px);
   }
 
   .rules,
@@ -899,8 +842,7 @@ small,
     max-height: calc(44dvh - 56px);
   }
 
-  .row {
-    grid-template-columns: 42px 1fr;
+  .candidate-card {
     min-height: 118px;
     padding: 14px 16px;
   }
@@ -908,18 +850,6 @@ small,
   .rules,
   .contracts {
     max-height: 38dvh;
-  }
-
-  .chart-panel {
-    height: clamp(300px, 78vw, 380px);
-  }
-
-  .timeframe-tabs {
-    width: 100%;
-  }
-
-  .timeframe-tabs button {
-    flex: 1 1 58px;
   }
 
   .rule {
