@@ -171,7 +171,7 @@ function evaluateMarketStructure(dailyContext: LowerTimeframeContext, weeklyCont
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
   if (dailyContext.bias !== "bullish") return layer("Squeeze Market Structure", "Bearish", "Daily EMA structure is " + dailyContext.bias + "; bullish Daily structure is required.");
-  if (!dailyContext.withinTwoPercentOfEma21) return layer("Squeeze Market Structure", "Bearish", "Daily price is outside the 0-2% entry zone above the 21 EMA.");
+  if (!dailyContext.withinEmaPocket) return layer("Squeeze Market Structure", "Bearish", "Daily price is outside the EMA pocket between 0.1% above the 50 EMA and 0.1% below the 8 EMA.");
   if (weeklyContext.bias === "bearish") return layer("Squeeze Market Structure", "Bearish", "Weekly bearish structure blocks swing candidates.");
   if (weeklyContext.bias === "bullish") return layer("Squeeze Market Structure", "Bullish", "Daily setup is bullish and Weekly structure supports the swing thesis.");
   return layer("Squeeze Market Structure", "Neutral", "Daily setup is bullish; Weekly context is " + weeklyContext.bias + ".");
@@ -239,7 +239,7 @@ function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqC
 function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, weeklyStatus: LayerStatus, setupScore: SetupScoreResult): LongCallDecision {
   const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
-  const dailyEntryAligned = dailyContext.withinTwoPercentOfEma21;
+  const dailyEntryAligned = dailyContext.withinEmaPocket;
   const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
   if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyStatus === "Bearish") return "Avoid";
   if (
@@ -350,8 +350,8 @@ function evaluateLiquidityFactor(avgDollarVolume20d: number, optionLayer: LayerE
 }
 
 function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFactor {
-  if (context.bias === "bullish" && context.withinTwoPercentOfEma21) return factor("Price Structure", "Bullish", "Daily structure bullish and inside the 0-2% zone above the 21 EMA.");
-  if (context.bias === "bullish") return factor("Price Structure", "Neutral", "Daily structure bullish but entry is outside the 0-2% zone above the 21 EMA.");
+  if (context.bias === "bullish" && context.withinEmaPocket) return factor("Price Structure", "Bullish", "Daily structure bullish and inside the EMA pocket.");
+  if (context.bias === "bullish") return factor("Price Structure", "Neutral", "Daily structure bullish but entry is outside the EMA pocket.");
   return factor("Price Structure", "Bearish", "Daily EMA structure is not bullish.");
 }
 
@@ -412,10 +412,14 @@ function optionQuality(contract: OptionContract): number {
 
 function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapshot, price: number): LowerTimeframeContext {
   const positiveEmaStack = hasPositiveEmaStack(indicators);
-  const priceAboveEmaStack = price >= indicators.ema21 && price > indicators.ema50 && price > indicators.ema100;
   const atrDistanceFromEma21 = indicators.atr14 > 0 ? (price - indicators.ema21) / indicators.atr14 : Number.POSITIVE_INFINITY;
   const percentAboveEma21 = indicators.ema21 > 0 ? ((price - indicators.ema21) / indicators.ema21) * 100 : Number.POSITIVE_INFINITY;
-  const withinTwoPercentOfEma21 = percentAboveEma21 >= 0 && percentAboveEma21 <= 2;
+  const percentAboveEma50 = indicators.ema50 > 0 ? ((price - indicators.ema50) / indicators.ema50) * 100 : Number.POSITIVE_INFINITY;
+  const percentBelowEma8 = indicators.ema8 > 0 ? ((indicators.ema8 - price) / indicators.ema8) * 100 : Number.NEGATIVE_INFINITY;
+  const emaPocketLower = indicators.ema50 * 1.001;
+  const emaPocketUpper = indicators.ema8 * 0.999;
+  const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
+  const priceAboveEmaStack = price > indicators.ema50 && price > indicators.ema100;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   return {
     timeframe,
@@ -432,9 +436,12 @@ function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapsho
     priceAboveEmaStack,
     atr14: indicators.atr14,
     atrDistanceFromEma21: round(atrDistanceFromEma21),
-    withinOneAtrOfEma21: withinTwoPercentOfEma21,
+    withinOneAtrOfEma21: withinEmaPocket,
     percentAboveEma21: round(percentAboveEma21),
-    withinTwoPercentOfEma21,
+    withinTwoPercentOfEma21: withinEmaPocket,
+    percentAboveEma50: round(percentAboveEma50),
+    percentBelowEma8: round(percentBelowEma8),
+    withinEmaPocket,
     compressionScore,
     compressionStatus: compressionLayerStatus(compressionScore, indicators.squeezeState),
     squeezeState: indicators.squeezeState,
@@ -468,6 +475,9 @@ function unavailableContext(timeframe: LowerTimeframeContext["timeframe"], detai
     withinOneAtrOfEma21: false,
     percentAboveEma21: null,
     withinTwoPercentOfEma21: false,
+    percentAboveEma50: null,
+    percentBelowEma8: null,
+    withinEmaPocket: false,
     compressionScore: 0,
     compressionStatus: "Insufficient Data",
     squeezeState: "none",
@@ -479,12 +489,14 @@ function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerT
   if (context.bias === "unavailable" || context.ema8 === null || context.ema21 === null || context.ema50 === null || context.ema100 === null || context.atr14 === null) {
     return context;
   }
-  const priceAboveEmaStack = price >= context.ema21
-    && price > context.ema50
-    && price > context.ema100;
   const atrDistanceFromEma21 = context.atr14 > 0 ? (price - context.ema21) / context.atr14 : Number.POSITIVE_INFINITY;
   const percentAboveEma21 = context.ema21 > 0 ? ((price - context.ema21) / context.ema21) * 100 : Number.POSITIVE_INFINITY;
-  const withinTwoPercentOfEma21 = percentAboveEma21 >= 0 && percentAboveEma21 <= 2;
+  const percentAboveEma50 = context.ema50 > 0 ? ((price - context.ema50) / context.ema50) * 100 : Number.POSITIVE_INFINITY;
+  const percentBelowEma8 = context.ema8 > 0 ? ((context.ema8 - price) / context.ema8) * 100 : Number.NEGATIVE_INFINITY;
+  const emaPocketLower = context.ema50 * 1.001;
+  const emaPocketUpper = context.ema8 * 0.999;
+  const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
+  const priceAboveEmaStack = price > context.ema50 && price > context.ema100;
   const bias = context.positiveEmaStack && priceAboveEmaStack ? "bullish" : !context.positiveEmaStack && !priceAboveEmaStack ? "bearish" : "neutral";
   return {
     ...context,
@@ -492,14 +504,17 @@ function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerT
     price,
     priceAboveEmaStack,
     atrDistanceFromEma21: round(atrDistanceFromEma21),
-    withinOneAtrOfEma21: withinTwoPercentOfEma21,
+    withinOneAtrOfEma21: withinEmaPocket,
     percentAboveEma21: round(percentAboveEma21),
-    withinTwoPercentOfEma21,
+    withinTwoPercentOfEma21: withinEmaPocket,
+    percentAboveEma50: round(percentAboveEma50),
+    percentBelowEma8: round(percentBelowEma8),
+    withinEmaPocket,
     detail: context.timeframe + " is " + bias + ": current price $" + price.toFixed(2)
       + ", EMAs " + [context.ema8, context.ema21, context.ema50, context.ema100].join("/")
       + ", squeeze " + context.squeezeState
-      + ", " + (withinTwoPercentOfEma21 ? "inside" : "outside")
-      + " the 0-2% entry zone above the 21 EMA."
+      + ", " + (withinEmaPocket ? "inside" : "outside")
+      + " the EMA pocket between 0.1% above the 50 EMA and 0.1% below the 8 EMA."
   };
 }
 
@@ -510,9 +525,12 @@ function toTimeframeStatus(context: LowerTimeframeContext): TimeframeSqueezeStat
     bias: context.bias,
     priceAboveEmaStack: context.priceAboveEmaStack,
     positiveEmaStack: context.positiveEmaStack,
-    withinOneAtrOfEma21: context.withinTwoPercentOfEma21,
+    withinOneAtrOfEma21: context.withinEmaPocket,
     percentAboveEma21: context.percentAboveEma21,
-    withinTwoPercentOfEma21: context.withinTwoPercentOfEma21,
+    withinTwoPercentOfEma21: context.withinEmaPocket,
+    percentAboveEma50: context.percentAboveEma50,
+    percentBelowEma8: context.percentBelowEma8,
+    withinEmaPocket: context.withinEmaPocket,
     compressionStatus: context.compressionStatus,
     detail: context.detail
   };
@@ -548,17 +566,17 @@ function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeCont
   const reasons = layers.filter((layerItem) => layerItem.status === "Bearish" || layerItem.status === "Conflicting").map((layerItem) => layerItem.layer + ": " + layerItem.detail);
   if (!isSqueezeActive(dailyContext.squeezeState)) reasons.push("Daily squeeze is not active; swing setup should be avoided.");
   if (dailyContext.bias !== "bullish") reasons.push("Daily EMA structure is not bullish.");
-  if (dailyContext.bias !== "unavailable" && !dailyContext.withinTwoPercentOfEma21) reasons.push("Outside the 0-2% entry zone above the 21 EMA on daily.");
+  if (dailyContext.bias !== "unavailable" && !dailyContext.withinEmaPocket) reasons.push("Outside the EMA pocket between 0.1% above the 50 EMA and 0.1% below the 8 EMA on daily.");
   if (weeklyContext.bias === "bearish") reasons.push("Weekly bearish structure blocks the setup.");
   if (!option) reasons.push("No preferred call contract was found.");
   return reasons.slice(0, 6);
 }
 
 function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
-  const lower = indicators.ema21;
-  const upper = indicators.ema21 * 1.02;
+  const lower = indicators.ema50 * 1.001;
+  const upper = indicators.ema8 * 0.999;
   const prefix = price >= lower && price <= upper ? "Current price is inside the preferred entry zone: " : "Preferred entry zone: ";
-  return prefix + "$" + round(lower, 2).toFixed(2) + " to $" + round(upper, 2).toFixed(2) + " (21 EMA to 2% above 21 EMA).";
+  return prefix + "$" + round(lower, 2).toFixed(2) + " to $" + round(upper, 2).toFixed(2) + " (0.1% above 50 EMA to 0.1% below 8 EMA).";
 }
 
 function invalidation(_price: number, indicators: IndicatorSnapshot): string {

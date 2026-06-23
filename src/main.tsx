@@ -291,12 +291,12 @@ function TickerDetail({ result }: { result: ScanResult }) {
         <div className="rules">
           {result.layerEvaluations.map((layer) => (
             <div className="rule" key={layer.layer}>
-              {layer.status === "Bullish" || layer.status === "Neutral" ? <CheckCircle2 className="ok" /> : <XCircle className="bad" />}
+              {displayStatus(layer.status) === "Avoid" ? <XCircle className="bad" /> : <CheckCircle2 className={statusClass(layer.status)} />}
               <span>
                 <strong>{layerLabel(layer.layer)}: {displayStatus(layer.status)}</strong>
                 <small>{layerDetail(result, layer)}</small>
               </span>
-              <b>{displayStatus(layer.status)}</b>
+              <b className={"status-pill " + statusClass(layer.status)}>{displayStatus(layer.status)}</b>
             </div>
           ))}
         </div>

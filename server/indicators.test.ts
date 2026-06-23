@@ -38,7 +38,7 @@ describe("layer decision engine", () => {
   it("returns A or B grades from new criteria without weighted setup scoring", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const lowerTimeframes = bullishLowerTimeframes("none");
     const result = gradeSetup({
       symbol: "BULL",
@@ -81,7 +81,7 @@ describe("layer decision engine", () => {
   it("qualifies when daily and weekly are bullish without lower-timeframe requirements", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "DAILYSQZ",
       candles,
@@ -106,7 +106,7 @@ describe("layer decision engine", () => {
     expect(firstFiveDotIndex).toBeGreaterThan(90);
     const limitedCandles = candles.slice(0, firstFiveDotIndex);
     const indicators = latestIndicators(limitedCandles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "FOURDOTS",
       candles: limitedCandles,
@@ -125,7 +125,7 @@ describe("layer decision engine", () => {
   it("ignores lower-timeframe entry proximity for grading", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "LOWEREXT",
       candles,
@@ -141,13 +141,13 @@ describe("layer decision engine", () => {
     expect(result.squeezeStatusByTimeframe.map((item) => item.timeframe)).toEqual(["daily", "weekly"]);
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
-    expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the 0-2% entry zone above the 21 EMA on 30m");
+    expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the EMA pocket on 30m");
   });
 
   it("assigns A when daily qualifies and weekly is bullish without lower-timeframe data", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "TWOBULL",
       candles,
@@ -166,7 +166,7 @@ describe("layer decision engine", () => {
   it("assigns B when daily qualifies and weekly context is unavailable", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "ONEBULL",
       candles,
@@ -183,7 +183,7 @@ describe("layer decision engine", () => {
   it("calculates equal-weight institutional setup score factors", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "SCORE",
       candles,
@@ -204,7 +204,7 @@ describe("layer decision engine", () => {
   it("caps otherwise strong setups at B when setup score is below the A threshold", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "LOWA",
       candles,
@@ -227,7 +227,7 @@ describe("layer decision engine", () => {
   it("keeps high-score setups at B when A-grade context is capped and explains why", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "HIGHCAP",
       candles,
@@ -256,7 +256,7 @@ describe("layer decision engine", () => {
   it("keeps high-score setups at B when weekly context is not bullish and explains why", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "WEEKLYCAP",
       candles,
@@ -277,7 +277,7 @@ describe("layer decision engine", () => {
   it("caps A when sector or earnings data is missing but still allows B", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "CAPA",
       candles,
@@ -304,7 +304,7 @@ describe("layer decision engine", () => {
   it("allows A when FMP fills sector and earnings context", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "AVFILL",
       candles,
@@ -342,7 +342,7 @@ describe("layer decision engine", () => {
   it("classifies catalyst safety by earnings distance", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const resultFor = (daysUntilEarnings: number) => gradeSetup({
       symbol: "EARN" + daysUntilEarnings,
       candles,
@@ -383,7 +383,7 @@ describe("layer decision engine", () => {
   it("classifies sector strength versus SPY", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const sectorStatus = (sectorCandles: Candle[]) => gradeSetup({
       symbol: "SECTOR",
       candles,
@@ -406,7 +406,7 @@ describe("layer decision engine", () => {
   it("does not grade volume expansion because squeeze setups can stay quiet before breakout", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "VOL",
       candles,
@@ -424,7 +424,7 @@ describe("layer decision engine", () => {
   it("keeps momentum explanation tied to the current daily momentum calculation", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "MOMO",
       candles,
@@ -445,7 +445,7 @@ describe("layer decision engine", () => {
   it("ignores lower-timeframe squeeze for grading and reasons", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "BONUSSQZ",
       candles,
@@ -465,7 +465,7 @@ describe("layer decision engine", () => {
   it("does not block A grades because of bearish lower-timeframe legacy data", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "BEARLOWER",
       candles,
@@ -500,48 +500,49 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
-  it("allows entries from the 21 EMA through 2% above it", () => {
+  it("allows entries from 0.1% above the 50 EMA through 0.1% below the 8 EMA", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const resultAtEma21 = gradeSetup({
-      symbol: "ATEMA21",
+    const lowerPocketPrice = indicators.ema50 * 1.001;
+    const upperPocketPrice = indicators.ema8 * 0.999;
+    const resultAtLowerPocket = gradeSetup({
+      symbol: "ABOVE50",
       candles,
-      currentPrice: indicators.ema21,
-      fundamentals: strongFundamentals("ATEMA21"),
+      currentPrice: lowerPocketPrice,
+      fundamentals: strongFundamentals("ABOVE50"),
       optionable: true,
-      options: demoOptions("ATEMA21", indicators.ema21),
+      options: demoOptions("ABOVE50", lowerPocketPrice),
       lowerTimeframes: bullishLowerTimeframes("none")
     });
-    const twoPercentPrice = indicators.ema21 * 1.02;
-    const resultAtTwoPercent = gradeSetup({
-      symbol: "TWOABOVE",
+    const resultAtUpperPocket = gradeSetup({
+      symbol: "BELOW8",
       candles,
-      currentPrice: twoPercentPrice,
-      fundamentals: strongFundamentals("TWOABOVE"),
+      currentPrice: upperPocketPrice,
+      fundamentals: strongFundamentals("BELOW8"),
       optionable: true,
-      options: demoOptions("TWOABOVE", twoPercentPrice),
+      options: demoOptions("BELOW8", upperPocketPrice),
       lowerTimeframes: bullishLowerTimeframes("none")
     });
 
-    expect(resultAtEma21.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(true);
-    expect(resultAtEma21.longCallDecision).not.toBe("Avoid");
-    expect(resultAtTwoPercent.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(true);
-    expect(resultAtTwoPercent.longCallDecision).not.toBe("Avoid");
-    expect(resultAtEma21.suggestedEntryArea).toContain("2% above 21 EMA");
+    expect(resultAtLowerPocket.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(true);
+    expect(resultAtLowerPocket.longCallDecision).not.toBe("Avoid");
+    expect(resultAtUpperPocket.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(true);
+    expect(resultAtUpperPocket.longCallDecision).not.toBe("Avoid");
+    expect(resultAtLowerPocket.suggestedEntryArea).toContain("0.1% above 50 EMA");
   });
 
-  it("flags entries below the 21 EMA or more than 2% above it", () => {
+  it("flags entries below the 50 EMA pocket or too close to the 8 EMA", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const belowPrice = indicators.ema21 * 0.999;
-    const extendedPrice = indicators.ema21 * 1.021;
+    const belowPrice = indicators.ema50 * 1.0009;
+    const extendedPrice = indicators.ema8 * 0.9991;
     const below = gradeSetup({
-      symbol: "BELOW21",
+      symbol: "BELOW50POCKET",
       candles,
       currentPrice: belowPrice,
-      fundamentals: strongFundamentals("BELOW21"),
+      fundamentals: strongFundamentals("BELOW50POCKET"),
       optionable: true,
-      options: demoOptions("BELOW21", belowPrice),
+      options: demoOptions("BELOW50POCKET", belowPrice),
       lowerTimeframes: bullishLowerTimeframes("none")
     });
     const extended = gradeSetup({
@@ -554,11 +555,11 @@ describe("layer decision engine", () => {
       lowerTimeframes: bullishLowerTimeframes("none")
     });
 
-    expect(below.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(false);
+    expect(below.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(false);
     expect(below.longCallDecision).toBe("Avoid");
-    expect(extended.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(false);
+    expect(extended.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(false);
     expect(extended.longCallDecision).toBe("Avoid");
-    expect(extended.reasonsAgainstTrade.join(" ")).toContain("Outside the 0-2% entry zone");
+    expect(extended.reasonsAgainstTrade.join(" ")).toContain("Outside the EMA pocket");
   });
 
   it("keeps weekly squeeze as bonus context instead of a requirement", () => {
@@ -581,7 +582,7 @@ describe("layer decision engine", () => {
   it("blocks candidates when weekly structure is bearish", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const result = gradeSetup({
       symbol: "WEEKBEAR",
       candles,
@@ -620,7 +621,7 @@ describe("layer decision engine", () => {
   it("uses $300M as the average dollar volume liquidity threshold", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const resultFor = (avgDollarVolume20d: number) => gradeSetup({
       symbol: "DOLLARVOL" + avgDollarVolume20d,
       candles,
@@ -659,7 +660,7 @@ describe("layer decision engine", () => {
   it("uses option spread bands for options market context", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.5;
+    const price = preferredEntryPrice(indicators);
     const resultFor = (spreadPct: number) => gradeSetup({
       symbol: "SPREAD" + spreadPct,
       candles,
@@ -795,6 +796,10 @@ function strongFundamentals(symbol: string) {
   };
 }
 
+function preferredEntryPrice(indicators: ReturnType<typeof latestIndicators>): number {
+  return (indicators.ema50 * 1.001 + indicators.ema8 * 0.999) / 2;
+}
+
 function optionLayer(result: ReturnType<typeof gradeSetup>) {
   return result.layerEvaluations.find((item) => item.layer === "Options Market Context");
 }
@@ -878,10 +883,13 @@ function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeSt
     withinOneAtrOfEma21,
     percentAboveEma21: withinOneAtrOfEma21 ? 1.94 : 6.8,
     withinTwoPercentOfEma21: withinOneAtrOfEma21,
+    percentAboveEma50: withinOneAtrOfEma21 ? 3.45 : 8.37,
+    percentBelowEma8: withinOneAtrOfEma21 ? 0.96 : -5.77,
+    withinEmaPocket: withinOneAtrOfEma21,
     compressionScore: squeezeState === "none" ? 60 : 85,
     compressionStatus: squeezeState === "none" ? "Neutral" : "Bullish",
     squeezeState,
-    detail: timeframe + " is bullish and " + (withinOneAtrOfEma21 ? "inside" : "outside") + " the 0-2% entry zone."
+    detail: timeframe + " is bullish and " + (withinOneAtrOfEma21 ? "inside" : "outside") + " the EMA pocket."
   };
 }
 
@@ -904,6 +912,9 @@ function bearishContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTim
     withinOneAtrOfEma21: false,
     percentAboveEma21: -2.04,
     withinTwoPercentOfEma21: false,
+    percentAboveEma50: -3.52,
+    percentBelowEma8: 1.03,
+    withinEmaPocket: false,
     compressionScore: 20,
     compressionStatus: "Bearish",
     squeezeState: "none",
@@ -930,6 +941,9 @@ function neutralContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTim
     withinOneAtrOfEma21: true,
     percentAboveEma21: 0.96,
     withinTwoPercentOfEma21: true,
+    percentAboveEma50: 3.45,
+    percentBelowEma8: -1.94,
+    withinEmaPocket: false,
     compressionScore: 50,
     compressionStatus: "Neutral",
     squeezeState: "none",

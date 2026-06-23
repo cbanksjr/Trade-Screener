@@ -62,6 +62,9 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
       withinOneAtrOfEma21: false,
       percentAboveEma21: null,
       withinTwoPercentOfEma21: false,
+      percentAboveEma50: null,
+      percentBelowEma8: null,
+      withinEmaPocket: false,
       compressionScore: 0,
       compressionStatus: "Insufficient Data",
       squeezeState: "none",
@@ -72,12 +75,14 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const indicators = latestIndicators(candles);
   const price = candles[candles.length - 1].close;
   const positiveEmaStack = hasPositiveEmaStack(indicators);
-  const priceAboveEmaStack = price >= indicators.ema21
-    && price > indicators.ema50
-    && price > indicators.ema100;
   const atrDistanceFromEma21 = indicators.atr14 > 0 ? (price - indicators.ema21) / indicators.atr14 : Number.POSITIVE_INFINITY;
   const percentAboveEma21 = indicators.ema21 > 0 ? ((price - indicators.ema21) / indicators.ema21) * 100 : Number.POSITIVE_INFINITY;
-  const withinTwoPercentOfEma21 = percentAboveEma21 >= 0 && percentAboveEma21 <= 2;
+  const percentAboveEma50 = indicators.ema50 > 0 ? ((price - indicators.ema50) / indicators.ema50) * 100 : Number.POSITIVE_INFINITY;
+  const percentBelowEma8 = indicators.ema8 > 0 ? ((indicators.ema8 - price) / indicators.ema8) * 100 : Number.NEGATIVE_INFINITY;
+  const emaPocketLower = indicators.ema50 * 1.001;
+  const emaPocketUpper = indicators.ema8 * 0.999;
+  const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
+  const priceAboveEmaStack = price > indicators.ema50 && price > indicators.ema100;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
   const bias = lowerTimeframeBias(positiveEmaStack, priceAboveEmaStack);
@@ -96,17 +101,20 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
     priceAboveEmaStack,
     atr14: indicators.atr14,
     atrDistanceFromEma21: round(atrDistanceFromEma21),
-    withinOneAtrOfEma21: withinTwoPercentOfEma21,
+    withinOneAtrOfEma21: withinEmaPocket,
     percentAboveEma21: round(percentAboveEma21),
-    withinTwoPercentOfEma21,
+    withinTwoPercentOfEma21: withinEmaPocket,
+    percentAboveEma50: round(percentAboveEma50),
+    percentBelowEma8: round(percentBelowEma8),
+    withinEmaPocket,
     compressionScore,
     compressionStatus,
     squeezeState: indicators.squeezeState,
     detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", EMAs "
       + [indicators.ema8, indicators.ema21, indicators.ema50, indicators.ema100].join("/")
       + ", squeeze " + indicators.squeezeState
-      + ", " + (withinTwoPercentOfEma21 ? "inside" : "outside")
-      + " the 0-2% entry zone above the 21 EMA."
+      + ", " + (withinEmaPocket ? "inside" : "outside")
+      + " the EMA pocket between 0.1% above the 50 EMA and 0.1% below the 8 EMA."
   };
 }
 

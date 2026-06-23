@@ -630,6 +630,10 @@ small,
   color: var(--text);
 }
 
+.rule .status-pill {
+  justify-self: end;
+}
+
 .ok {
   color: var(--accent);
 }

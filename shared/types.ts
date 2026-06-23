@@ -85,6 +85,9 @@ export type LowerTimeframeContext = {
   withinOneAtrOfEma21: boolean;
   percentAboveEma21: number | null;
   withinTwoPercentOfEma21: boolean;
+  percentAboveEma50: number | null;
+  percentBelowEma8: number | null;
+  withinEmaPocket: boolean;
   compressionScore: number;
   compressionStatus: LayerStatus;
   squeezeState?: SqueezeState;
@@ -147,6 +150,9 @@ export type TimeframeSqueezeStatus = {
   withinOneAtrOfEma21: boolean;
   percentAboveEma21?: number | null;
   withinTwoPercentOfEma21?: boolean;
+  percentAboveEma50?: number | null;
+  percentBelowEma8?: number | null;
+  withinEmaPocket?: boolean;
   compressionStatus: LayerStatus;
   detail: string;
 };
