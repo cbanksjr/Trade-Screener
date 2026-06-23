@@ -51,13 +51,17 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
       ema8: null,
       ema21: null,
       ema34: null,
+      ema50: null,
       ema55: null,
       ema89: null,
+      ema100: null,
       positiveEmaStack: false,
       priceAboveEmaStack: false,
       atr14: null,
       atrDistanceFromEma21: null,
       withinOneAtrOfEma21: false,
+      percentAboveEma21: null,
+      withinTwoPercentOfEma21: false,
       compressionScore: 0,
       compressionStatus: "Insufficient Data",
       squeezeState: "none",
@@ -68,13 +72,12 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const indicators = latestIndicators(candles);
   const price = candles[candles.length - 1].close;
   const positiveEmaStack = hasPositiveEmaStack(indicators);
-  const priceAboveEmaStack = price > indicators.ema8
-    && price > indicators.ema21
-    && price > indicators.ema34
-    && price > indicators.ema55
-    && price > indicators.ema89;
+  const priceAboveEmaStack = price >= indicators.ema21
+    && price > indicators.ema50
+    && price > indicators.ema100;
   const atrDistanceFromEma21 = indicators.atr14 > 0 ? (price - indicators.ema21) / indicators.atr14 : Number.POSITIVE_INFINITY;
-  const withinOneAtrOfEma21 = price >= indicators.ema21 && atrDistanceFromEma21 <= 1;
+  const percentAboveEma21 = indicators.ema21 > 0 ? ((price - indicators.ema21) / indicators.ema21) * 100 : Number.POSITIVE_INFINITY;
+  const withinTwoPercentOfEma21 = percentAboveEma21 >= 0 && percentAboveEma21 <= 2;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
   const bias = lowerTimeframeBias(positiveEmaStack, priceAboveEmaStack);
@@ -85,21 +88,25 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
     ema8: indicators.ema8,
     ema21: indicators.ema21,
     ema34: indicators.ema34,
+    ema50: indicators.ema50,
     ema55: indicators.ema55,
     ema89: indicators.ema89,
+    ema100: indicators.ema100,
     positiveEmaStack,
     priceAboveEmaStack,
     atr14: indicators.atr14,
     atrDistanceFromEma21: round(atrDistanceFromEma21),
-    withinOneAtrOfEma21,
+    withinOneAtrOfEma21: withinTwoPercentOfEma21,
+    percentAboveEma21: round(percentAboveEma21),
+    withinTwoPercentOfEma21,
     compressionScore,
     compressionStatus,
     squeezeState: indicators.squeezeState,
     detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", EMAs "
-      + [indicators.ema8, indicators.ema21, indicators.ema34, indicators.ema55, indicators.ema89].join("/")
+      + [indicators.ema8, indicators.ema21, indicators.ema50, indicators.ema100].join("/")
       + ", squeeze " + indicators.squeezeState
-      + ", " + (withinOneAtrOfEma21 ? "inside" : "outside")
-      + " the 1 ATR entry zone from the 21 EMA."
+      + ", " + (withinTwoPercentOfEma21 ? "inside" : "outside")
+      + " the 0-2% entry zone above the 21 EMA."
   };
 }
 
@@ -118,13 +125,14 @@ export function hasPositiveEmaStack(indicators: {
   ema8: number;
   ema21: number;
   ema34: number;
+  ema50: number;
   ema55: number;
   ema89: number;
+  ema100: number;
 }): boolean {
   return indicators.ema8 > indicators.ema21
-    && indicators.ema21 > indicators.ema34
-    && indicators.ema34 > indicators.ema55
-    && indicators.ema55 > indicators.ema89;
+    && indicators.ema21 > indicators.ema50
+    && indicators.ema50 > indicators.ema100;
 }
 
 export function compressionQualityScore(indicators: {

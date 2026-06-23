@@ -1,4 +1,4 @@
-import type { Candle, FundamentalFieldSources, Fundamentals, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
@@ -462,6 +462,8 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     grade,
     longCallDecision,
     setupQuality: grade === "A" ? "High" : "Moderate",
+    indicators: normalizeCachedIndicators(result.indicators),
+    weeklyIndicators: result.weeklyIndicators ? normalizeCachedIndicators(result.weeklyIndicators) : undefined,
     dailySqueezeDotCount: dotCount ?? result.dailySqueezeDotCount,
     compressionQualityScore: dotCount ?? result.compressionQualityScore,
     maxScore: dotCount === undefined ? result.maxScore : 5,
@@ -483,6 +485,15 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     })
   };
   return normalized;
+}
+
+function normalizeCachedIndicators(indicators: IndicatorSnapshot): IndicatorSnapshot {
+  const legacy = indicators as IndicatorSnapshot & { ema50?: number; ema100?: number };
+  return {
+    ...indicators,
+    ema50: typeof legacy.ema50 === "number" ? legacy.ema50 : indicators.ema55,
+    ema100: typeof legacy.ema100 === "number" ? legacy.ema100 : indicators.ema89
+  };
 }
 
 function normalizeCachedDecision(decision: ScanResult["longCallDecision"], setupScore: number): ScanResult["longCallDecision"] {

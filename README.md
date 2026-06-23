@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard only displays qualified `A` or `B` compression candidates. `A` means a strong long-call candidate with a qualified Daily squeeze setup, supportive Weekly context, daily price inside the 1 ATR entry zone from the 21 EMA, acceptable options liquidity, and complete institutional context. `B` means a moderate but still qualified long-call candidate. Missing sector or earnings data can cap an otherwise strong setup at `B`, but does not exclude it. Watchlist and Avoid results are excluded from the visible candidate list.
+The Dashboard only displays qualified `A` or `B` compression candidates. `A` means a strong long-call candidate with a qualified Daily squeeze setup, supportive Weekly context, daily price inside the 0-2% entry zone above the 21 EMA, acceptable options liquidity, and complete institutional context. `B` means a moderate but still qualified long-call candidate. Missing sector or earnings data can cap an otherwise strong setup at `B`, but does not exclude it. Watchlist and Avoid results are excluded from the visible candidate list.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -74,10 +74,10 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Beta >= 0.75 when Schwab provides beta
 - Market cap >= $2B when Schwab provides market cap
 - Average dollar volume >= $300M, from Schwab `average volume x last price` when available
-- Long setup: price above the 8, 21, 34, 55, and 89 EMAs with a positive EMA stack
+- Long setup: price above the 8, 21, 50, and 100 EMAs with a positive EMA stack
 - Selected timeframes: daily and weekly
 - At least 5 consecutive active Daily squeeze dots before expansion
-- Daily entry proximity: current price must be above the Daily 21 EMA and no more than 1 ATR above it
+- Daily entry proximity: current price must be at or above the Daily 21 EMA and no more than 2% above it
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly chart context as higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots

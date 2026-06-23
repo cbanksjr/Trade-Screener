@@ -250,9 +250,8 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <Metric label="Momentum" value={formatNumber(result.indicators.momentum)} />
           <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
-          <Metric label="34 EMA" value={formatNumber(result.indicators.ema34)} />
-          <Metric label="55 EMA" value={formatNumber(result.indicators.ema55)} />
-          <Metric label="89 EMA" value={formatNumber(result.indicators.ema89)} />
+          <Metric label="50 EMA" value={formatNumber(result.indicators.ema50)} />
+          <Metric label="100 EMA" value={formatNumber(result.indicators.ema100)} />
           <Metric label="ATR" value={formatNumber(result.indicators.atr14)} />
         </div>
       </section>

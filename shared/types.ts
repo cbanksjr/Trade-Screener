@@ -74,13 +74,17 @@ export type LowerTimeframeContext = {
   ema8: number | null;
   ema21: number | null;
   ema34: number | null;
+  ema50: number | null;
   ema55: number | null;
   ema89: number | null;
+  ema100: number | null;
   positiveEmaStack: boolean;
   priceAboveEmaStack: boolean;
   atr14: number | null;
   atrDistanceFromEma21: number | null;
   withinOneAtrOfEma21: boolean;
+  percentAboveEma21: number | null;
+  withinTwoPercentOfEma21: boolean;
   compressionScore: number;
   compressionStatus: LayerStatus;
   squeezeState?: SqueezeState;
@@ -97,8 +101,10 @@ export type IndicatorSnapshot = {
   ema8: number;
   ema21: number;
   ema34: number;
+  ema50: number;
   ema55: number;
   ema89: number;
+  ema100: number;
   atr14: number;
   atrContracting: boolean;
   bbUpper: number;
@@ -139,6 +145,8 @@ export type TimeframeSqueezeStatus = {
   priceAboveEmaStack: boolean;
   positiveEmaStack: boolean;
   withinOneAtrOfEma21: boolean;
+  percentAboveEma21?: number | null;
+  withinTwoPercentOfEma21?: boolean;
   compressionStatus: LayerStatus;
   detail: string;
 };

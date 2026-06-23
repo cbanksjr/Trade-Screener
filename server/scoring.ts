@@ -148,7 +148,7 @@ export function gradeSetup(input: {
     recommendedDelta: recommendedOption?.delta !== undefined ? recommendedOption.delta.toFixed(2) : undefined,
     suggestedEntryArea: suggestedEntry(price, indicators),
     invalidationLevel: invalidation(price, indicators),
-    stockStopPrice: round(Math.min(indicators.ema34, indicators.ema55), 2),
+    stockStopPrice: round(Math.min(indicators.ema50, indicators.ema100), 2),
     target1: round(price + indicators.atr14 * 1.5, 2),
     target2: round(price + indicators.atr14 * 2.5, 2),
     reasonsSupportingTrade: supportReasons(layerEvaluations, dailyContext, weeklyContext, recommendedOption),
@@ -171,7 +171,7 @@ function evaluateMarketStructure(dailyContext: LowerTimeframeContext, weeklyCont
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
   if (dailyContext.bias !== "bullish") return layer("Squeeze Market Structure", "Bearish", "Daily EMA structure is " + dailyContext.bias + "; bullish Daily structure is required.");
-  if (!dailyContext.withinOneAtrOfEma21) return layer("Squeeze Market Structure", "Bearish", "Daily price is outside the 1 ATR entry zone from the 21 EMA.");
+  if (!dailyContext.withinTwoPercentOfEma21) return layer("Squeeze Market Structure", "Bearish", "Daily price is outside the 0-2% entry zone above the 21 EMA.");
   if (weeklyContext.bias === "bearish") return layer("Squeeze Market Structure", "Bearish", "Weekly bearish structure blocks swing candidates.");
   if (weeklyContext.bias === "bullish") return layer("Squeeze Market Structure", "Bullish", "Daily setup is bullish and Weekly structure supports the swing thesis.");
   return layer("Squeeze Market Structure", "Neutral", "Daily setup is bullish; Weekly context is " + weeklyContext.bias + ".");
@@ -239,7 +239,7 @@ function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqC
 function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, weeklyStatus: LayerStatus, setupScore: SetupScoreResult): LongCallDecision {
   const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
-  const dailyEntryAligned = dailyContext.withinOneAtrOfEma21;
+  const dailyEntryAligned = dailyContext.withinTwoPercentOfEma21;
   const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
   if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyStatus === "Bearish") return "Avoid";
   if (
@@ -350,8 +350,8 @@ function evaluateLiquidityFactor(avgDollarVolume20d: number, optionLayer: LayerE
 }
 
 function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFactor {
-  if (context.bias === "bullish" && context.withinOneAtrOfEma21) return factor("Price Structure", "Bullish", "Daily structure bullish and inside 1 ATR.");
-  if (context.bias === "bullish") return factor("Price Structure", "Neutral", "Daily structure bullish but entry is extended from the 21 EMA.");
+  if (context.bias === "bullish" && context.withinTwoPercentOfEma21) return factor("Price Structure", "Bullish", "Daily structure bullish and inside the 0-2% zone above the 21 EMA.");
+  if (context.bias === "bullish") return factor("Price Structure", "Neutral", "Daily structure bullish but entry is outside the 0-2% zone above the 21 EMA.");
   return factor("Price Structure", "Bearish", "Daily EMA structure is not bullish.");
 }
 
@@ -412,9 +412,10 @@ function optionQuality(contract: OptionContract): number {
 
 function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapshot, price: number): LowerTimeframeContext {
   const positiveEmaStack = hasPositiveEmaStack(indicators);
-  const priceAboveEmaStack = price > indicators.ema8 && price > indicators.ema21 && price > indicators.ema34 && price > indicators.ema55 && price > indicators.ema89;
+  const priceAboveEmaStack = price >= indicators.ema21 && price > indicators.ema50 && price > indicators.ema100;
   const atrDistanceFromEma21 = indicators.atr14 > 0 ? (price - indicators.ema21) / indicators.atr14 : Number.POSITIVE_INFINITY;
-  const withinOneAtrOfEma21 = price >= indicators.ema21 && atrDistanceFromEma21 <= 1;
+  const percentAboveEma21 = indicators.ema21 > 0 ? ((price - indicators.ema21) / indicators.ema21) * 100 : Number.POSITIVE_INFINITY;
+  const withinTwoPercentOfEma21 = percentAboveEma21 >= 0 && percentAboveEma21 <= 2;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   return {
     timeframe,
@@ -423,13 +424,17 @@ function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapsho
     ema8: indicators.ema8,
     ema21: indicators.ema21,
     ema34: indicators.ema34,
+    ema50: indicators.ema50,
     ema55: indicators.ema55,
     ema89: indicators.ema89,
+    ema100: indicators.ema100,
     positiveEmaStack,
     priceAboveEmaStack,
     atr14: indicators.atr14,
     atrDistanceFromEma21: round(atrDistanceFromEma21),
-    withinOneAtrOfEma21,
+    withinOneAtrOfEma21: withinTwoPercentOfEma21,
+    percentAboveEma21: round(percentAboveEma21),
+    withinTwoPercentOfEma21,
     compressionScore,
     compressionStatus: compressionLayerStatus(compressionScore, indicators.squeezeState),
     squeezeState: indicators.squeezeState,
@@ -452,13 +457,17 @@ function unavailableContext(timeframe: LowerTimeframeContext["timeframe"], detai
     ema8: null,
     ema21: null,
     ema34: null,
+    ema50: null,
     ema55: null,
     ema89: null,
+    ema100: null,
     positiveEmaStack: false,
     priceAboveEmaStack: false,
     atr14: null,
     atrDistanceFromEma21: null,
     withinOneAtrOfEma21: false,
+    percentAboveEma21: null,
+    withinTwoPercentOfEma21: false,
     compressionScore: 0,
     compressionStatus: "Insufficient Data",
     squeezeState: "none",
@@ -467,16 +476,15 @@ function unavailableContext(timeframe: LowerTimeframeContext["timeframe"], detai
 }
 
 function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerTimeframeContext {
-  if (context.bias === "unavailable" || context.ema8 === null || context.ema21 === null || context.ema34 === null || context.ema55 === null || context.ema89 === null || context.atr14 === null) {
+  if (context.bias === "unavailable" || context.ema8 === null || context.ema21 === null || context.ema50 === null || context.ema100 === null || context.atr14 === null) {
     return context;
   }
-  const priceAboveEmaStack = price > context.ema8
-    && price > context.ema21
-    && price > context.ema34
-    && price > context.ema55
-    && price > context.ema89;
+  const priceAboveEmaStack = price >= context.ema21
+    && price > context.ema50
+    && price > context.ema100;
   const atrDistanceFromEma21 = context.atr14 > 0 ? (price - context.ema21) / context.atr14 : Number.POSITIVE_INFINITY;
-  const withinOneAtrOfEma21 = price >= context.ema21 && atrDistanceFromEma21 <= 1;
+  const percentAboveEma21 = context.ema21 > 0 ? ((price - context.ema21) / context.ema21) * 100 : Number.POSITIVE_INFINITY;
+  const withinTwoPercentOfEma21 = percentAboveEma21 >= 0 && percentAboveEma21 <= 2;
   const bias = context.positiveEmaStack && priceAboveEmaStack ? "bullish" : !context.positiveEmaStack && !priceAboveEmaStack ? "bearish" : "neutral";
   return {
     ...context,
@@ -484,12 +492,14 @@ function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerT
     price,
     priceAboveEmaStack,
     atrDistanceFromEma21: round(atrDistanceFromEma21),
-    withinOneAtrOfEma21,
+    withinOneAtrOfEma21: withinTwoPercentOfEma21,
+    percentAboveEma21: round(percentAboveEma21),
+    withinTwoPercentOfEma21,
     detail: context.timeframe + " is " + bias + ": current price $" + price.toFixed(2)
-      + ", EMAs " + [context.ema8, context.ema21, context.ema34, context.ema55, context.ema89].join("/")
+      + ", EMAs " + [context.ema8, context.ema21, context.ema50, context.ema100].join("/")
       + ", squeeze " + context.squeezeState
-      + ", " + (withinOneAtrOfEma21 ? "inside" : "outside")
-      + " the 1 ATR entry zone from the 21 EMA."
+      + ", " + (withinTwoPercentOfEma21 ? "inside" : "outside")
+      + " the 0-2% entry zone above the 21 EMA."
   };
 }
 
@@ -500,7 +510,9 @@ function toTimeframeStatus(context: LowerTimeframeContext): TimeframeSqueezeStat
     bias: context.bias,
     priceAboveEmaStack: context.priceAboveEmaStack,
     positiveEmaStack: context.positiveEmaStack,
-    withinOneAtrOfEma21: context.withinOneAtrOfEma21,
+    withinOneAtrOfEma21: context.withinTwoPercentOfEma21,
+    percentAboveEma21: context.percentAboveEma21,
+    withinTwoPercentOfEma21: context.withinTwoPercentOfEma21,
     compressionStatus: context.compressionStatus,
     detail: context.detail
   };
@@ -536,7 +548,7 @@ function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeCont
   const reasons = layers.filter((layerItem) => layerItem.status === "Bearish" || layerItem.status === "Conflicting").map((layerItem) => layerItem.layer + ": " + layerItem.detail);
   if (!isSqueezeActive(dailyContext.squeezeState)) reasons.push("Daily squeeze is not active; swing setup should be avoided.");
   if (dailyContext.bias !== "bullish") reasons.push("Daily EMA structure is not bullish.");
-  if (dailyContext.bias !== "unavailable" && !dailyContext.withinOneAtrOfEma21) reasons.push("Outside the 1 ATR entry zone from the 21 EMA on daily.");
+  if (dailyContext.bias !== "unavailable" && !dailyContext.withinTwoPercentOfEma21) reasons.push("Outside the 0-2% entry zone above the 21 EMA on daily.");
   if (weeklyContext.bias === "bearish") reasons.push("Weekly bearish structure blocks the setup.");
   if (!option) reasons.push("No preferred call contract was found.");
   return reasons.slice(0, 6);
@@ -544,13 +556,13 @@ function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeCont
 
 function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
   const lower = indicators.ema21;
-  const upper = indicators.ema21 + indicators.atr14;
+  const upper = indicators.ema21 * 1.02;
   const prefix = price >= lower && price <= upper ? "Current price is inside the preferred entry zone: " : "Preferred entry zone: ";
-  return prefix + "$" + round(lower, 2).toFixed(2) + " to $" + round(upper, 2).toFixed(2) + " (21 EMA to 21 EMA + 1 ATR).";
+  return prefix + "$" + round(lower, 2).toFixed(2) + " to $" + round(upper, 2).toFixed(2) + " (21 EMA to 2% above 21 EMA).";
 }
 
 function invalidation(_price: number, indicators: IndicatorSnapshot): string {
-  return "Daily close below 34/55 EMA zone near $" + round(Math.min(indicators.ema34, indicators.ema55), 2).toFixed(2) + ".";
+  return "Daily close below 50/100 EMA zone near $" + round(Math.min(indicators.ema50, indicators.ema100), 2).toFixed(2) + ".";
 }
 
 function optionDteLabel(contract: OptionContract): string {

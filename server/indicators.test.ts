@@ -10,9 +10,8 @@ describe("indicator calculations", () => {
     const indicators = latestIndicators(bullishCompressionCandles());
 
     expect(indicators.ema8).toBeGreaterThan(indicators.ema21);
-    expect(indicators.ema21).toBeGreaterThan(indicators.ema34);
-    expect(indicators.ema34).toBeGreaterThan(indicators.ema55);
-    expect(indicators.ema55).toBeGreaterThan(indicators.ema89);
+    expect(indicators.ema21).toBeGreaterThan(indicators.ema50);
+    expect(indicators.ema50).toBeGreaterThan(indicators.ema100);
     expect(indicators.atr14).toBeGreaterThan(0);
     expect(typeof indicators.atrContracting).toBe("boolean");
     expect(typeof indicators.bbContracting).toBe("boolean");
@@ -123,7 +122,7 @@ describe("layer decision engine", () => {
     expect(result.reasonsAgainstTrade.join(" ")).toContain("At least 5 consecutive active daily squeeze dots are required");
   });
 
-  it("ignores lower-timeframe 1 ATR proximity for grading", () => {
+  it("ignores lower-timeframe entry proximity for grading", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = indicators.ema21 + indicators.atr14 * 0.5;
@@ -142,7 +141,7 @@ describe("layer decision engine", () => {
     expect(result.squeezeStatusByTimeframe.map((item) => item.timeframe)).toEqual(["daily", "weekly"]);
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
-    expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the 1 ATR entry zone from the 21 EMA on 30m");
+    expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Outside the 0-2% entry zone above the 21 EMA on 30m");
   });
 
   it("assigns A when daily qualifies and weekly is bullish without lower-timeframe data", () => {
@@ -501,42 +500,65 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
-  it("requires current price to be within 1 ATR of the 21 EMA for entry", () => {
+  it("allows entries from the 21 EMA through 2% above it", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 0.8;
-    const result = gradeSetup({
-      symbol: "ONEATR",
+    const resultAtEma21 = gradeSetup({
+      symbol: "ATEMA21",
       candles,
-      currentPrice: price,
-      fundamentals: strongFundamentals("ONEATR"),
+      currentPrice: indicators.ema21,
+      fundamentals: strongFundamentals("ATEMA21"),
       optionable: true,
-      options: demoOptions("ONEATR", price),
+      options: demoOptions("ATEMA21", indicators.ema21),
+      lowerTimeframes: bullishLowerTimeframes("none")
+    });
+    const twoPercentPrice = indicators.ema21 * 1.02;
+    const resultAtTwoPercent = gradeSetup({
+      symbol: "TWOABOVE",
+      candles,
+      currentPrice: twoPercentPrice,
+      fundamentals: strongFundamentals("TWOABOVE"),
+      optionable: true,
+      options: demoOptions("TWOABOVE", twoPercentPrice),
       lowerTimeframes: bullishLowerTimeframes("none")
     });
 
-    expect(result.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(true);
-    expect(result.longCallDecision).not.toBe("Avoid");
-    expect(result.suggestedEntryArea).toContain("1 ATR");
+    expect(resultAtEma21.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(true);
+    expect(resultAtEma21.longCallDecision).not.toBe("Avoid");
+    expect(resultAtTwoPercent.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(true);
+    expect(resultAtTwoPercent.longCallDecision).not.toBe("Avoid");
+    expect(resultAtEma21.suggestedEntryArea).toContain("2% above 21 EMA");
   });
 
-  it("flags entries extended beyond 1 ATR from the 21 EMA", () => {
+  it("flags entries below the 21 EMA or more than 2% above it", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const price = indicators.ema21 + indicators.atr14 * 1.2;
-    const result = gradeSetup({
+    const belowPrice = indicators.ema21 * 0.999;
+    const extendedPrice = indicators.ema21 * 1.021;
+    const below = gradeSetup({
+      symbol: "BELOW21",
+      candles,
+      currentPrice: belowPrice,
+      fundamentals: strongFundamentals("BELOW21"),
+      optionable: true,
+      options: demoOptions("BELOW21", belowPrice),
+      lowerTimeframes: bullishLowerTimeframes("none")
+    });
+    const extended = gradeSetup({
       symbol: "EXTENDED",
       candles,
-      currentPrice: price,
+      currentPrice: extendedPrice,
       fundamentals: strongFundamentals("EXTENDED"),
       optionable: true,
-      options: demoOptions("EXTENDED", price),
+      options: demoOptions("EXTENDED", extendedPrice),
       lowerTimeframes: bullishLowerTimeframes("none")
     });
 
-    expect(result.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(false);
-    expect(result.longCallDecision).toBe("Avoid");
-    expect(result.reasonsAgainstTrade.join(" ")).toContain("Outside the 1 ATR entry zone");
+    expect(below.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(false);
+    expect(below.longCallDecision).toBe("Avoid");
+    expect(extended.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinOneAtrOfEma21).toBe(false);
+    expect(extended.longCallDecision).toBe("Avoid");
+    expect(extended.reasonsAgainstTrade.join(" ")).toContain("Outside the 0-2% entry zone");
   });
 
   it("keeps weekly squeeze as bonus context instead of a requirement", () => {
@@ -783,10 +805,10 @@ function futureDate(daysFromNow: number): string {
 
 function weeklyIndicator(bias: "bullish" | "bearish" | "neutral", squeezeState: SqueezeState = "none") {
   const emaValues = bias === "bullish"
-    ? { ema8: 120, ema21: 115, ema34: 110, ema55: 105, ema89: 100 }
+    ? { ema8: 120, ema21: 115, ema34: 110, ema50: 108, ema55: 105, ema89: 100, ema100: 98 }
     : bias === "bearish"
-      ? { ema8: 160, ema21: 161, ema34: 162, ema55: 163, ema89: 164 }
-      : { ema8: 120, ema21: 121, ema34: 110, ema55: 105, ema89: 100 };
+      ? { ema8: 160, ema21: 161, ema34: 162, ema50: 163, ema55: 164, ema89: 165, ema100: 166 }
+      : { ema8: 120, ema21: 121, ema34: 110, ema50: 108, ema55: 105, ema89: 100, ema100: 98 };
   return {
     ...emaValues,
     atr14: 8,
@@ -845,17 +867,21 @@ function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeSt
     ema8: 104,
     ema21: 103,
     ema34: 102,
+    ema50: 101.5,
     ema55: 101,
     ema89: 100,
+    ema100: 99,
     positiveEmaStack: true,
     priceAboveEmaStack: true,
     atr14: 3,
     atrDistanceFromEma21: withinOneAtrOfEma21 ? 0.67 : 2.33,
     withinOneAtrOfEma21,
+    percentAboveEma21: withinOneAtrOfEma21 ? 1.94 : 6.8,
+    withinTwoPercentOfEma21: withinOneAtrOfEma21,
     compressionScore: squeezeState === "none" ? 60 : 85,
     compressionStatus: squeezeState === "none" ? "Neutral" : "Bullish",
     squeezeState,
-    detail: timeframe + " is bullish and " + (withinOneAtrOfEma21 ? "inside" : "outside") + " the 1 ATR entry zone."
+    detail: timeframe + " is bullish and " + (withinOneAtrOfEma21 ? "inside" : "outside") + " the 0-2% entry zone."
   };
 }
 
@@ -867,13 +893,17 @@ function bearishContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTim
     ema8: 97,
     ema21: 98,
     ema34: 99,
+    ema50: 99.5,
     ema55: 100,
     ema89: 101,
+    ema100: 102,
     positiveEmaStack: false,
     priceAboveEmaStack: false,
     atr14: 3,
     atrDistanceFromEma21: -0.67,
     withinOneAtrOfEma21: false,
+    percentAboveEma21: -2.04,
+    withinTwoPercentOfEma21: false,
     compressionScore: 20,
     compressionStatus: "Bearish",
     squeezeState: "none",
@@ -889,13 +919,17 @@ function neutralContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTim
     ema8: 103,
     ema21: 104,
     ema34: 102,
+    ema50: 101.5,
     ema55: 101,
     ema89: 100,
+    ema100: 99,
     positiveEmaStack: false,
     priceAboveEmaStack: true,
     atr14: 3,
     atrDistanceFromEma21: 0.33,
     withinOneAtrOfEma21: true,
+    percentAboveEma21: 0.96,
+    withinTwoPercentOfEma21: true,
     compressionScore: 50,
     compressionStatus: "Neutral",
     squeezeState: "none",

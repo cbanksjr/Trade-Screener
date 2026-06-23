@@ -50,8 +50,10 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
   const ema8Series = ema(closes, 8);
   const ema21Series = ema(closes, 21);
   const ema34Series = ema(closes, 34);
+  const ema50Series = ema(closes, 50);
   const ema55Series = ema(closes, 55);
   const ema89Series = ema(closes, 89);
+  const ema100Series = ema(closes, 100);
   const atr14Series = atr(candles, 14);
   const index = candles.length - 1;
   const squeezePeriod = 20;
@@ -84,8 +86,10 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
     ema8: round(ema8Series[index]),
     ema21: round(ema21Series[index]),
     ema34: round(ema34Series[index]),
+    ema50: round(ema50Series[index]),
     ema55: round(ema55Series[index]),
     ema89: round(ema89Series[index]),
+    ema100: round(ema100Series[index]),
     atr14: round(latestAtr),
     atrContracting: recentAtr <= priorAtr,
     bbUpper: round(bbUpper),
