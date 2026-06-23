@@ -3,8 +3,9 @@ import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
+import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
-import { A_SETUP_SCORE_THRESHOLD, B_SETUP_SCORE_THRESHOLD, defaultSettings, gradeSetup } from "./scoring";
+import { A_SETUP_SCORE_THRESHOLD, B_SETUP_SCORE_THRESHOLD, applyInstitutionalEdge, defaultSettings, gradeSetup } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
@@ -145,6 +146,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sectorBySymbol = await getDefaultUniverseSectorMap();
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
+  const fmpInstitutionalEdge = canUseLiveSchwab ? await createFmpInstitutionalEdgeScanProvider() : undefined;
   const fmpEarnings = fmp && stockSymbolsToScan.length ? await fmp.earningsCalendar(stockSymbolsToScan) : undefined;
   const earningsBySymbol = fmpEarnings?.earningsBySymbol ?? new Map<string, string>();
   fmpEarnings?.warnings.forEach((warning) => scanWarnings.add(warning));
@@ -176,8 +178,16 @@ export async function runFullScan(): Promise<ScanResponse> {
   for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
-    if (outcome.result && shouldIncludeResult(outcome.result)) results.push(outcome.result);
-    else if (outcome.result) diagnostics.skipped[classifyFilteredResult(outcome.result)] += 1;
+    if (outcome.result && shouldIncludeResult(outcome.result)) {
+      let result = outcome.result;
+      if (fmpInstitutionalEdge) {
+        const edge = await fmpInstitutionalEdge.enrich(result.symbol, result.assetType, result.price);
+        if (edge.usedLive) usedLive = true;
+        result = applyInstitutionalEdge(result, edge.edge);
+      }
+      if (shouldIncludeResult(result)) results.push(result);
+      else diagnostics.skipped[classifyFilteredResult(result)] += 1;
+    } else if (outcome.result) diagnostics.skipped[classifyFilteredResult(outcome.result)] += 1;
     else if (!outcome.skipReason) diagnostics.skipped.other += 1;
     if (outcome.usedLive) usedLive = true;
     if (outcome.usedDemo) usedDemo = true;
@@ -192,6 +202,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     return (b.dailySqueezeDotCount ?? -1) - (a.dailySqueezeDotCount ?? -1);
   };
   if (fmp) await fmp.flush();
+  if (fmpInstitutionalEdge) await fmpInstitutionalEdge.flush();
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
     results: results.sort(sortByDecision),

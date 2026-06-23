@@ -22,5 +22,9 @@ export const config = {
   fmpApiKey: process.env.FMP_API_KEY ?? "",
   fmpBaseUrl: process.env.FMP_BASE_URL ?? "https://financialmodelingprep.com/stable",
   fmpMaxCallsPerScan: Number(process.env.FMP_MAX_CALLS_PER_SCAN ?? 1000),
+  fmpInstitutionalEdgeEnabled: (process.env.FMP_INSTITUTIONAL_EDGE_ENABLED ?? "true") !== "false",
+  fmpStarterSafeMode: (process.env.FMP_STARTER_SAFE_MODE ?? "true") !== "false",
+  fmpInstitutionalEdgeMaxCallsPerScan: Number(process.env.FMP_INSTITUTIONAL_EDGE_MAX_CALLS_PER_SCAN ?? 250),
+  fmpInstitutionalEdgeProbeTtlHours: Number(process.env.FMP_INSTITUTIONAL_EDGE_PROBE_TTL_HOURS ?? 24),
   etfSymbols: process.env.ETF_SYMBOLS ?? ""
 };

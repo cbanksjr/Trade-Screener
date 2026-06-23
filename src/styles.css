@@ -75,6 +75,7 @@ canvas {
 
 h1,
 h2,
+h3,
 p {
   margin: 0;
 }
@@ -91,10 +92,19 @@ h2 {
   font-size: 1rem;
 }
 
+h3 {
+  color: var(--text);
+  font-size: 0.95rem;
+}
+
 p,
 small,
 .panel-head span {
   color: var(--muted);
+}
+
+.panel-head.compact {
+  margin-bottom: 10px;
 }
 
 .app-shell {
@@ -588,6 +598,22 @@ small,
 .factor-card b {
   color: var(--text);
   font-size: 0.86rem;
+}
+
+.edge-section {
+  border-top: 1px solid var(--border);
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.edge-note {
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.84rem;
+  line-height: 1.45;
+  margin-top: 10px;
+  padding: 10px 12px;
 }
 
 .status-pill {

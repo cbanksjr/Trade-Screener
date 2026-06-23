@@ -33,6 +33,8 @@ The scan uses Schwab for:
 
 Financial Modeling Prep can be used for index universe refreshes and as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary for market data, then uses FMP to refresh the default universe and fill missing beta, market cap, sector, and next earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `1000`, to protect API limits.
 
+FMP can also add a Starter-safe Institutional Edge overlay after a symbol already passes the core scan. It probes each optional endpoint with your API key, caches availability for `FMP_INSTITUTIONAL_EDGE_PROBE_TTL_HOURS` hours, and skips endpoints that return plan, permission, malformed entitlement, or rate-limit responses. Unavailable endpoint data is neutral and does not reduce a candidate. Available bullish edge data can add up to `+5` setup-score points; clearly bearish edge data can subtract up to `-10` and cap an A at B. Configure it with `FMP_INSTITUTIONAL_EDGE_ENABLED=true`, `FMP_STARTER_SAFE_MODE=true`, and `FMP_INSTITUTIONAL_EDGE_MAX_CALLS_PER_SCAN=250`.
+
 The scanner includes a curated ETF list by default: `SPY`, `QQQ`, `DIA`, `IWM`, `SMH`, `XLK`, `XLF`, `XLV`, `XLE`, `XLY`, `XLI`, `XLC`, `XLP`, `XLU`, `XLB`, and `XLRE`. To override that list, set `ETF_SYMBOLS` to a comma-separated list such as `ETF_SYMBOLS=SPY,QQQ,SMH`.
 
 ## Hosting
@@ -85,6 +87,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Bullish Weekly chart context as required higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
+- Optional FMP Institutional Edge overlay uses Starter-accessible endpoint probing for financial scores, analyst grades/targets, ownership/insider data, and ETF data when available; unavailable endpoints are skipped neutrally
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
 - ETF strength compares the ETF directly against SPY over the same 20-period window
 - Catalyst safety uses the next earnings date for stocks; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups. ETFs are treated as not having single-company earnings catalyst risk.

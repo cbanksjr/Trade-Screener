@@ -281,6 +281,29 @@ function TickerDetail({ result }: { result: ScanResult }) {
         ) : (
           <p className="empty-copy">Run scan for setup score.</p>
         )}
+        {(result.institutionalEdgeFactors?.length || result.institutionalEdgeWarnings?.length) ? (
+          <div className="edge-section">
+            <div className="panel-head compact">
+              <h3>Institutional Edge</h3>
+              <span>{displayStatus(result.institutionalEdgeStatus)} · {signedAdjustment(result.institutionalEdgeAdjustment)}</span>
+            </div>
+            {result.institutionalEdgeFactors?.length ? (
+              <div className="factor-grid">
+                {result.institutionalEdgeFactors.map((factor) => (
+                  <div className="factor-card" key={factor.name}>
+                    <span className={"status-pill " + statusClass(factor.status)}>{displayStatus(factor.status)}</span>
+                    <strong>{factor.name}</strong>
+                    <small>{factor.detail}</small>
+                    <b>{signedAdjustment(factor.adjustment)}</b>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {result.institutionalEdgeWarnings?.length ? (
+              <p className="edge-note">{result.institutionalEdgeWarnings.join(" ")}</p>
+            ) : null}
+          </div>
+        ) : null}
       </section>
 
       <section className="panel">
@@ -380,6 +403,11 @@ function displayStatus(status: LayerStatus | undefined): "Bullish" | "Neutral" |
 
 function statusClass(status: LayerStatus | undefined): string {
   return displayStatus(status) === "Bullish" ? "status-bullish" : displayStatus(status) === "Neutral" ? "status-neutral" : "status-avoid";
+}
+
+function signedAdjustment(value: number | undefined): string {
+  const rounded = Math.round(value ?? 0);
+  return (rounded > 0 ? "+" : "") + rounded + " pts";
 }
 
 function layerLabel(layer: string): string {

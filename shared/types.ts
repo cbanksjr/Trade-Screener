@@ -60,12 +60,34 @@ export type LayerStatus = "Bullish" | "Neutral" | "Bearish" | "Conflicting" | "I
 export type LongCallDecision = "Strong Long Call Candidate" | "Moderate Long Call Candidate" | "Watchlist Candidate" | "Avoid";
 export type EntryRecommendationType = "Early Compression Entry" | "Mid Compression Entry" | "High Conviction Compression Entry" | "Compression Watchlist" | "Avoid";
 export type InstitutionalFactorName = "Market Regime" | "Sector Strength" | "Relative Strength" | "Liquidity" | "Price Structure" | "Volatility Fit" | "Catalyst Safety";
+export type InstitutionalEdgeFactorName =
+  | "Financial Quality"
+  | "Analyst Conviction"
+  | "Institutional Positioning"
+  | "Insider Safety"
+  | "ETF Quality"
+  | "ETF Exposure";
 
 export type InstitutionalFactor = {
   name: InstitutionalFactorName;
   status: LayerStatus;
   contribution: number;
   detail: string;
+};
+
+export type InstitutionalEdgeFactor = {
+  name: InstitutionalEdgeFactorName;
+  status: LayerStatus;
+  adjustment: number;
+  detail: string;
+};
+
+export type InstitutionalEdgeSummary = {
+  status: LayerStatus;
+  score: number;
+  adjustment: number;
+  factors: InstitutionalEdgeFactor[];
+  warnings: string[];
 };
 
 export type LowerTimeframeContext = {
@@ -188,6 +210,11 @@ export type ScanResult = {
   setupScore: number;
   setupScoreStatus: LayerStatus;
   institutionalFactors: InstitutionalFactor[];
+  institutionalEdgeScore?: number;
+  institutionalEdgeStatus?: LayerStatus;
+  institutionalEdgeFactors?: InstitutionalEdgeFactor[];
+  institutionalEdgeAdjustment?: number;
+  institutionalEdgeWarnings?: string[];
   gradeCapReasons?: string[];
   multiTimeframeAlignmentSummary: string;
   relativeStrengthSummary: string;

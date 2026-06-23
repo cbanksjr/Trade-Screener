@@ -6,6 +6,7 @@ import type {
   IndicatorSnapshot,
   InstitutionalFactor,
   InstitutionalFactorName,
+  InstitutionalEdgeSummary,
   LayerEvaluation,
   LayerStatus,
   LongCallDecision,
@@ -174,6 +175,47 @@ export function isSqueezeActive(state: SqueezeState | undefined): boolean {
   return Boolean(state && SQUEEZE_STATES.includes(state));
 }
 
+export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEdgeSummary): ScanResult {
+  const adjustment = Math.max(-10, Math.min(5, edge.adjustment));
+  const setupScore = Math.max(0, Math.min(100, round(result.setupScore + adjustment, 0)));
+  const grade = gradeFromSetupScore(setupScore);
+  const gradeCapReasons = [...(result.gradeCapReasons ?? [])];
+  let longCallDecision: LongCallDecision = result.longCallDecision;
+  let effectiveGrade = grade;
+
+  if (result.longCallDecision !== "Avoid") {
+    if (setupScore >= A_SETUP_SCORE_THRESHOLD && edge.status !== "Bearish") {
+      longCallDecision = "Strong Long Call Candidate";
+    } else if (setupScore >= B_SETUP_SCORE_THRESHOLD) {
+      longCallDecision = "Moderate Long Call Candidate";
+    } else {
+      longCallDecision = "Watchlist Candidate";
+    }
+  }
+
+  if (edge.status === "Bearish" && effectiveGrade === "A") {
+    effectiveGrade = "B";
+    if (longCallDecision === "Strong Long Call Candidate") longCallDecision = "Moderate Long Call Candidate";
+    if (!gradeCapReasons.includes("Institutional Edge is bearish.")) gradeCapReasons.push("Institutional Edge is bearish.");
+  }
+
+  return {
+    ...result,
+    setupScore,
+    setupScoreStatus: setupScoreStatus(setupScore),
+    grade: effectiveGrade,
+    longCallDecision,
+    setupQuality: effectiveGrade === "A" ? "High" : "Moderate",
+    entryRecommendationType: entryType(longCallDecision, result.compressionQualityStatus),
+    institutionalEdgeScore: edge.score,
+    institutionalEdgeStatus: edge.status,
+    institutionalEdgeFactors: edge.factors,
+    institutionalEdgeAdjustment: adjustment,
+    institutionalEdgeWarnings: edge.warnings,
+    gradeCapReasons
+  };
+}
+
 function evaluateMarketStructure(dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext): LayerEvaluation {
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
@@ -273,6 +315,12 @@ function gradeFromSetupScore(score: number): Grade {
   if (score >= A_SETUP_SCORE_THRESHOLD) return "A";
   if (score >= B_SETUP_SCORE_THRESHOLD) return "B";
   return "C";
+}
+
+function setupScoreStatus(score: number): LayerStatus {
+  if (score >= A_SETUP_SCORE_THRESHOLD) return "Bullish";
+  if (score >= B_SETUP_SCORE_THRESHOLD) return "Neutral";
+  return "Bearish";
 }
 
 type SetupScoreResult = {
