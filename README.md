@@ -79,12 +79,12 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Market cap >= $2B when Schwab provides market cap
 - ETFs bypass beta, market-cap, sector, and single-company earnings requirements
 - Stock liquidity passes with either average share volume >= 600K or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last
-- Long setup: price above the 8, 21, 50, and 100 EMAs with a positive EMA stack
+- Long setup: the 8, 21, 34, 55, and 89 EMAs are positively stacked, with price above the 21 EMA and inside the approved 21-to-8 EMA entry range
 - Selected timeframes: daily and weekly
 - At least 3 consecutive active Daily squeeze dots before expansion; 3-4 dots qualify as a developing B setup, while 5+ dots are eligible for A
 - Daily price must be between the 21 EMA and 8 EMA; the buffered range from 0.1% above the 21 EMA through 0.1% below the 8 EMA is eligible for A, while the remaining range is capped at B
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
-- Weekly qualification requires either the full bullish 8/21/50/100 EMA stack or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
+- Weekly qualification requires either the full bullish 8/21/34/55/89 EMA stack with price above the 21 EMA or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
 - Weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
@@ -97,7 +97,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 
 The automatic index universe is treated as prequalified if Schwab and FMP both omit market cap. If either provider supplies market cap below the configured threshold, the symbol is rejected.
 
-Momentum is the current Daily Squeeze Momentum-style value. The app compares the latest close against a 20-period midpoint baseline, then marks `momentumImproving` true when the current value is higher than the same calculation from 5 Daily bars ago.
+Momentum follows the 20-period Squeeze histogram pipeline: price is measured against the average of the 20-bar high/low midpoint and 20-bar average close, then smoothed with a 20-bar least-squares linear regression curve. `momentumImproving` compares the current histogram bar with the immediately previous bar. Histogram state is reported as cyan, blue, red, or yellow from its sign and direction.
 
 ## Notes
 

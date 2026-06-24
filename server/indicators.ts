@@ -1,4 +1,4 @@
-import type { Candle, IndicatorSnapshot, SqueezeState } from "../shared/types";
+import type { Candle, IndicatorSnapshot, SqueezeMomentumColor, SqueezeState } from "../shared/types";
 
 export function ema(values: number[], period: number): number[] {
   const multiplier = 2 / (period + 1);
@@ -75,8 +75,9 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
   const kcMidLower = kcBasis - kcRange * 1.5;
   const kcHighUpper = kcBasis + kcRange;
   const kcHighLower = kcBasis - kcRange;
-  const momentum = linearMomentum(closes, highs, lows, 20);
-  const previousMomentum = linearMomentum(closes.slice(0, -5), highs.slice(0, -5), lows.slice(0, -5), 20);
+  const momentumSeries = squeezeMomentumSeries(candles, squeezePeriod);
+  const momentum = momentumSeries.at(-1) ?? 0;
+  const previousMomentum = momentumSeries.at(-2) ?? momentum;
   const recentAtr = average(atr14Series.slice(-5));
   const priorAtr = average(atr14Series.slice(-15, -5));
   const recentRange = average(candles.slice(-5).map((candle) => candle.high - candle.low));
@@ -103,7 +104,8 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
     kcHighUpper: round(kcHighUpper),
     kcHighLower: round(kcHighLower),
     momentum: round(momentum),
-    momentumImproving: momentum >= previousMomentum,
+    momentumImproving: momentum > previousMomentum,
+    momentumColor: squeezeMomentumColor(momentum, previousMomentum),
     candleRangeContracting: recentRange <= priorRange,
     squeezeState: squeezeState(
       bbUpper,
@@ -157,14 +159,40 @@ function isInsideChannel(bbUpper: number, bbLower: number, kcUpper: number, kcLo
   return bbUpper <= kcUpper && bbLower >= kcLower;
 }
 
-function linearMomentum(closes: number[], highs: number[], lows: number[], period: number): number {
-  const closeSlice = closes.slice(-period);
-  const highSlice = highs.slice(-period);
-  const lowSlice = lows.slice(-period);
-  const high = Math.max(...highSlice);
-  const low = Math.min(...lowSlice);
-  const mean = ((high + low) / 2 + closeSlice.reduce((sum, close) => sum + close, 0) / closeSlice.length) / 2;
-  return closeSlice[closeSlice.length - 1] - mean;
+export function squeezeMomentumSeries(candles: Candle[], period = 20): number[] {
+  const rawMomentum = candles.map((candle, index) => {
+    const start = Math.max(0, index - period + 1);
+    const window = candles.slice(start, index + 1);
+    const highestHigh = Math.max(...window.map((item) => item.high));
+    const lowestLow = Math.min(...window.map((item) => item.low));
+    const averageClose = average(window.map((item) => item.close));
+    const midpointBaseline = ((highestHigh + lowestLow) / 2 + averageClose) / 2;
+    return candle.close - midpointBaseline;
+  });
+
+  return rawMomentum.map((_, index) => {
+    const start = Math.max(0, index - period + 1);
+    return linearRegressionLast(rawMomentum.slice(start, index + 1));
+  });
+}
+
+export function linearRegressionLast(values: number[]): number {
+  if (values.length <= 1) return values[0] ?? 0;
+  const count = values.length;
+  const sumX = (count * (count - 1)) / 2;
+  const sumY = values.reduce((sum, value) => sum + value, 0);
+  const sumXX = values.reduce((sum, _value, index) => sum + index * index, 0);
+  const sumXY = values.reduce((sum, value, index) => sum + index * value, 0);
+  const denominator = count * sumXX - sumX * sumX;
+  if (denominator === 0) return values[count - 1];
+  const slope = (count * sumXY - sumX * sumY) / denominator;
+  const intercept = (sumY - slope * sumX) / count;
+  return slope * (count - 1) + intercept;
+}
+
+export function squeezeMomentumColor(momentum: number, previousMomentum: number): SqueezeMomentumColor {
+  if (momentum >= 0) return momentum > previousMomentum ? "cyan" : "blue";
+  return momentum < previousMomentum ? "red" : "yellow";
 }
 
 export function round(value: number, places = 2): number {

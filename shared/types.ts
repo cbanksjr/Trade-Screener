@@ -60,6 +60,7 @@ export type OptionContract = {
 };
 
 export type SqueezeState = "none" | "low" | "mid" | "high" | "released";
+export type SqueezeMomentumColor = "cyan" | "blue" | "red" | "yellow";
 export type TimeframeBias = "bullish" | "bearish" | "neutral" | "unavailable";
 export type LayerStatus = "Bullish" | "Neutral" | "Bearish" | "Conflicting" | "Insufficient Data";
 export type LongCallDecision = "Strong Long Call Candidate" | "Moderate Long Call Candidate" | "Watchlist Candidate" | "Avoid";
@@ -152,6 +153,7 @@ export type IndicatorSnapshot = {
   kcHighLower: number;
   momentum: number;
   momentumImproving: boolean;
+  momentumColor?: SqueezeMomentumColor;
   candleRangeContracting: boolean;
   squeezeState: SqueezeState;
 };

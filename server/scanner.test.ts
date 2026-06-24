@@ -569,7 +569,7 @@ function qualifyingResult(symbol: string, daily = indicator("low"), weekly = ind
     recommendedDte: "45 DTE swing",
     recommendedDelta: "0.55",
     suggestedEntryArea: "$99.00 to $101.00",
-    invalidationLevel: "Daily close below 50/100 EMA zone.",
+    invalidationLevel: "Daily close below the 55/89 EMA zone.",
     stockStopPrice: 95,
     target1: 105,
     target2: 110,

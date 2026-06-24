@@ -247,11 +247,12 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
           <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
           <Metric label="Setup Score" value={setupScoreLabel(result)} />
-          <Metric label="Momentum" value={formatNumber(result.indicators.momentum)} />
+          <Metric label="Momentum" value={momentumLabel(result)} />
           <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
-          <Metric label="50 EMA" value={formatNumber(result.indicators.ema50)} />
-          <Metric label="100 EMA" value={formatNumber(result.indicators.ema100)} />
+          <Metric label="34 EMA" value={formatNumber(result.indicators.ema34)} />
+          <Metric label="55 EMA" value={formatNumber(result.indicators.ema55)} />
+          <Metric label="89 EMA" value={formatNumber(result.indicators.ema89)} />
           <Metric label="ATR" value={formatNumber(result.indicators.atr14)} />
         </div>
       </section>
@@ -395,6 +396,11 @@ function setupScoreValue(result: ScanResult): number {
 
 function setupScoreLabel(result: ScanResult): string {
   return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
+}
+
+function momentumLabel(result: ScanResult): string {
+  const color = result.indicators.momentumColor;
+  return formatNumber(result.indicators.momentum) + (color ? " · " + color[0].toUpperCase() + color.slice(1) : "");
 }
 
 function displayStatus(status: LayerStatus | undefined): "Bullish" | "Neutral" | "Avoid" {

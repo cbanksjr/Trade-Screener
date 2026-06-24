@@ -182,7 +182,7 @@ export function gradeSetup(input: {
     recommendedDelta: recommendedOption?.delta !== undefined ? recommendedOption.delta.toFixed(2) : undefined,
     suggestedEntryArea: suggestedEntry(price, indicators),
     invalidationLevel: invalidation(price, indicators),
-    stockStopPrice: round(Math.min(indicators.ema50, indicators.ema100), 2),
+    stockStopPrice: round(Math.min(indicators.ema55, indicators.ema89), 2),
     target1: round(price + indicators.atr14 * 1.5, 2),
     target2: round(price + indicators.atr14 * 2.5, 2),
     reasonsSupportingTrade: supportReasons(layerEvaluations, dailyContext, weeklyContext, recommendedOption),
@@ -576,7 +576,7 @@ function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapsho
   const emaPocketLower = indicators.ema21 * 1.001;
   const emaPocketUpper = indicators.ema8 * 0.999;
   const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
-  const priceAboveEmaStack = price > indicators.ema50 && price > indicators.ema100;
+  const priceAboveEmaStack = price >= indicators.ema21;
   const weeklyQualificationMode = resolveWeeklyQualificationMode(indicators, price);
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   return {
@@ -648,7 +648,7 @@ function unavailableContext(timeframe: LowerTimeframeContext["timeframe"], detai
 }
 
 function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerTimeframeContext {
-  if (context.bias === "unavailable" || context.ema8 === null || context.ema21 === null || context.ema50 === null || context.ema100 === null || context.atr14 === null) {
+  if (context.bias === "unavailable" || context.ema8 === null || context.ema21 === null || context.ema34 === null || context.ema50 === null || context.ema55 === null || context.ema89 === null || context.atr14 === null) {
     return context;
   }
   const atrDistanceFromEma21 = context.atr14 > 0 ? (price - context.ema21) / context.atr14 : Number.POSITIVE_INFINITY;
@@ -662,7 +662,7 @@ function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerT
     ema8: context.ema8,
     ema21: context.ema21
   }, price);
-  const priceAboveEmaStack = price > context.ema50 && price > context.ema100;
+  const priceAboveEmaStack = price >= context.ema21;
   const bias = context.positiveEmaStack && priceAboveEmaStack ? "bullish" : !context.positiveEmaStack && !priceAboveEmaStack ? "bearish" : "neutral";
   return {
     ...context,
@@ -678,7 +678,7 @@ function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerT
     withinEmaPocket,
     dailyEntryQualificationMode,
     detail: context.timeframe + " is " + bias + ": current price $" + price.toFixed(2)
-      + ", EMAs " + [context.ema8, context.ema21, context.ema50, context.ema100].join("/")
+      + ", EMAs " + [context.ema8, context.ema21, context.ema34, context.ema55, context.ema89].join("/")
       + ", squeeze " + context.squeezeState
       + ", " + dailyEntryDetail(dailyEntryQualificationMode)
   };
@@ -715,7 +715,7 @@ function entryType(decision: LongCallDecision, compressionStatus: LayerStatus) {
 function weeklySummary(context: LowerTimeframeContext): string {
   if (context.bias === "unavailable") return "Weekly context unavailable; the setup does not qualify.";
   const squeezeBonus = isSqueezeActive(context.squeezeState) ? " Weekly squeeze adds bonus confirmation." : " Weekly squeeze is not required.";
-  if (context.weeklyQualificationMode === "full-stack") return "Weekly chart qualifies with the full bullish 8/21/50/100 EMA stack." + squeezeBonus;
+  if (context.weeklyQualificationMode === "full-stack") return "Weekly chart qualifies with the full bullish 8/21/34/55/89 EMA stack." + squeezeBonus;
   if (context.weeklyQualificationMode === "ema21-atr") return "Weekly chart qualifies because price is above and within one ATR of the 21 EMA; grade is capped at B without the full bullish EMA stack." + squeezeBonus;
   return "Weekly chart does not qualify because it lacks the full bullish EMA stack and is not within one ATR above the 21 EMA.";
 }
@@ -754,7 +754,7 @@ function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
 }
 
 function invalidation(_price: number, indicators: IndicatorSnapshot): string {
-  return "Daily close below 50/100 EMA zone near $" + round(Math.min(indicators.ema50, indicators.ema100), 2).toFixed(2) + ".";
+  return "Daily close below the 55/89 EMA zone near $" + round(Math.min(indicators.ema55, indicators.ema89), 2).toFixed(2) + ".";
 }
 
 function optionDteLabel(contract: OptionContract): string {
@@ -850,7 +850,7 @@ function dailyEntryDetail(mode: DailyEntryQualificationMode): string {
 }
 
 export function resolveWeeklyQualificationMode(indicators: IndicatorSnapshot, price: number): WeeklyQualificationMode {
-  const fullStack = hasPositiveEmaStack(indicators) && price > indicators.ema50 && price > indicators.ema100;
+  const fullStack = hasPositiveEmaStack(indicators) && price >= indicators.ema21;
   if (fullStack) return "full-stack";
   if (indicators.atr14 <= 0 || price < indicators.ema21) return "none";
   return (price - indicators.ema21) / indicators.atr14 <= 1 ? "ema21-atr" : "none";

@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeState } from "../shared/types";
 import { demoOptions } from "./demoData";
-import { activeSqueezeDotCount, latestIndicators, squeezeState } from "./indicators";
+import {
+  activeSqueezeDotCount,
+  latestIndicators,
+  linearRegressionLast,
+  squeezeMomentumColor,
+  squeezeMomentumSeries,
+  squeezeState
+} from "./indicators";
 import {
   BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
@@ -18,12 +25,44 @@ describe("indicator calculations", () => {
     const indicators = latestIndicators(bullishCompressionCandles());
 
     expect(indicators.ema8).toBeGreaterThan(indicators.ema21);
-    expect(indicators.ema21).toBeGreaterThan(indicators.ema50);
-    expect(indicators.ema50).toBeGreaterThan(indicators.ema100);
+    expect(indicators.ema21).toBeGreaterThan(indicators.ema34);
+    expect(indicators.ema34).toBeGreaterThan(indicators.ema55);
+    expect(indicators.ema55).toBeGreaterThan(indicators.ema89);
     expect(indicators.atr14).toBeGreaterThan(0);
     expect(typeof indicators.atrContracting).toBe("boolean");
     expect(typeof indicators.bbContracting).toBe("boolean");
     expect(typeof indicators.momentumImproving).toBe("boolean");
+    expect(["cyan", "blue", "red", "yellow"]).toContain(indicators.momentumColor);
+  });
+
+  it("uses the least-squares regression endpoint for the Squeeze histogram", () => {
+    expect(linearRegressionLast([1, 2, 3])).toBeCloseTo(3);
+    expect(linearRegressionLast([1, 2, 4])).toBeCloseTo(23 / 6);
+  });
+
+  it("calculates the canonical 20-bar Squeeze momentum histogram", () => {
+    const candles = Array.from({ length: 90 }, (_, index) => ({
+      date: "2026-01-" + String(index + 1).padStart(2, "0"),
+      open: index,
+      high: index + 1,
+      low: index - 1,
+      close: index,
+      volume: 1_000_000
+    }));
+    const series = squeezeMomentumSeries(candles);
+    const indicators = latestIndicators(candles);
+
+    expect(series.at(-1)).toBeCloseTo(9.5);
+    expect(indicators.momentum).toBeCloseTo(9.5);
+    expect(indicators.momentumImproving).toBe(false);
+    expect(indicators.momentumColor).toBe("blue");
+  });
+
+  it("maps Squeeze histogram sign and direction to platform colors", () => {
+    expect(squeezeMomentumColor(2, 1)).toBe("cyan");
+    expect(squeezeMomentumColor(1, 2)).toBe("blue");
+    expect(squeezeMomentumColor(-2, -1)).toBe("red");
+    expect(squeezeMomentumColor(-1, -2)).toBe("yellow");
   });
 
   it("classifies Squeeze Pro levels from Bollinger/Keltner envelopes", () => {

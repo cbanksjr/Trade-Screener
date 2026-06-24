@@ -84,7 +84,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const emaPocketUpper = indicators.ema8 * 0.999;
   const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
   const dailyEntryQualificationMode = resolveDailyEntryQualificationMode(indicators.ema21, indicators.ema8, price);
-  const priceAboveEmaStack = price > indicators.ema50 && price > indicators.ema100;
+  const priceAboveEmaStack = price >= indicators.ema21;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
   const bias = lowerTimeframeBias(positiveEmaStack, priceAboveEmaStack);
@@ -114,7 +114,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
     compressionStatus,
     squeezeState: indicators.squeezeState,
     detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", EMAs "
-      + [indicators.ema8, indicators.ema21, indicators.ema50, indicators.ema100].join("/")
+      + [indicators.ema8, indicators.ema21, indicators.ema34, indicators.ema55, indicators.ema89].join("/")
       + ", squeeze " + indicators.squeezeState
       + ", " + dailyEntryDetail(dailyEntryQualificationMode)
   };
@@ -152,8 +152,9 @@ export function hasPositiveEmaStack(indicators: {
   ema100: number;
 }): boolean {
   return indicators.ema8 > indicators.ema21
-    && indicators.ema21 > indicators.ema50
-    && indicators.ema50 > indicators.ema100;
+    && indicators.ema21 > indicators.ema34
+    && indicators.ema34 > indicators.ema55
+    && indicators.ema55 > indicators.ema89;
 }
 
 export function compressionQualityScore(indicators: {
