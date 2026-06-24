@@ -565,18 +565,18 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
-  it("allows entries from 0.1% above the 50 EMA through 0.1% below the 8 EMA", () => {
+  it("allows entries from 0.1% above the 21 EMA through 0.1% below the 8 EMA", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const lowerPocketPrice = indicators.ema50 * 1.001;
+    const lowerPocketPrice = indicators.ema21 * 1.001;
     const upperPocketPrice = indicators.ema8 * 0.999;
     const resultAtLowerPocket = gradeSetup({
-      symbol: "ABOVE50",
+      symbol: "ABOVE21",
       candles,
       currentPrice: lowerPocketPrice,
-      fundamentals: strongFundamentals("ABOVE50"),
+      fundamentals: strongFundamentals("ABOVE21"),
       optionable: true,
-      options: demoOptions("ABOVE50", lowerPocketPrice),
+      options: demoOptions("ABOVE21", lowerPocketPrice),
       lowerTimeframes: bullishLowerTimeframes("none"),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
@@ -597,21 +597,21 @@ describe("layer decision engine", () => {
     expect(resultAtLowerPocket.longCallDecision).not.toBe("Avoid");
     expect(resultAtUpperPocket.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(true);
     expect(resultAtUpperPocket.longCallDecision).not.toBe("Avoid");
-    expect(resultAtLowerPocket.suggestedEntryArea).toContain("0.1% above 50 EMA");
+    expect(resultAtLowerPocket.suggestedEntryArea).toContain("0.1% above 21 EMA");
   });
 
-  it("flags entries below the 50 EMA pocket or too close to the 8 EMA", () => {
+  it("flags entries below the 21 EMA pocket or too close to the 8 EMA", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const belowPrice = indicators.ema50 * 1.0009;
+    const belowPrice = indicators.ema21 * 1.0009;
     const extendedPrice = indicators.ema8 * 0.9991;
     const below = gradeSetup({
-      symbol: "BELOW50POCKET",
+      symbol: "BELOW21POCKET",
       candles,
       currentPrice: belowPrice,
-      fundamentals: strongFundamentals("BELOW50POCKET"),
+      fundamentals: strongFundamentals("BELOW21POCKET"),
       optionable: true,
-      options: demoOptions("BELOW50POCKET", belowPrice),
+      options: demoOptions("BELOW21POCKET", belowPrice),
       lowerTimeframes: bullishLowerTimeframes("none")
     });
     const extended = gradeSetup({
@@ -820,7 +820,7 @@ function bullishCompressionCandles(): Candle[] {
 function activeDailySqueezeCandles(): Candle[] {
   const candles: Candle[] = [];
   for (let index = 0; index < 180; index += 1) {
-    const close = index < 140 ? 100 + index * 0.35 : 149 + Math.sin(index / 2) * 0.08;
+    const close = index < 140 ? 100 + index * 0.35 : 149 + (index - 140) * 0.04 + Math.sin(index / 2) * 0.08;
     const range = index < 140 ? 1.5 : 2.6;
     candles.push({
       date: "2026-04-" + String(index + 1).padStart(2, "0"),
@@ -891,7 +891,7 @@ function strongFundamentals(symbol: string) {
 }
 
 function preferredEntryPrice(indicators: ReturnType<typeof latestIndicators>): number {
-  return (indicators.ema50 * 1.001 + indicators.ema8 * 0.999) / 2;
+  return (indicators.ema21 * 1.001 + indicators.ema8 * 0.999) / 2;
 }
 
 function optionLayer(result: ReturnType<typeof gradeSetup>) {

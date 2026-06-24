@@ -79,7 +79,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const percentAboveEma21 = indicators.ema21 > 0 ? ((price - indicators.ema21) / indicators.ema21) * 100 : Number.POSITIVE_INFINITY;
   const percentAboveEma50 = indicators.ema50 > 0 ? ((price - indicators.ema50) / indicators.ema50) * 100 : Number.POSITIVE_INFINITY;
   const percentBelowEma8 = indicators.ema8 > 0 ? ((indicators.ema8 - price) / indicators.ema8) * 100 : Number.NEGATIVE_INFINITY;
-  const emaPocketLower = indicators.ema50 * 1.001;
+  const emaPocketLower = indicators.ema21 * 1.001;
   const emaPocketUpper = indicators.ema8 * 0.999;
   const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
   const priceAboveEmaStack = price > indicators.ema50 && price > indicators.ema100;
@@ -114,7 +114,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
       + [indicators.ema8, indicators.ema21, indicators.ema50, indicators.ema100].join("/")
       + ", squeeze " + indicators.squeezeState
       + ", " + (withinEmaPocket ? "inside" : "outside")
-      + " the EMA pocket between 0.1% above the 50 EMA and 0.1% below the 8 EMA."
+      + " the EMA pocket between 0.1% above the 21 EMA and 0.1% below the 8 EMA."
   };
 }
 

@@ -82,7 +82,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Long setup: price above the 8, 21, 50, and 100 EMAs with a positive EMA stack
 - Selected timeframes: daily and weekly
 - At least 5 consecutive active Daily squeeze dots before expansion
-- Daily entry proximity: current price must be at least 0.1% above the 50 EMA and at least 0.1% below the 8 EMA
+- Daily entry proximity: current price must be at least 0.1% above the 21 EMA and at least 0.1% below the 8 EMA
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly qualification requires either the full bullish 8/21/50/100 EMA stack or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
 - Weekly squeeze is bonus confirmation, not a requirement
