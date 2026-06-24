@@ -170,6 +170,30 @@ describe("FMP Institutional Edge", () => {
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.gradeCapReasons).toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
   });
+
+  it("does not promote a broad daily entry above B", () => {
+    const result = applyInstitutionalEdge({
+      ...baseResult(88, "B"),
+      dailyEntryQualificationMode: "broad"
+    }, edge("Bullish", 5));
+
+    expect(result.setupScore).toBe(93);
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain("Daily price is between the 21 EMA and 8 EMA but outside the stricter buffered A-entry pocket.");
+  });
+
+  it("does not promote a developing squeeze above B", () => {
+    const result = applyInstitutionalEdge({
+      ...baseResult(88, "B"),
+      squeezeMaturityMode: "developing"
+    }, edge("Bullish", 5));
+
+    expect(result.setupScore).toBe(93);
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain("Daily squeeze has 3-4 active dots; developing compression is capped at B.");
+  });
 });
 
 function edge(status: InstitutionalEdgeSummary["status"], adjustment: number): InstitutionalEdgeSummary {

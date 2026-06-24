@@ -5,7 +5,20 @@ import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
-import { A_SETUP_SCORE_THRESHOLD, B_SETUP_SCORE_THRESHOLD, WEEKLY_ATR_GRADE_CAP_REASON, applyInstitutionalEdge, defaultSettings, gradeSetup, resolveWeeklyQualificationMode, stockLiquidityPasses } from "./scoring";
+import {
+  A_SETUP_SCORE_THRESHOLD,
+  B_SETUP_SCORE_THRESHOLD,
+  BROAD_ENTRY_GRADE_CAP_REASON,
+  DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
+  WEEKLY_ATR_GRADE_CAP_REASON,
+  applyInstitutionalEdge,
+  defaultSettings,
+  gradeSetup,
+  resolveDailyEntryQualificationMode,
+  resolveSqueezeMaturityMode,
+  resolveWeeklyQualificationMode,
+  stockLiquidityPasses
+} from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
@@ -323,10 +336,6 @@ async function scanSymbol(input: {
     if (earlyFmp?.usedLive) usedLive = true;
     let fundamentals = mergeFundamentals(symbol, quote, earlyFmp?.data);
 
-    if (assetType === "stock" && fundamentals.beta !== undefined && fundamentals.sources?.beta !== "demo" && fundamentals.beta < settings.minBeta) {
-      warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.beta) + " beta is below " + settings.minBeta + ".");
-      return { warnings, usedLive, usedDemo, skipReason: "beta" };
-    }
     if (assetType === "stock" && fundamentals.marketCap !== undefined && fundamentals.sources?.marketCap !== "demo" && fundamentals.marketCap < settings.minMarketCap) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.marketCap) + " market cap is below " + formatMoney(settings.minMarketCap) + ".");
       return { warnings, usedLive, usedDemo, skipReason: "marketCap" };
@@ -494,7 +503,6 @@ function createScanDiagnostics(scannedSymbols: number, minAvgShareVolume: number
       quoteMissing: 0,
       price: 0,
       stockLiquidity: 0,
-      beta: 0,
       marketCap: 0,
       candleHistory: 0,
       options: 0,
@@ -526,9 +534,12 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const dotCount = resolveDailySqueezeDotCount(result);
   const setupScore = typeof result.setupScore === "number" ? result.setupScore : result.score;
   const weeklyQualificationMode = resolveCachedWeeklyQualificationMode(result);
-  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode);
+  const dailyEntryQualificationMode = resolveCachedDailyEntryQualificationMode(result);
+  const squeezeMaturityMode = result.squeezeMaturityMode
+    ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
+  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode);
   const scoreGrade = gradeFromSetupScore(setupScore);
-  const grade = weeklyQualificationMode === "ema21-atr" && scoreGrade === "A" ? "B" : scoreGrade;
+  const grade = isCachedGradeCapped(weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode) && scoreGrade === "A" ? "B" : scoreGrade;
   const normalized: ScanResult = {
     ...result,
     assetType: result.assetType ?? "stock",
@@ -544,8 +555,10 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     setupScore,
     setupScoreStatus: result.setupScoreStatus ?? "Insufficient Data",
     institutionalFactors: result.institutionalFactors ?? [],
+    dailyEntryQualificationMode,
     weeklyQualificationMode,
-    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode),
+    squeezeMaturityMode,
+    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode),
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -554,8 +567,10 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
         detail: dotCount === undefined
           ? "Run scan for dot count."
           : layer.status === "Bearish"
-            ? "At least 5 consecutive active daily squeeze dots are required; current count is " + dotCount + "."
-            : "Daily chart has " + dotCount + " consecutive active squeeze dots."
+            ? "At least 3 consecutive active daily squeeze dots are required; current count is " + dotCount + "."
+            : dotCount < 5
+              ? "Daily squeeze is developing with " + dotCount + " active dots; grade is capped at B."
+              : "Daily chart has " + dotCount + " consecutive active squeeze dots."
       };
     })
   };
@@ -575,10 +590,37 @@ function normalizeCachedIndicators(indicators: IndicatorSnapshot): IndicatorSnap
   };
 }
 
-function normalizeCachedDecision(decision: ScanResult["longCallDecision"], setupScore: number, weeklyQualificationMode: ScanResult["weeklyQualificationMode"]): ScanResult["longCallDecision"] {
+function resolveCachedDailyEntryQualificationMode(result: ScanResult): NonNullable<ScanResult["dailyEntryQualificationMode"]> {
+  if (result.dailyEntryQualificationMode) return result.dailyEntryQualificationMode;
+  try {
+    return resolveDailyEntryQualificationMode(normalizeCachedIndicators(result.indicators), result.price);
+  } catch {
+    const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
+    return daily?.withinEmaPocket ? "strict" : "none";
+  }
+}
+
+function isCachedGradeCapped(
+  weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>,
+  dailyEntryQualificationMode: NonNullable<ScanResult["dailyEntryQualificationMode"]>,
+  squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>
+): boolean {
+  return weeklyQualificationMode === "ema21-atr"
+    || dailyEntryQualificationMode === "broad"
+    || squeezeMaturityMode === "developing";
+}
+
+function normalizeCachedDecision(
+  decision: ScanResult["longCallDecision"],
+  setupScore: number,
+  weeklyQualificationMode: ScanResult["weeklyQualificationMode"],
+  dailyEntryQualificationMode: ScanResult["dailyEntryQualificationMode"],
+  squeezeMaturityMode: ScanResult["squeezeMaturityMode"]
+): ScanResult["longCallDecision"] {
   if (decision === "Avoid") return "Avoid";
   if (setupScore < B_SETUP_SCORE_THRESHOLD) return "Watchlist Candidate";
-  if (weeklyQualificationMode === "ema21-atr") return "Moderate Long Call Candidate";
+  if (decision === "Watchlist Candidate") return "Watchlist Candidate";
+  if (weeklyQualificationMode === "ema21-atr" || dailyEntryQualificationMode === "broad" || squeezeMaturityMode === "developing") return "Moderate Long Call Candidate";
   if (decision === "Strong Long Call Candidate" && setupScore < A_SETUP_SCORE_THRESHOLD) return "Moderate Long Call Candidate";
   return decision;
 }
@@ -603,11 +645,20 @@ function cachedGradeCapReasons(result: ScanResult, decision: ScanResult["longCal
   return reasons;
 }
 
-function mergeCachedGradeCapReasons(result: ScanResult, decision: ScanResult["longCallDecision"], setupScore: number, weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>): string[] {
+function mergeCachedGradeCapReasons(
+  result: ScanResult,
+  decision: ScanResult["longCallDecision"],
+  setupScore: number,
+  weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>,
+  dailyEntryQualificationMode: NonNullable<ScanResult["dailyEntryQualificationMode"]>,
+  squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>
+): string[] {
   const reasons = [...(result.gradeCapReasons ?? cachedGradeCapReasons(result, decision, setupScore))];
   if (weeklyQualificationMode === "ema21-atr" && !reasons.includes(WEEKLY_ATR_GRADE_CAP_REASON)) {
     reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
   }
+  if (dailyEntryQualificationMode === "broad" && !reasons.includes(BROAD_ENTRY_GRADE_CAP_REASON)) reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
+  if (squeezeMaturityMode === "developing" && !reasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   return reasons;
 }
 

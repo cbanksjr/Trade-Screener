@@ -418,7 +418,8 @@ function layerDetail(result: ScanResult, layer: { layer: string; detail: string;
   if (layer.layer !== "Compression Quality") return layer.detail;
   const dots = dailySqueezeDotCount(result);
   if (dots === null) return "Run scan for dot count.";
-  if (layer.status === "Bearish") return "At least 5 consecutive active Daily squeeze dots are required; current count is " + dots + ".";
+  if (dots < 3) return "At least 3 consecutive active Daily squeeze dots are required; current count is " + dots + ".";
+  if (dots < 5) return "Daily squeeze is developing with " + dots + " active dots; grade is capped at B.";
   return "Daily chart has " + dots + " consecutive active squeeze dots.";
 }
 

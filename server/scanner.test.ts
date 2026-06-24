@@ -329,6 +329,45 @@ describe("background scan refresh", () => {
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
   }));
 
+  it("keeps broad-entry cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+    const broadEntry: ScanResult = {
+      ...qualifyingResult("BROADENTRY"),
+      dailyEntryQualificationMode: "broad",
+      squeezeMaturityMode: "mature",
+      setupScore: 95,
+      grade: "A",
+      longCallDecision: "Strong Long Call Candidate"
+    };
+    await replaceScanResults([broadEntry]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("BROADENTRY");
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain("Daily price is between the 21 EMA and 8 EMA but outside the stricter buffered A-entry pocket.");
+  }));
+
+  it("keeps developing-squeeze cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+    const developing: ScanResult = {
+      ...qualifyingResult("DEVELOPING"),
+      dailyEntryQualificationMode: "strict",
+      dailySqueezeDotCount: 4,
+      squeezeMaturityMode: "developing",
+      setupScore: 95,
+      grade: "A",
+      longCallDecision: "Strong Long Call Candidate"
+    };
+    await replaceScanResults([developing]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("DEVELOPING");
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain("Daily squeeze has 3-4 active dots; developing compression is capped at B.");
+  }));
+
   it("normalizes old cached compression diagnostic text without using old scores as dots", async () => withDbRestore(async () => {
     const legacy: ScanResult = {
       ...qualifyingResult("LEGACY"),
@@ -475,7 +514,6 @@ function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: numb
       quoteMissing: 0,
       price: 0,
       stockLiquidity: input.stockLiquidity ?? 0,
-      beta: 0,
       marketCap: 0,
       candleHistory: 0,
       options: input.options ?? 0,

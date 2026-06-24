@@ -2,6 +2,8 @@ export type Grade = "A" | "B" | "C";
 export type TradeDirection = "long" | "short";
 export type AssetType = "stock" | "etf";
 export type WeeklyQualificationMode = "full-stack" | "ema21-atr" | "none";
+export type DailyEntryQualificationMode = "strict" | "broad" | "none";
+export type SqueezeMaturityMode = "mature" | "developing" | "insufficient";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
@@ -114,6 +116,7 @@ export type LowerTimeframeContext = {
   percentAboveEma50: number | null;
   percentBelowEma8: number | null;
   withinEmaPocket: boolean;
+  dailyEntryQualificationMode?: DailyEntryQualificationMode;
   weeklyQualificationMode?: WeeklyQualificationMode;
   compressionScore: number;
   compressionStatus: LayerStatus;
@@ -180,6 +183,7 @@ export type TimeframeSqueezeStatus = {
   percentAboveEma50?: number | null;
   percentBelowEma8?: number | null;
   withinEmaPocket?: boolean;
+  dailyEntryQualificationMode?: DailyEntryQualificationMode;
   weeklyQualificationMode?: WeeklyQualificationMode;
   compressionStatus: LayerStatus;
   detail: string;
@@ -209,9 +213,11 @@ export type ScanResult = {
   weeklyIndicators?: IndicatorSnapshot;
   lowerTimeframes?: LowerTimeframeConfluence;
   squeezeStatusByTimeframe: TimeframeSqueezeStatus[];
+  dailyEntryQualificationMode?: DailyEntryQualificationMode;
   weeklyQualificationMode?: WeeklyQualificationMode;
   weeklyContextSummary: string;
   dailySqueezeDotCount?: number;
+  squeezeMaturityMode?: SqueezeMaturityMode;
   compressionQualityScore: number;
   compressionQualityStatus: LayerStatus;
   setupScore: number;
@@ -331,7 +337,6 @@ export type ScanDiagnosticCounts = {
   quoteMissing: number;
   price: number;
   stockLiquidity: number;
-  beta: number;
   marketCap: number;
   candleHistory: number;
   options: number;

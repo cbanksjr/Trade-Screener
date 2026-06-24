@@ -2,7 +2,15 @@ import { describe, expect, it } from "vitest";
 import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeState } from "../shared/types";
 import { demoOptions } from "./demoData";
 import { activeSqueezeDotCount, latestIndicators, squeezeState } from "./indicators";
-import { WEEKLY_ATR_GRADE_CAP_REASON, gradeSetup, isSqueezeActive, rankCallOptions, resolveWeeklyQualificationMode } from "./scoring";
+import {
+  BROAD_ENTRY_GRADE_CAP_REASON,
+  DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
+  WEEKLY_ATR_GRADE_CAP_REASON,
+  gradeSetup,
+  isSqueezeActive,
+  rankCallOptions,
+  resolveWeeklyQualificationMode
+} from "./scoring";
 import { buildLowerTimeframeConfluence } from "./timeframes";
 
 describe("indicator calculations", () => {
@@ -100,7 +108,7 @@ describe("layer decision engine", () => {
     expect(result.reasonsSupportingTrade.join(" ")).not.toContain("Bonus intraday squeeze");
   });
 
-  it("requires at least 5 consecutive active daily squeeze dots", () => {
+  it("qualifies 3-4 active daily squeeze dots as a developing B setup", () => {
     const candles = activeDailySqueezeCandles();
     const firstFiveDotIndex = candles.findIndex((_, index) => index >= 90 && activeSqueezeDotCount(candles.slice(0, index + 1)) >= 5);
     expect(firstFiveDotIndex).toBeGreaterThan(90);
@@ -114,12 +122,41 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("FOURDOTS"),
       optionable: true,
       options: demoOptions("FOURDOTS", price),
-      lowerTimeframes: bullishLowerTimeframes("none")
+      lowerTimeframes: bullishLowerTimeframes("none"),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
 
+    expect(result.dailySqueezeDotCount).toBeGreaterThanOrEqual(3);
     expect(result.dailySqueezeDotCount).toBeLessThan(5);
+    expect(result.squeezeMaturityMode).toBe("developing");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
+  });
+
+  it("rejects daily squeezes with fewer than 3 active dots", () => {
+    const candles = activeDailySqueezeCandles();
+    const firstThreeDotIndex = candles.findIndex((_, index) => index >= 90 && activeSqueezeDotCount(candles.slice(0, index + 1)) >= 3);
+    expect(firstThreeDotIndex).toBeGreaterThan(90);
+    const limitedCandles = candles.slice(0, firstThreeDotIndex);
+    const indicators = latestIndicators(limitedCandles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "TWODOTS",
+      candles: limitedCandles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("TWODOTS"),
+      optionable: true,
+      options: demoOptions("TWODOTS", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.dailySqueezeDotCount).toBeLessThan(3);
+    expect(result.squeezeMaturityMode).toBe("insufficient");
     expect(result.longCallDecision).toBe("Avoid");
-    expect(result.reasonsAgainstTrade.join(" ")).toContain("At least 5 consecutive active daily squeeze dots are required");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("At least 3 consecutive active daily squeeze dots are required");
   });
 
   it("ignores lower-timeframe entry proximity for grading", () => {
@@ -597,38 +634,64 @@ describe("layer decision engine", () => {
     expect(resultAtLowerPocket.longCallDecision).not.toBe("Avoid");
     expect(resultAtUpperPocket.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(true);
     expect(resultAtUpperPocket.longCallDecision).not.toBe("Avoid");
-    expect(resultAtLowerPocket.suggestedEntryArea).toContain("0.1% above 21 EMA");
+    expect(resultAtLowerPocket.dailyEntryQualificationMode).toBe("strict");
+    expect(resultAtUpperPocket.dailyEntryQualificationMode).toBe("strict");
+    expect(resultAtLowerPocket.suggestedEntryArea).toContain("A pocket");
   });
 
-  it("flags entries below the 21 EMA pocket or too close to the 8 EMA", () => {
+  it("qualifies the inclusive 21 EMA-to-8 EMA boundaries as B entries", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const belowPrice = indicators.ema21 * 1.0009;
-    const extendedPrice = indicators.ema8 * 0.9991;
-    const below = gradeSetup({
-      symbol: "BELOW21POCKET",
+    const atEma21 = gradeSetup({
+      symbol: "ATEMA21",
       candles,
-      currentPrice: belowPrice,
-      fundamentals: strongFundamentals("BELOW21POCKET"),
+      currentPrice: indicators.ema21,
+      fundamentals: strongFundamentals("ATEMA21"),
       optionable: true,
-      options: demoOptions("BELOW21POCKET", belowPrice),
-      lowerTimeframes: bullishLowerTimeframes("none")
+      options: demoOptions("ATEMA21", indicators.ema21),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
-    const extended = gradeSetup({
-      symbol: "EXTENDED",
+    const atEma8 = gradeSetup({
+      symbol: "ATEMA8",
       candles,
-      currentPrice: extendedPrice,
-      fundamentals: strongFundamentals("EXTENDED"),
+      currentPrice: indicators.ema8,
+      fundamentals: strongFundamentals("ATEMA8"),
       optionable: true,
-      options: demoOptions("EXTENDED", extendedPrice),
-      lowerTimeframes: bullishLowerTimeframes("none")
+      options: demoOptions("ATEMA8", indicators.ema8),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
     });
 
-    expect(below.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(false);
+    for (const result of [atEma21, atEma8]) {
+      expect(result.dailyEntryQualificationMode).toBe("broad");
+      expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+      expect(result.grade).toBe("B");
+      expect(result.gradeCapReasons).toContain(BROAD_ENTRY_GRADE_CAP_REASON);
+    }
+  });
+
+  it("rejects entries below the 21 EMA or above the 8 EMA", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const resultFor = (symbol: string, price: number) => gradeSetup({
+      symbol,
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals(symbol),
+      optionable: true,
+      options: demoOptions(symbol, price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+    const below = resultFor("BELOW21", indicators.ema21 * 0.9999);
+    const above = resultFor("ABOVE8", indicators.ema8 * 1.0001);
+
+    expect(below.dailyEntryQualificationMode).toBe("none");
     expect(below.longCallDecision).toBe("Avoid");
-    expect(extended.squeezeStatusByTimeframe.find((item) => item.timeframe === "daily")?.withinEmaPocket).toBe(false);
-    expect(extended.longCallDecision).toBe("Avoid");
-    expect(extended.reasonsAgainstTrade.join(" ")).toContain("Outside the EMA pocket");
+    expect(above.dailyEntryQualificationMode).toBe("none");
+    expect(above.longCallDecision).toBe("Avoid");
+    expect(above.reasonsAgainstTrade.join(" ")).toContain("Outside the qualifying Daily range");
   });
 
   it("keeps weekly squeeze as bonus context instead of a requirement", () => {
@@ -685,6 +748,29 @@ describe("layer decision engine", () => {
 
     expect(result.passesUniverse).toBe(false);
     expect(result.longCallDecision).toBe("Avoid");
+  });
+
+  it("treats low beta as context rather than a rejection or score penalty", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "LOWBETA",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        ...strongFundamentals("LOWBETA"),
+        beta: 0.4
+      },
+      optionable: true,
+      options: demoOptions("LOWBETA", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
   });
 
   it("passes stock liquidity with either 600K shares or $300M average dollar volume", () => {

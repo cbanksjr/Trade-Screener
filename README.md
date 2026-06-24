@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard only displays qualified `A` or `B` compression candidates with an approved Weekly context. `A` means a setup score of `90-100` with the full bullish Weekly EMA stack and all hard gates satisfied. `B` means a setup score of `80-89`, or a higher-scoring setup whose Weekly chart qualifies only through 21 EMA proximity. `C` setups at `79` or below, Watchlist, Avoid, and non-qualifying Weekly context results are excluded from the visible candidate list.
+The Dashboard only displays qualified `A` or `B` compression candidates with an approved Weekly context. `A` means a setup score of `90-100`, the full bullish Weekly EMA stack, at least 5 active Daily squeeze dots, the buffered A-entry pocket, and all hard gates satisfied. `B` means a setup score of `80-89`, or a higher-scoring setup capped by Weekly 21 EMA proximity, a developing 3-4 dot squeeze, or the broader Daily 21 EMA-to-8 EMA entry range. `C` setups at `79` or below, Watchlist, Avoid, and non-qualifying Weekly context results are excluded from the visible candidate list.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -75,14 +75,14 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 
 - Optionable stock or selected ETF
 - Price above $20
-- Beta >= 0.75 when Schwab provides beta
+- Beta is displayed as context when available but is not a rejection gate or scoring penalty
 - Market cap >= $2B when Schwab provides market cap
 - ETFs bypass beta, market-cap, sector, and single-company earnings requirements
 - Stock liquidity passes with either average share volume >= 600K or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last
 - Long setup: price above the 8, 21, 50, and 100 EMAs with a positive EMA stack
 - Selected timeframes: daily and weekly
-- At least 5 consecutive active Daily squeeze dots before expansion
-- Daily entry proximity: current price must be at least 0.1% above the 21 EMA and at least 0.1% below the 8 EMA
+- At least 3 consecutive active Daily squeeze dots before expansion; 3-4 dots qualify as a developing B setup, while 5+ dots are eligible for A
+- Daily price must be between the 21 EMA and 8 EMA; the buffered range from 0.1% above the 21 EMA through 0.1% below the 8 EMA is eligible for A, while the remaining range is capped at B
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
 - Weekly qualification requires either the full bullish 8/21/50/100 EMA stack or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
 - Weekly squeeze is bonus confirmation, not a requirement
@@ -95,7 +95,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values
 - Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
 
-The automatic index universe is treated as prequalified if Schwab and FMP both omit beta or market cap. If either provider supplies beta or market cap below the configured thresholds, the symbol is rejected.
+The automatic index universe is treated as prequalified if Schwab and FMP both omit market cap. If either provider supplies market cap below the configured threshold, the symbol is rejected.
 
 Momentum is the current Daily Squeeze Momentum-style value. The app compares the latest close against a 20-period midpoint baseline, then marks `momentumImproving` true when the current value is higher than the same calculation from 5 Daily bars ago.
 

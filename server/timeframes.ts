@@ -1,4 +1,4 @@
-import type { AnalysisTimeframe, Candle, LayerStatus, LowerTimeframeConfluence, LowerTimeframeContext, TimeframeBias } from "../shared/types";
+import type { AnalysisTimeframe, Candle, DailyEntryQualificationMode, LayerStatus, LowerTimeframeConfluence, LowerTimeframeContext, TimeframeBias } from "../shared/types";
 import { latestIndicators } from "./indicators";
 
 export function buildLowerTimeframeConfluence(thirtyMinuteCandles: Candle[]): LowerTimeframeConfluence {
@@ -65,6 +65,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
       percentAboveEma50: null,
       percentBelowEma8: null,
       withinEmaPocket: false,
+      dailyEntryQualificationMode: timeframe === "daily" ? "none" : undefined,
       compressionScore: 0,
       compressionStatus: "Insufficient Data",
       squeezeState: "none",
@@ -82,6 +83,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const emaPocketLower = indicators.ema21 * 1.001;
   const emaPocketUpper = indicators.ema8 * 0.999;
   const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
+  const dailyEntryQualificationMode = resolveDailyEntryQualificationMode(indicators.ema21, indicators.ema8, price);
   const priceAboveEmaStack = price > indicators.ema50 && price > indicators.ema100;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
@@ -107,15 +109,26 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
     percentAboveEma50: round(percentAboveEma50),
     percentBelowEma8: round(percentBelowEma8),
     withinEmaPocket,
+    dailyEntryQualificationMode,
     compressionScore,
     compressionStatus,
     squeezeState: indicators.squeezeState,
     detail: timeframe + " is " + bias + ": price $" + price.toFixed(2) + ", EMAs "
       + [indicators.ema8, indicators.ema21, indicators.ema50, indicators.ema100].join("/")
       + ", squeeze " + indicators.squeezeState
-      + ", " + (withinEmaPocket ? "inside" : "outside")
-      + " the EMA pocket between 0.1% above the 21 EMA and 0.1% below the 8 EMA."
+      + ", " + dailyEntryDetail(dailyEntryQualificationMode)
   };
+}
+
+function resolveDailyEntryQualificationMode(ema21: number, ema8: number, price: number): DailyEntryQualificationMode {
+  if (price < ema21 || price > ema8) return "none";
+  return price >= ema21 * 1.001 && price <= ema8 * 0.999 ? "strict" : "broad";
+}
+
+function dailyEntryDetail(mode: DailyEntryQualificationMode): string {
+  if (mode === "strict") return "inside the buffered A-entry pocket";
+  if (mode === "broad") return "inside the broader B-entry range between the 21 EMA and 8 EMA";
+  return "outside the qualifying range between the 21 EMA and 8 EMA";
 }
 
 function round(value: number, places = 2): number {
