@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, initDb, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, mergeFundamentals, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh } from "./scanner";
+import { __resetScanStateForTest, mergeFundamentals, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
 
 describe("scan symbol resolution", () => {
   it("uses the automatic S&P 500 + Nasdaq 100 universe plus default ETFs", async () => withDbRestore(async () => {
@@ -32,23 +32,27 @@ describe("fundamental provider merge", () => {
       price: 50,
       beta: 1.1,
       marketCap: 10_000_000_000,
+      averageVolume: 1_200_000,
       lastEarningsDate: "2026-08-01"
     }, {
       symbol: "KEEP",
       beta: 1.8,
       marketCap: 20_000_000_000,
+      averageVolume: 2_400_000,
       sector: "Information Technology",
       nextEarningsDate: "2026-09-01"
     });
 
     expect(fundamentals.beta).toBe(1.1);
     expect(fundamentals.marketCap).toBe(10_000_000_000);
+    expect(fundamentals.avgShareVolume).toBe(1_200_000);
     expect(fundamentals.lastEarningsDate).toBe("2026-08-01");
     expect(fundamentals.nextEarningsDate).toBe("2026-09-01");
     expect(fundamentals.sector).toBe("Information Technology");
     expect(fundamentals.sources).toMatchObject({
       beta: "schwab",
       marketCap: "schwab",
+      avgShareVolume: "schwab",
       sector: "fmp",
       lastEarningsDate: "schwab",
       nextEarningsDate: "fmp"
@@ -79,6 +83,7 @@ describe("fundamental provider merge", () => {
       symbol: "GAP",
       beta: 1.3,
       marketCap: 3_000_000_000,
+      averageVolume: 850_000,
       sector: "Consumer Discretionary",
       nextEarningsDate: "2026-10-10"
     });
@@ -86,12 +91,14 @@ describe("fundamental provider merge", () => {
     expect(fundamentals).toMatchObject({
       beta: 1.3,
       marketCap: 3_000_000_000,
+      avgShareVolume: 850_000,
       sector: "Consumer Discretionary",
       nextEarningsDate: "2026-10-10"
     });
     expect(fundamentals.sources).toMatchObject({
       beta: "fmp",
       marketCap: "fmp",
+      avgShareVolume: "fmp",
       sector: "fmp",
       nextEarningsDate: "fmp"
     });
@@ -110,6 +117,55 @@ describe("fundamental provider merge", () => {
       marketCap: "demo"
     });
   });
+
+  it("uses recent candle volume after Schwab and FMP omit average volume", () => {
+    const fundamentals = mergeFundamentals("HISTORY", {
+      symbol: "HISTORY",
+      price: 50,
+      marketCap: 5_000_000_000
+    });
+    const candles = Array.from({ length: 25 }, (_, index) => ({
+      date: "2026-06-" + String(index + 1).padStart(2, "0"),
+      open: 50,
+      high: 51,
+      low: 49,
+      close: 50,
+      volume: index < 5 ? 100_000 : 750_000
+    }));
+
+    const resolved = withCandleLiquidityFallback(fundamentals, candles);
+
+    expect(resolved.avgShareVolume).toBe(750_000);
+    expect(resolved.avgDollarVolume20d).toBe(37_500_000);
+    expect(resolved.sources).toMatchObject({
+      avgShareVolume: "history",
+      avgDollarVolume20d: "history"
+    });
+  });
+
+  it("keeps FMP average volume ahead of candle-history fallback", () => {
+    const fundamentals = mergeFundamentals("FMPVOL", {
+      symbol: "FMPVOL",
+      price: 50,
+      marketCap: 5_000_000_000
+    }, {
+      symbol: "FMPVOL",
+      averageVolume: 850_000
+    });
+    const candles = Array.from({ length: 20 }, (_, index) => ({
+      date: "2026-05-" + String(index + 1).padStart(2, "0"),
+      open: 50,
+      high: 51,
+      low: 49,
+      close: 50,
+      volume: 750_000
+    }));
+
+    const resolved = withCandleLiquidityFallback(fundamentals, candles);
+
+    expect(resolved.avgShareVolume).toBe(850_000);
+    expect(resolved.sources?.avgShareVolume).toBe("fmp");
+  });
 });
 
 describe("settings", () => {
@@ -119,6 +175,7 @@ describe("settings", () => {
     const settings = await readSettings();
 
     expect(settings.minAvgDollarVolume).toBe(300_000_000);
+    expect(settings.minAvgShareVolume).toBe(600_000);
   }));
 
   it("migrates the old $600M average dollar volume default to $300M", async () => withDbRestore(async () => {
@@ -137,6 +194,14 @@ describe("settings", () => {
     const settings = await readSettings();
 
     expect(settings.minAvgDollarVolume).toBe(450_000_000);
+  }));
+
+  it("preserves custom average share volume settings", async () => withDbRestore(async () => {
+    await setSetting("settings", { minAvgShareVolume: 900_000 });
+
+    const settings = await readSettings();
+
+    expect(settings.minAvgShareVolume).toBe(900_000);
   }));
 
   it("allows settings to override the ETF scan list", async () => withDbRestore(async () => {
@@ -229,11 +294,12 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LONG"]);
   }));
 
-  it("only displays A/B qualified strong or moderate candidates with bullish weekly context", async () => withDbRestore(async () => {
+  it("only displays A/B qualified strong or moderate candidates with qualifying weekly context", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 79, grade: "C" };
     const nonBullishWeekly: ScanResult = {
       ...qualifyingResult("WEEKLYNEUTRAL"),
+      weeklyQualificationMode: "none",
       squeezeStatusByTimeframe: qualifyingResult("WEEKLYNEUTRAL").squeezeStatusByTimeframe.map((item) => item.timeframe === "weekly" ? { ...item, bias: "neutral" } : item)
     };
     await replaceScanResults([
@@ -244,6 +310,23 @@ describe("background scan refresh", () => {
     ]);
 
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["QUALIFIED"]);
+  }));
+
+  it("keeps ATR-only weekly cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+    const atrOnly: ScanResult = {
+      ...qualifyingResult("WEEKLYATR"),
+      weeklyQualificationMode: "ema21-atr",
+      setupScore: 95,
+      grade: "A",
+      longCallDecision: "Strong Long Call Candidate"
+    };
+    await replaceScanResults([atrOnly]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("WEEKLYATR");
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
   }));
 
   it("normalizes old cached compression diagnostic text without using old scores as dots", async () => withDbRestore(async () => {
@@ -306,7 +389,7 @@ describe("background scan refresh", () => {
   }));
 
   it("saves scan metadata after a completed refresh", async () => withDbRestore(async () => {
-    const diagnostics = fakeDiagnostics({ scannedSymbols: 2, qualifiedResults: 1, avgDollarVolume: 1 });
+    const diagnostics = fakeDiagnostics({ scannedSymbols: 2, qualifiedResults: 1, stockLiquidity: 1 });
     await startScanRefresh(() => fakeResponse([qualifyingResult("META")], ["ok"], diagnostics));
     await settleBackgroundScan();
 
@@ -319,9 +402,10 @@ describe("background scan refresh", () => {
     expect(metadata.scanDiagnostics).toMatchObject({
       scannedSymbols: 2,
       qualifiedResults: 1,
+      minAvgShareVolume: 600_000,
       minAvgDollarVolume: 300_000_000,
       skipped: {
-        avgDollarVolume: 1
+        stockLiquidity: 1
       }
     });
   }));
@@ -332,7 +416,7 @@ describe("background scan refresh", () => {
       scanStatus: "complete",
       lastScanMode: "live",
       lastScanFinishedAt: "2026-05-30T12:00:00.000Z",
-      scanDiagnostics: fakeDiagnostics({ scannedSymbols: 603, qualifiedResults: 19, avgDollarVolume: 42, options: 118 })
+      scanDiagnostics: fakeDiagnostics({ scannedSymbols: 603, qualifiedResults: 19, stockLiquidity: 42, options: 118 })
     });
 
     const response = await readCachedScanResponse();
@@ -340,9 +424,10 @@ describe("background scan refresh", () => {
     expect(response.scanDiagnostics).toMatchObject({
       scannedSymbols: 603,
       qualifiedResults: 19,
+      minAvgShareVolume: 600_000,
       minAvgDollarVolume: 300_000_000,
       skipped: {
-        avgDollarVolume: 42,
+        stockLiquidity: 42,
         options: 118
       }
     });
@@ -380,15 +465,16 @@ async function fakeResponse(results: ScanResult[], warnings: string[] = [], scan
   };
 }
 
-function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: number; avgDollarVolume?: number; options?: number }): ScanDiagnostics {
+function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: number; stockLiquidity?: number; options?: number }): ScanDiagnostics {
   return {
     scannedSymbols: input.scannedSymbols,
     qualifiedResults: input.qualifiedResults,
+    minAvgShareVolume: 600_000,
     minAvgDollarVolume: 300_000_000,
     skipped: {
       quoteMissing: 0,
       price: 0,
-      avgDollarVolume: input.avgDollarVolume ?? 0,
+      stockLiquidity: input.stockLiquidity ?? 0,
       beta: 0,
       marketCap: 0,
       candleHistory: 0,

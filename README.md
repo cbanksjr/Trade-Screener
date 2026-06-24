@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard only displays qualified `A` or `B` compression candidates with bullish Weekly context. `A` means a setup score of `90-100` with all hard gates satisfied. `B` means a setup score of `80-89` that still passes the trade-safety gates. `C` setups at `79` or below, Watchlist, Avoid, and non-bullish Weekly context results are excluded from the visible candidate list.
+The Dashboard only displays qualified `A` or `B` compression candidates with an approved Weekly context. `A` means a setup score of `90-100` with the full bullish Weekly EMA stack and all hard gates satisfied. `B` means a setup score of `80-89`, or a higher-scoring setup whose Weekly chart qualifies only through 21 EMA proximity. `C` setups at `79` or below, Watchlist, Avoid, and non-qualifying Weekly context results are excluded from the visible candidate list.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -78,13 +78,14 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Beta >= 0.75 when Schwab provides beta
 - Market cap >= $2B when Schwab provides market cap
 - ETFs bypass beta, market-cap, sector, and single-company earnings requirements
-- Average dollar volume >= $300M, from Schwab `average volume x last price` when available
+- Stock liquidity passes with either average share volume >= 600K or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last
 - Long setup: price above the 8, 21, 50, and 100 EMAs with a positive EMA stack
 - Selected timeframes: daily and weekly
 - At least 5 consecutive active Daily squeeze dots before expansion
 - Daily entry proximity: current price must be at least 0.1% above the 50 EMA and at least 0.1% below the 8 EMA
 - Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
-- Bullish Weekly chart context as required higher-timeframe confirmation; weekly squeeze is bonus confirmation, not a requirement
+- Weekly qualification requires either the full bullish 8/21/50/100 EMA stack or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
+- Weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
 - Optional FMP Institutional Edge overlay uses Starter-accessible endpoint probing for financial scores, analyst grades/targets, ownership/insider data, and ETF data when available; unavailable endpoints are skipped neutrally

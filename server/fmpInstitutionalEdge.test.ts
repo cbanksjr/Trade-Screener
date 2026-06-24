@@ -158,6 +158,18 @@ describe("FMP Institutional Edge", () => {
     expect(capped.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(capped.gradeCapReasons).toContain("Institutional Edge is bearish.");
   });
+
+  it("does not promote an ATR-only weekly setup above B", () => {
+    const result = applyInstitutionalEdge({
+      ...baseResult(88, "B"),
+      weeklyQualificationMode: "ema21-atr"
+    }, edge("Bullish", 5));
+
+    expect(result.setupScore).toBe(93);
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
+  });
 });
 
 function edge(status: InstitutionalEdgeSummary["status"], adjustment: number): InstitutionalEdgeSummary {

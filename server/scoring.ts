@@ -16,7 +16,8 @@ import type {
   ScanResult,
   ScoreRule,
   SqueezeState,
-  TimeframeSqueezeStatus
+  TimeframeSqueezeStatus,
+  WeeklyQualificationMode
 } from "../shared/types";
 import { activeSqueezeDotCount, latestIndicators, round } from "./indicators";
 import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
@@ -26,6 +27,7 @@ const SETUP_FACTOR_NAMES: InstitutionalFactorName[] = ["Market Regime", "Sector 
 const SETUP_FACTOR_WEIGHT = 100 / SETUP_FACTOR_NAMES.length;
 export const A_SETUP_SCORE_THRESHOLD = 90;
 export const B_SETUP_SCORE_THRESHOLD = 80;
+export const WEEKLY_ATR_GRADE_CAP_REASON = "Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.";
 const EARNINGS_AVOID_DAYS = 14;
 const EARNINGS_NEUTRAL_DAYS = 29;
 
@@ -33,6 +35,7 @@ export const defaultSettings = {
   minPrice: 20,
   minBeta: 0.75,
   minMarketCap: 2_000_000_000,
+  minAvgShareVolume: 600_000,
   minAvgDollarVolume: 300_000_000,
   useDemoDataWhenMissingApi: true
 };
@@ -55,6 +58,9 @@ export function gradeSetup(input: {
   sector?: string;
   sectorCandles?: Candle[];
   strictFundamentals?: boolean;
+  minMarketCap?: number;
+  minAvgShareVolume?: number;
+  minAvgDollarVolume?: number;
 }): ScanResult {
   const indicators = latestIndicators(input.candles);
   const assetType = input.assetType ?? "stock";
@@ -64,6 +70,7 @@ export function gradeSetup(input: {
   const beta = input.fundamentals?.beta;
   const marketCap = input.fundamentals?.marketCap;
   const sector = input.sector ?? input.fundamentals?.sector;
+  const avgShareVolume = input.fundamentals?.avgShareVolume ?? average(input.candles.slice(-20).map((candle) => candle.volume));
   const avgDollarVolume20d = input.fundamentals?.avgDollarVolume20d ?? average(input.candles.slice(-20).map((candle) => candle.volume * candle.close));
   const dailyContext = withCurrentPrice(buildTimeframeContext("daily", input.candles), price);
   const weeklyContext = input.weeklyIndicators ? contextFromIndicators("weekly", input.weeklyIndicators, price) : unavailableContext("weekly", "Weekly context could not be calculated.");
@@ -74,10 +81,14 @@ export function gradeSetup(input: {
     price,
     beta,
     marketCap,
+    avgShareVolume,
     avgDollarVolume20d,
     optionable: input.optionable,
     strictFundamentals: Boolean(input.strictFundamentals),
-    assetType
+    assetType,
+    minMarketCap: input.minMarketCap ?? defaultSettings.minMarketCap,
+    minAvgShareVolume: input.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
+    minAvgDollarVolume: input.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume
   });
   const marketStructure = evaluateMarketStructure(dailyContext, weeklyContext);
   const optionLayer = evaluateOptions(options);
@@ -94,7 +105,10 @@ export function gradeSetup(input: {
     institutional,
     optionLayer,
     options,
+    avgShareVolume,
     avgDollarVolume20d,
+    minAvgShareVolume: input.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
+    minAvgDollarVolume: input.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
     spyCandles: input.spyCandles,
     qqqCandles: input.qqqCandles,
     symbol: input.symbol,
@@ -103,8 +117,10 @@ export function gradeSetup(input: {
     sectorCandles: input.sectorCandles,
     nextEarningsDate: input.fundamentals?.nextEarningsDate
   });
-  const decision = finalDecision(layerEvaluations, dailyContext, weeklyContext, weeklySupport, setupScore);
-  const grade = gradeFromSetupScore(setupScore.score);
+  const weeklyQualificationMode = weeklyContext.weeklyQualificationMode ?? "none";
+  const decision = finalDecision(layerEvaluations, dailyContext, weeklyQualificationMode, weeklySupport, setupScore);
+  const scoreGrade = gradeFromSetupScore(setupScore.score);
+  const grade = weeklyQualificationMode === "ema21-atr" && scoreGrade === "A" ? "B" : scoreGrade;
   const gradeCapReasons = decision === "Strong Long Call Candidate"
     ? []
     : gradeCapReasonsFor(layerEvaluations, weeklyContext, setupScore);
@@ -121,6 +137,7 @@ export function gradeSetup(input: {
     price,
     beta: beta ?? null,
     marketCap: marketCap ?? null,
+    avgShareVolume: round(avgShareVolume, 0),
     avgDollarVolume20d: round(avgDollarVolume20d, 0),
     fundamentalSources: input.fundamentals?.sources,
     optionable: input.optionable,
@@ -138,6 +155,7 @@ export function gradeSetup(input: {
       toTimeframeStatus(dailyContext),
       toTimeframeStatus(weeklyContext)
     ],
+    weeklyQualificationMode,
     weeklyContextSummary: weeklySummary(weeklyContext),
     dailySqueezeDotCount,
     compressionQualityScore: compressionQualityScoreValue,
@@ -178,13 +196,14 @@ export function isSqueezeActive(state: SqueezeState | undefined): boolean {
 export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEdgeSummary): ScanResult {
   const adjustment = Math.max(-10, Math.min(5, edge.adjustment));
   const setupScore = Math.max(0, Math.min(100, round(result.setupScore + adjustment, 0)));
-  const grade = gradeFromSetupScore(setupScore);
-  const gradeCapReasons = [...(result.gradeCapReasons ?? [])];
+  const scoreGrade = gradeFromSetupScore(setupScore);
+  const weeklyQualificationMode = result.weeklyQualificationMode ?? "full-stack";
+  const gradeCapReasons = (result.gradeCapReasons ?? []).filter((reason) => reason !== "Setup score below 90.");
   let longCallDecision: LongCallDecision = result.longCallDecision;
-  let effectiveGrade = grade;
+  let effectiveGrade = weeklyQualificationMode === "ema21-atr" && scoreGrade === "A" ? "B" : scoreGrade;
 
   if (result.longCallDecision !== "Avoid") {
-    if (setupScore >= A_SETUP_SCORE_THRESHOLD && edge.status !== "Bearish") {
+    if (setupScore >= A_SETUP_SCORE_THRESHOLD && edge.status !== "Bearish" && weeklyQualificationMode === "full-stack") {
       longCallDecision = "Strong Long Call Candidate";
     } else if (setupScore >= B_SETUP_SCORE_THRESHOLD) {
       longCallDecision = "Moderate Long Call Candidate";
@@ -197,6 +216,12 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
     effectiveGrade = "B";
     if (longCallDecision === "Strong Long Call Candidate") longCallDecision = "Moderate Long Call Candidate";
     if (!gradeCapReasons.includes("Institutional Edge is bearish.")) gradeCapReasons.push("Institutional Edge is bearish.");
+  }
+  if (weeklyQualificationMode === "ema21-atr" && !gradeCapReasons.includes(WEEKLY_ATR_GRADE_CAP_REASON)) {
+    gradeCapReasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
+  }
+  if (setupScore < A_SETUP_SCORE_THRESHOLD && !gradeCapReasons.includes("Setup score below 90.")) {
+    gradeCapReasons.push("Setup score below 90.");
   }
 
   return {
@@ -221,33 +246,39 @@ function evaluateMarketStructure(dailyContext: LowerTimeframeContext, weeklyCont
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
   if (dailyContext.bias !== "bullish") return layer("Squeeze Market Structure", "Bearish", "Daily EMA structure is " + dailyContext.bias + "; bullish Daily structure is required.");
   if (!dailyContext.withinEmaPocket) return layer("Squeeze Market Structure", "Bearish", "Daily price is outside the EMA pocket between 0.1% above the 50 EMA and 0.1% below the 8 EMA.");
-  if (weeklyContext.bias === "bearish") return layer("Squeeze Market Structure", "Bearish", "Weekly bearish structure blocks swing candidates.");
-  if (weeklyContext.bias === "bullish") return layer("Squeeze Market Structure", "Bullish", "Daily setup is bullish and Weekly structure supports the swing thesis.");
-  return layer("Squeeze Market Structure", "Neutral", "Daily setup is bullish; Weekly context is " + weeklyContext.bias + ".");
+  if (weeklyContext.weeklyQualificationMode === "none") return layer("Squeeze Market Structure", "Bearish", "Weekly chart has neither the full bullish EMA stack nor price within one ATR above the 21 EMA.");
+  if (weeklyContext.weeklyQualificationMode === "full-stack") return layer("Squeeze Market Structure", "Bullish", "Daily setup is bullish and the Weekly chart has the full bullish EMA stack.");
+  return layer("Squeeze Market Structure", "Neutral", "Daily setup is bullish; Weekly price is above and within one ATR of the 21 EMA, but the full bullish EMA stack is not present.");
 }
 
 function evaluateInstitutional(input: {
   price: number;
   beta?: number;
   marketCap?: number;
+  avgShareVolume: number;
   avgDollarVolume20d: number;
   optionable: boolean;
   strictFundamentals: boolean;
   assetType: AssetType;
+  minMarketCap: number;
+  minAvgShareVolume: number;
+  minAvgDollarVolume: number;
 }): LayerEvaluation {
   const priceOk = input.price > defaultSettings.minPrice;
   const betaOk = input.assetType === "etf" || (input.beta === undefined ? !input.strictFundamentals : input.beta >= defaultSettings.minBeta);
-  const marketCapOk = input.assetType === "etf" || (input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= defaultSettings.minMarketCap);
-  const volumeOk = input.avgDollarVolume20d >= defaultSettings.minAvgDollarVolume;
+  const marketCapOk = input.assetType === "etf" || (input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= input.minMarketCap);
+  const volumeOk = input.assetType === "etf"
+    ? input.avgDollarVolume20d >= input.minAvgDollarVolume
+    : stockLiquidityPasses(input.avgShareVolume, input.avgDollarVolume20d, input.minAvgShareVolume, input.minAvgDollarVolume);
   const passed = [priceOk, betaOk, marketCapOk, volumeOk, input.optionable].filter(Boolean).length;
   const detail = input.assetType === "etf"
     ? "ETF price $" + input.price.toFixed(2) + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + "; beta and market cap are not required."
     : "Price $" + input.price.toFixed(2)
       + ", beta " + (input.beta?.toFixed(2) ?? "unavailable")
       + ", market cap " + (input.marketCap ? formatMoney(input.marketCap) : "unavailable")
+      + ", avg share volume " + formatShares(input.avgShareVolume)
       + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + ".";
   if (passed === 5) return layer("Institutional Context", "Bullish", detail);
-  if (passed >= 4) return layer("Institutional Context", "Neutral", detail);
   return layer("Institutional Context", "Bearish", detail);
 }
 
@@ -288,18 +319,19 @@ function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqC
   return "20-period relative strength: " + spyText + " and " + qqqText + ".";
 }
 
-function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, weeklyStatus: LayerStatus, setupScore: SetupScoreResult): LongCallDecision {
+function finalDecision(layerEvaluations: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyQualificationMode: WeeklyQualificationMode, weeklyStatus: LayerStatus, setupScore: SetupScoreResult): LongCallDecision {
   const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   const dailyEntryAligned = dailyContext.withinEmaPocket;
   const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
-  if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyContext.bias !== "bullish" || weeklyStatus === "Bearish") return "Avoid";
+  if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || !dailyEntryAligned || dailyContext.bias !== "bullish" || weeklyQualificationMode === "none" || weeklyStatus === "Bearish") return "Avoid";
   if (
     byLayer("Compression Quality") === "Bullish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
     && byLayer("Macro Regime") !== "Bearish"
     && setupScore.score >= A_SETUP_SCORE_THRESHOLD
+    && weeklyQualificationMode === "full-stack"
   ) return "Strong Long Call Candidate";
   if (
     byLayer("Compression Quality") !== "Bearish"
@@ -340,7 +372,10 @@ function evaluateSetupScore(input: {
   institutional: LayerEvaluation;
   optionLayer: LayerEvaluation;
   options: OptionContract[];
+  avgShareVolume: number;
   avgDollarVolume20d: number;
+  minAvgShareVolume: number;
+  minAvgDollarVolume: number;
   spyCandles?: Candle[];
   qqqCandles?: Candle[];
   symbol: string;
@@ -353,7 +388,7 @@ function evaluateSetupScore(input: {
     factor("Market Regime", input.marketRegime.status, input.marketRegime.detail),
     input.assetType === "etf" ? evaluateEtfStrength(input.symbol, input.candles, input.spyCandles) : evaluateSectorStrength(input.sector, input.sectorCandles, input.spyCandles),
     evaluateRelativeStrengthFactor(input.candles, input.spyCandles, input.qqqCandles),
-    evaluateLiquidityFactor(input.avgDollarVolume20d, input.optionLayer, input.options[0]),
+    evaluateLiquidityFactor(input.avgShareVolume, input.avgDollarVolume20d, input.assetType, input.optionLayer, input.options[0], input.minAvgShareVolume, input.minAvgDollarVolume),
     evaluatePriceStructure(input.dailyContext),
     evaluateVolatilityFit(input.indicators, input.dailySqueezeDotCount),
     input.assetType === "etf" ? evaluateEtfCatalystSafety() : evaluateCatalystSafety(input.nextEarningsDate)
@@ -398,7 +433,8 @@ function gradeCapReasonsFor(layerEvaluations: LayerEvaluation[], weeklyContext: 
   const layer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name);
   const factor = (name: InstitutionalFactorName) => setupScore.factors.find((item) => item.name === name);
   if (setupScore.score < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 90.");
-  if (weeklyContext.bias !== "bullish") reasons.push("Weekly context is not bullish.");
+  if (weeklyContext.weeklyQualificationMode === "ema21-atr") reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
+  if (weeklyContext.weeklyQualificationMode === "none") reasons.push("Weekly context does not qualify.");
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");
   if (layer("Options Market Context")?.status === "Neutral") reasons.push("Options Market Context is neutral.");
@@ -416,11 +452,19 @@ function evaluateRelativeStrengthFactor(candles: Candle[], spyCandles?: Candle[]
   return factor("Relative Strength", "Bearish", "Underperforming SPY and QQQ over 20 periods.");
 }
 
-function evaluateLiquidityFactor(avgDollarVolume20d: number, optionLayer: LayerEvaluation, option?: OptionContract): InstitutionalFactor {
-  const stockLiquid = avgDollarVolume20d >= defaultSettings.minAvgDollarVolume;
+function evaluateLiquidityFactor(avgShareVolume: number, avgDollarVolume20d: number, assetType: AssetType, optionLayer: LayerEvaluation, option: OptionContract | undefined, minAvgShareVolume: number, minAvgDollarVolume: number): InstitutionalFactor {
+  const stockLiquid = assetType === "etf"
+    ? avgDollarVolume20d >= minAvgDollarVolume
+    : stockLiquidityPasses(avgShareVolume, avgDollarVolume20d, minAvgShareVolume, minAvgDollarVolume);
   if (!stockLiquid || optionLayer.status === "Bearish") return factor("Liquidity", "Bearish", "Stock or option liquidity failed preferred filters.");
-  if (optionLayer.status === "Bullish") return factor("Liquidity", "Bullish", "High dollar volume and strong option liquidity.");
+  if (optionLayer.status === "Bullish") return factor("Liquidity", "Bullish", assetType === "etf"
+    ? "High dollar volume and strong option liquidity."
+    : "Average share or dollar volume passes and option liquidity is strong.");
   return factor("Liquidity", "Neutral", "Stock liquidity passes; option chain is usable but not ideal" + (option ? "." : " or unavailable."));
+}
+
+export function stockLiquidityPasses(avgShareVolume: number | undefined, avgDollarVolume: number | undefined, minAvgShareVolume = defaultSettings.minAvgShareVolume, minAvgDollarVolume = defaultSettings.minAvgDollarVolume): boolean {
+  return (avgShareVolume ?? 0) >= minAvgShareVolume || (avgDollarVolume ?? 0) >= minAvgDollarVolume;
 }
 
 function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFactor {
@@ -498,6 +542,7 @@ function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapsho
   const emaPocketUpper = indicators.ema8 * 0.999;
   const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
   const priceAboveEmaStack = price > indicators.ema50 && price > indicators.ema100;
+  const weeklyQualificationMode = resolveWeeklyQualificationMode(indicators, price);
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   return {
     timeframe,
@@ -520,18 +565,19 @@ function contextFromIndicators(timeframe: "weekly", indicators: IndicatorSnapsho
     percentAboveEma50: round(percentAboveEma50),
     percentBelowEma8: round(percentBelowEma8),
     withinEmaPocket,
+    weeklyQualificationMode,
     compressionScore,
     compressionStatus: compressionLayerStatus(compressionScore, indicators.squeezeState),
     squeezeState: indicators.squeezeState,
-    detail: "Weekly context is " + (positiveEmaStack && priceAboveEmaStack ? "bullish" : "mixed") + " with squeeze " + indicators.squeezeState + "."
+    detail: weeklyQualificationDetail(weeklyQualificationMode, atrDistanceFromEma21, indicators.squeezeState)
   };
 }
 
 function weeklySupportStatus(context: LowerTimeframeContext): LayerStatus {
-  if (context.bias === "unavailable") return "Neutral";
-  if (context.bias === "bullish") return isSqueezeActive(context.squeezeState) ? "Bullish" : "Neutral";
-  if (context.bias === "bearish") return "Bearish";
-  return "Neutral";
+  if (context.bias === "unavailable") return "Bearish";
+  if (context.weeklyQualificationMode === "full-stack") return isSqueezeActive(context.squeezeState) ? "Bullish" : "Neutral";
+  if (context.weeklyQualificationMode === "ema21-atr") return "Neutral";
+  return "Bearish";
 }
 
 function unavailableContext(timeframe: LowerTimeframeContext["timeframe"], detail: string): LowerTimeframeContext {
@@ -556,6 +602,7 @@ function unavailableContext(timeframe: LowerTimeframeContext["timeframe"], detai
     percentAboveEma50: null,
     percentBelowEma8: null,
     withinEmaPocket: false,
+    weeklyQualificationMode: timeframe === "weekly" ? "none" : undefined,
     compressionScore: 0,
     compressionStatus: "Insufficient Data",
     squeezeState: "none",
@@ -609,6 +656,7 @@ function toTimeframeStatus(context: LowerTimeframeContext): TimeframeSqueezeStat
     percentAboveEma50: context.percentAboveEma50,
     percentBelowEma8: context.percentBelowEma8,
     withinEmaPocket: context.withinEmaPocket,
+    weeklyQualificationMode: context.weeklyQualificationMode,
     compressionStatus: context.compressionStatus,
     detail: context.detail
   };
@@ -623,9 +671,11 @@ function entryType(decision: LongCallDecision, compressionStatus: LayerStatus) {
 }
 
 function weeklySummary(context: LowerTimeframeContext): string {
-  if (context.bias === "unavailable") return "Weekly context unavailable; weekly squeeze is not required.";
+  if (context.bias === "unavailable") return "Weekly context unavailable; the setup does not qualify.";
   const squeezeBonus = isSqueezeActive(context.squeezeState) ? " Weekly squeeze adds bonus confirmation." : " Weekly squeeze is not required.";
-  return "Weekly chart is " + context.bias + " with " + (context.positiveEmaStack ? "bullish" : "mixed") + " EMA structure." + squeezeBonus;
+  if (context.weeklyQualificationMode === "full-stack") return "Weekly chart qualifies with the full bullish 8/21/50/100 EMA stack." + squeezeBonus;
+  if (context.weeklyQualificationMode === "ema21-atr") return "Weekly chart qualifies because price is above and within one ATR of the 21 EMA; grade is capped at B without the full bullish EMA stack." + squeezeBonus;
+  return "Weekly chart does not qualify because it lacks the full bullish EMA stack and is not within one ATR above the 21 EMA.";
 }
 
 function alignmentSummary(dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext): string {
@@ -645,7 +695,7 @@ function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeCont
   if (!isSqueezeActive(dailyContext.squeezeState)) reasons.push("Daily squeeze is not active; swing setup should be avoided.");
   if (dailyContext.bias !== "bullish") reasons.push("Daily EMA structure is not bullish.");
   if (dailyContext.bias !== "unavailable" && !dailyContext.withinEmaPocket) reasons.push("Outside the EMA pocket between 0.1% above the 50 EMA and 0.1% below the 8 EMA on daily.");
-  if (weeklyContext.bias === "bearish") reasons.push("Weekly bearish structure blocks the setup.");
+  if (weeklyContext.weeklyQualificationMode === "none") reasons.push("Weekly chart lacks both qualifying structures.");
   if (!option) reasons.push("No preferred call contract was found.");
   return reasons.slice(0, 6);
 }
@@ -713,4 +763,23 @@ function formatMoney(value: number): string {
   if (value >= 1_000_000_000) return "$" + (value / 1_000_000_000).toFixed(1) + "B";
   if (value >= 1_000_000) return "$" + (value / 1_000_000).toFixed(0) + "M";
   return "$" + value.toFixed(0);
+}
+
+function formatShares(value: number): string {
+  if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M shares";
+  if (value >= 1_000) return Math.round(value / 1_000) + "K shares";
+  return Math.round(value) + " shares";
+}
+
+export function resolveWeeklyQualificationMode(indicators: IndicatorSnapshot, price: number): WeeklyQualificationMode {
+  const fullStack = hasPositiveEmaStack(indicators) && price > indicators.ema50 && price > indicators.ema100;
+  if (fullStack) return "full-stack";
+  if (indicators.atr14 <= 0 || price < indicators.ema21) return "none";
+  return (price - indicators.ema21) / indicators.atr14 <= 1 ? "ema21-atr" : "none";
+}
+
+function weeklyQualificationDetail(mode: WeeklyQualificationMode, atrDistance: number, squeezeState: SqueezeState): string {
+  if (mode === "full-stack") return "Weekly chart qualifies with the full bullish EMA stack; squeeze " + squeezeState + ".";
+  if (mode === "ema21-atr") return "Weekly chart qualifies with price " + round(atrDistance) + " ATR above the 21 EMA; full bullish EMA stack is not present.";
+  return "Weekly chart does not qualify; price/EMA structure is outside both approved weekly paths.";
 }

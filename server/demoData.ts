@@ -1,14 +1,14 @@
 import type { Candle, Fundamentals, OptionContract } from "../shared/types";
 
 const fundamentals: Record<string, Fundamentals> = {
-  AAPL: { symbol: "AAPL", beta: 1.12, marketCap: 3_100_000_000_000, avgDollarVolume20d: 8_500_000_000 },
-  MSFT: { symbol: "MSFT", beta: 0.94, marketCap: 3_250_000_000_000, avgDollarVolume20d: 7_200_000_000 },
-  NVDA: { symbol: "NVDA", beta: 1.75, marketCap: 2_900_000_000_000, avgDollarVolume20d: 35_000_000_000 },
-  META: { symbol: "META", beta: 1.18, marketCap: 1_300_000_000_000, avgDollarVolume20d: 9_800_000_000 },
-  AMD: { symbol: "AMD", beta: 1.82, marketCap: 250_000_000_000, avgDollarVolume20d: 7_100_000_000 },
-  AMZN: { symbol: "AMZN", beta: 1.09, marketCap: 2_000_000_000_000, avgDollarVolume20d: 10_900_000_000 },
-  GOOGL: { symbol: "GOOGL", beta: 1.04, marketCap: 2_100_000_000_000, avgDollarVolume20d: 6_700_000_000 },
-  TSLA: { symbol: "TSLA", beta: 2.28, marketCap: 650_000_000_000, avgDollarVolume20d: 18_600_000_000 }
+  AAPL: { symbol: "AAPL", beta: 1.12, marketCap: 3_100_000_000_000, avgShareVolume: 48_000_000, avgDollarVolume20d: 8_500_000_000 },
+  MSFT: { symbol: "MSFT", beta: 0.94, marketCap: 3_250_000_000_000, avgShareVolume: 22_000_000, avgDollarVolume20d: 7_200_000_000 },
+  NVDA: { symbol: "NVDA", beta: 1.75, marketCap: 2_900_000_000_000, avgShareVolume: 180_000_000, avgDollarVolume20d: 35_000_000_000 },
+  META: { symbol: "META", beta: 1.18, marketCap: 1_300_000_000_000, avgShareVolume: 18_000_000, avgDollarVolume20d: 9_800_000_000 },
+  AMD: { symbol: "AMD", beta: 1.82, marketCap: 250_000_000_000, avgShareVolume: 42_000_000, avgDollarVolume20d: 7_100_000_000 },
+  AMZN: { symbol: "AMZN", beta: 1.09, marketCap: 2_000_000_000_000, avgShareVolume: 45_000_000, avgDollarVolume20d: 10_900_000_000 },
+  GOOGL: { symbol: "GOOGL", beta: 1.04, marketCap: 2_100_000_000_000, avgShareVolume: 30_000_000, avgDollarVolume20d: 6_700_000_000 },
+  TSLA: { symbol: "TSLA", beta: 2.28, marketCap: 650_000_000_000, avgShareVolume: 95_000_000, avgDollarVolume20d: 18_600_000_000 }
 };
 
 export function demoFundamental(symbol: string): Fundamentals | undefined {

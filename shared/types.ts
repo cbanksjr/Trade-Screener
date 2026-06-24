@@ -1,6 +1,7 @@
 export type Grade = "A" | "B" | "C";
 export type TradeDirection = "long" | "short";
 export type AssetType = "stock" | "etf";
+export type WeeklyQualificationMode = "full-stack" | "ema21-atr" | "none";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
@@ -18,6 +19,7 @@ export type Fundamentals = {
   symbol: string;
   beta?: number;
   marketCap?: number;
+  avgShareVolume?: number;
   avgDollarVolume20d?: number;
   lastEarningsDate?: string;
   nextEarningsDate?: string;
@@ -25,10 +27,11 @@ export type Fundamentals = {
   sources?: FundamentalFieldSources;
 };
 
-export type FundamentalDataSource = "schwab" | "fmp" | "demo";
+export type FundamentalDataSource = "schwab" | "fmp" | "history" | "demo";
 export type FundamentalFieldSources = {
   beta?: FundamentalDataSource;
   marketCap?: FundamentalDataSource;
+  avgShareVolume?: FundamentalDataSource;
   avgDollarVolume20d?: FundamentalDataSource;
   lastEarningsDate?: FundamentalDataSource;
   nextEarningsDate?: FundamentalDataSource;
@@ -111,6 +114,7 @@ export type LowerTimeframeContext = {
   percentAboveEma50: number | null;
   percentBelowEma8: number | null;
   withinEmaPocket: boolean;
+  weeklyQualificationMode?: WeeklyQualificationMode;
   compressionScore: number;
   compressionStatus: LayerStatus;
   squeezeState?: SqueezeState;
@@ -176,6 +180,7 @@ export type TimeframeSqueezeStatus = {
   percentAboveEma50?: number | null;
   percentBelowEma8?: number | null;
   withinEmaPocket?: boolean;
+  weeklyQualificationMode?: WeeklyQualificationMode;
   compressionStatus: LayerStatus;
   detail: string;
 };
@@ -189,6 +194,7 @@ export type ScanResult = {
   price: number;
   beta: number | null;
   marketCap: number | null;
+  avgShareVolume?: number;
   avgDollarVolume20d: number;
   fundamentalSources?: FundamentalFieldSources;
   optionable: boolean;
@@ -203,6 +209,7 @@ export type ScanResult = {
   weeklyIndicators?: IndicatorSnapshot;
   lowerTimeframes?: LowerTimeframeConfluence;
   squeezeStatusByTimeframe: TimeframeSqueezeStatus[];
+  weeklyQualificationMode?: WeeklyQualificationMode;
   weeklyContextSummary: string;
   dailySqueezeDotCount?: number;
   compressionQualityScore: number;
@@ -244,6 +251,7 @@ export type Settings = {
   minPrice: number;
   minBeta: number;
   minMarketCap: number;
+  minAvgShareVolume: number;
   minAvgDollarVolume: number;
   brokerBaseUrl: string;
   brokerCallbackUrl: string;
@@ -322,7 +330,7 @@ export type ScanMetadata = {
 export type ScanDiagnosticCounts = {
   quoteMissing: number;
   price: number;
-  avgDollarVolume: number;
+  stockLiquidity: number;
   beta: number;
   marketCap: number;
   candleHistory: number;
@@ -338,6 +346,7 @@ export type ScanDiagnosticCounts = {
 export type ScanDiagnostics = {
   scannedSymbols: number;
   qualifiedResults: number;
+  minAvgShareVolume: number;
   minAvgDollarVolume: number;
   skipped: ScanDiagnosticCounts;
 };

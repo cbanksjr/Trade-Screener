@@ -8,12 +8,14 @@ describe("FMP fallback fundamentals", () => {
       companyName: "Microsoft Corporation",
       beta: "0.91",
       mktCap: "3050000000000",
+      averageVolume: "24500000",
       sector: "Technology"
     }])).toEqual({
       symbol: "MSFT",
       companyName: "Microsoft Corporation",
       beta: 0.91,
       marketCap: 3050000000000,
+      averageVolume: 24500000,
       sector: "Information Technology"
     });
   });
@@ -152,6 +154,37 @@ describe("FMP fallback fundamentals", () => {
       sector: "Information Technology",
       nextEarningsDate: "2026-07-25"
     });
+  });
+
+  it("refreshes a fresh partial profile when average volume is requested but missing", async () => {
+    let calls = 0;
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      cache: {
+        AAPL: {
+          updatedAt: "2026-06-20T12:00:00.000Z",
+          data: { symbol: "AAPL", beta: 1.1, marketCap: 3_000_000_000_000 }
+        }
+      },
+      now: () => new Date("2026-06-20T13:00:00.000Z"),
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response(JSON.stringify([{
+          symbol: "AAPL",
+          beta: 1.1,
+          marketCap: 3_000_000_000_000,
+          averageVolume: 48_000_000
+        }]));
+      }
+    });
+
+    const result = await fallback.enrich("AAPL", { averageVolume: true });
+
+    expect(calls).toBe(1);
+    expect(result.data?.averageVolume).toBe(48_000_000);
+    expect(fallback.cache().AAPL.data.averageVolume).toBe(48_000_000);
   });
 
   it("uses exact-symbol earnings fallback and ignores other symbols", async () => {

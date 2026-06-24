@@ -5,7 +5,7 @@ import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
-import { A_SETUP_SCORE_THRESHOLD, B_SETUP_SCORE_THRESHOLD, applyInstitutionalEdge, defaultSettings, gradeSetup } from "./scoring";
+import { A_SETUP_SCORE_THRESHOLD, B_SETUP_SCORE_THRESHOLD, WEEKLY_ATR_GRADE_CAP_REASON, applyInstitutionalEdge, defaultSettings, gradeSetup, resolveWeeklyQualificationMode, stockLiquidityPasses } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
@@ -42,6 +42,7 @@ export async function readSettings(): Promise<Settings> {
     minPrice: normalizedStored.minPrice ?? defaultSettings.minPrice,
     minBeta: normalizedStored.minBeta ?? defaultSettings.minBeta,
     minMarketCap: normalizedStored.minMarketCap ?? defaultSettings.minMarketCap,
+    minAvgShareVolume: normalizedStored.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: normalizedStored.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
     brokerBaseUrl: config.schwabMarketDataBaseUrl,
     brokerCallbackUrl: config.schwabCallbackUrl,
@@ -61,6 +62,7 @@ export async function writeSettings(input: Partial<Settings>): Promise<Settings>
     minPrice: input.minPrice ?? current.minPrice,
     minBeta: input.minBeta ?? current.minBeta,
     minMarketCap: input.minMarketCap ?? current.minMarketCap,
+    minAvgShareVolume: input.minAvgShareVolume ?? current.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? current.minAvgDollarVolume,
     useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
     etfSymbols: input.etfSymbols ? resolveEtfSymbols(input.etfSymbols) : current.etfSymbols
@@ -136,7 +138,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const etfSymbolSet = new Set(etfSymbols);
   const symbolsToScan = await resolveScanSymbols(settings);
   const stockSymbolsToScan = symbolsToScan.filter((symbol) => !etfSymbolSet.has(symbol));
-  const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgDollarVolume);
+  const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgShareVolume, settings.minAvgDollarVolume);
   if (symbolsToScan.length < MIN_REFRESHED_SYMBOLS) {
     scanWarnings.add("Scan universe contains only " + symbolsToScan.length + " symbols; expected at least " + MIN_REFRESHED_SYMBOLS + ".");
   }
@@ -298,14 +300,24 @@ async function scanSymbol(input: {
       warnings.push(symbol + ": skipped because Schwab quote price $" + quote.price.toFixed(2) + " is below $" + settings.minPrice + ".");
       return { warnings, usedLive, usedDemo, skipReason: "price" };
     }
-    if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
-      warnings.push(symbol + ": skipped because Schwab average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
-      return { warnings, usedLive, usedDemo, skipReason: "avgDollarVolume" };
+    if (assetType === "etf" && quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
+      warnings.push(symbol + ": skipped because ETF average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
+      return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
+    }
+    if (
+      assetType === "stock"
+      && quote?.averageVolume !== undefined
+      && quote.avgDollarVolume !== undefined
+      && !stockLiquidityPasses(quote.averageVolume, quote.avgDollarVolume, settings.minAvgShareVolume, settings.minAvgDollarVolume)
+    ) {
+      warnings.push(symbol + ": skipped because average share volume and average dollar volume are below the configured liquidity thresholds.");
+      return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
     }
 
     const earlyFmp = assetType === "stock" ? await input.fmp?.enrich(symbol, {
       beta: assetType === "stock" && quote?.beta === undefined,
-      marketCap: assetType === "stock" && quote?.marketCap === undefined
+      marketCap: assetType === "stock" && quote?.marketCap === undefined,
+      averageVolume: assetType === "stock" && quote?.averageVolume === undefined
     }) : undefined;
     earlyFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (earlyFmp?.usedLive) usedLive = true;
@@ -334,6 +346,15 @@ async function scanSymbol(input: {
     if (candles.length < 50) throw new Error("Not enough candle history.");
 
     const price = quote?.price ?? candles[candles.length - 1].close;
+    fundamentals = withCandleLiquidityFallback(fundamentals, candles);
+    const liquidityPasses = assetType === "etf"
+      ? (fundamentals.avgDollarVolume20d ?? 0) >= settings.minAvgDollarVolume
+      : stockLiquidityPasses(fundamentals.avgShareVolume, fundamentals.avgDollarVolume20d, settings.minAvgShareVolume, settings.minAvgDollarVolume);
+    if (!liquidityPasses) {
+      warnings.push(symbol + ": skipped because average share volume is below " + formatShares(settings.minAvgShareVolume)
+        + " and average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
+      return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
+    }
     const weekly = weeklySqueezeFromDaily(candles);
 
     let options: Awaited<ReturnType<typeof fetchCallOptions>> = [];
@@ -377,6 +398,7 @@ async function scanSymbol(input: {
         symbol
       });
     }
+    fundamentals = withCandleLiquidityFallback(fundamentals, candles);
 
     const sector = input.sector ?? fundamentals.sector;
     const result = gradeSetup({
@@ -393,7 +415,10 @@ async function scanSymbol(input: {
       spyCandles: input.spyCandles,
       qqqCandles: input.qqqCandles,
       sector,
-      sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined
+      sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
+      minMarketCap: settings.minMarketCap,
+      minAvgShareVolume: settings.minAvgShareVolume,
+      minAvgDollarVolume: settings.minAvgDollarVolume
     });
     result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
     result.warnings.push(...warnings
@@ -437,24 +462,38 @@ async function scanSymbol(input: {
 function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.setupDirection === "long"
-    && hasBullishWeeklyContext(result)
+    && hasQualifyingWeeklyContext(result)
     && (result.longCallDecision === "Strong Long Call Candidate" || result.longCallDecision === "Moderate Long Call Candidate")
     && (result.grade === "A" || result.grade === "B");
 }
 
-function hasBullishWeeklyContext(result: ScanResult): boolean {
-  return result.squeezeStatusByTimeframe?.some((item) => item.timeframe === "weekly" && item.bias === "bullish") ?? false;
+function hasQualifyingWeeklyContext(result: ScanResult): boolean {
+  return resolveCachedWeeklyQualificationMode(result) !== "none";
 }
 
-function createScanDiagnostics(scannedSymbols: number, minAvgDollarVolume: number): ScanDiagnostics {
+function resolveCachedWeeklyQualificationMode(result: ScanResult): NonNullable<ScanResult["weeklyQualificationMode"]> {
+  if (result.weeklyQualificationMode) return result.weeklyQualificationMode;
+  if (result.weeklyIndicators) {
+    try {
+      return resolveWeeklyQualificationMode(normalizeCachedIndicators(result.weeklyIndicators), result.price);
+    } catch {
+      // Fall through to legacy timeframe metadata.
+    }
+  }
+  const weekly = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "weekly");
+  return weekly?.bias === "bullish" ? "full-stack" : "none";
+}
+
+function createScanDiagnostics(scannedSymbols: number, minAvgShareVolume: number, minAvgDollarVolume: number): ScanDiagnostics {
   return {
     scannedSymbols,
     qualifiedResults: 0,
+    minAvgShareVolume,
     minAvgDollarVolume,
     skipped: {
       quoteMissing: 0,
       price: 0,
-      avgDollarVolume: 0,
+      stockLiquidity: 0,
       beta: 0,
       marketCap: 0,
       candleHistory: 0,
@@ -475,7 +514,7 @@ function classifyFilteredResult(result: ScanResult): ScanDiagnosticReason {
   if (layer("Options Market Context")?.status === "Bearish") return "options";
   if (factor("Liquidity")?.status === "Bearish") return "spreadLiquidity";
   if (layer("Squeeze Market Structure")?.status === "Bearish") return "marketStructure";
-  if (!hasBullishWeeklyContext(result)) return "marketStructure";
+  if (!hasQualifyingWeeklyContext(result)) return "marketStructure";
   if (factor("Catalyst Safety")?.status === "Bearish") return "catalyst";
   if (factor("Sector Strength")?.status === "Insufficient Data") return "sectorDataCap";
   if (!result.passesUniverse) return "finalDisplayFilter";
@@ -486,11 +525,14 @@ function classifyFilteredResult(result: ScanResult): ScanDiagnosticReason {
 function normalizeCachedResult(result: ScanResult): ScanResult {
   const dotCount = resolveDailySqueezeDotCount(result);
   const setupScore = typeof result.setupScore === "number" ? result.setupScore : result.score;
-  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore);
-  const grade = gradeFromSetupScore(setupScore);
+  const weeklyQualificationMode = resolveCachedWeeklyQualificationMode(result);
+  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode);
+  const scoreGrade = gradeFromSetupScore(setupScore);
+  const grade = weeklyQualificationMode === "ema21-atr" && scoreGrade === "A" ? "B" : scoreGrade;
   const normalized: ScanResult = {
     ...result,
     assetType: result.assetType ?? "stock",
+    avgShareVolume: result.avgShareVolume ?? averageCandleVolume(result.candles),
     grade,
     longCallDecision,
     setupQuality: grade === "A" ? "High" : "Moderate",
@@ -502,7 +544,8 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     setupScore,
     setupScoreStatus: result.setupScoreStatus ?? "Insufficient Data",
     institutionalFactors: result.institutionalFactors ?? [],
-    gradeCapReasons: result.gradeCapReasons ?? cachedGradeCapReasons(result, longCallDecision, setupScore),
+    weeklyQualificationMode,
+    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode),
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -532,9 +575,10 @@ function normalizeCachedIndicators(indicators: IndicatorSnapshot): IndicatorSnap
   };
 }
 
-function normalizeCachedDecision(decision: ScanResult["longCallDecision"], setupScore: number): ScanResult["longCallDecision"] {
+function normalizeCachedDecision(decision: ScanResult["longCallDecision"], setupScore: number, weeklyQualificationMode: ScanResult["weeklyQualificationMode"]): ScanResult["longCallDecision"] {
   if (decision === "Avoid") return "Avoid";
   if (setupScore < B_SETUP_SCORE_THRESHOLD) return "Watchlist Candidate";
+  if (weeklyQualificationMode === "ema21-atr") return "Moderate Long Call Candidate";
   if (decision === "Strong Long Call Candidate" && setupScore < A_SETUP_SCORE_THRESHOLD) return "Moderate Long Call Candidate";
   return decision;
 }
@@ -551,9 +595,19 @@ function cachedGradeCapReasons(result: ScanResult, decision: ScanResult["longCal
   const weekly = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "weekly");
   const factor = (name: ScanResult["institutionalFactors"][number]["name"]) => result.institutionalFactors?.find((item) => item.name === name);
   if (setupScore < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 90.");
-  if (weekly && weekly.bias !== "bullish") reasons.push("Weekly context is not bullish.");
+  const weeklyQualificationMode = resolveCachedWeeklyQualificationMode(result);
+  if (weeklyQualificationMode === "ema21-atr") reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
+  if (weeklyQualificationMode === "none" && weekly) reasons.push("Weekly context does not qualify.");
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");
+  return reasons;
+}
+
+function mergeCachedGradeCapReasons(result: ScanResult, decision: ScanResult["longCallDecision"], setupScore: number, weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>): string[] {
+  const reasons = [...(result.gradeCapReasons ?? cachedGradeCapReasons(result, decision, setupScore))];
+  if (weeklyQualificationMode === "ema21-atr" && !reasons.includes(WEEKLY_ATR_GRADE_CAP_REASON)) {
+    reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
+  }
   return reasons;
 }
 
@@ -638,7 +692,8 @@ export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: Fmp
   const sources: FundamentalFieldSources = {};
   const beta = valueWithSource(quote?.beta, "schwab", fmp?.beta, "fmp", demo?.beta, "demo", sources, "beta");
   const marketCap = valueWithSource(quote?.marketCap, "schwab", fmp?.marketCap, "fmp", demo?.marketCap, "demo", sources, "marketCap");
-  const avgDollarVolume20d = valueWithSource(quote?.avgDollarVolume, "schwab", undefined, "fmp", demo?.avgDollarVolume20d, "demo", sources, "avgDollarVolume20d");
+  const avgShareVolume = valueWithSource(quote?.averageVolume, "schwab", fmp?.averageVolume, "fmp", undefined, "demo", sources, "avgShareVolume");
+  const avgDollarVolume20d = valueWithSource(quote?.avgDollarVolume, "schwab", undefined, "fmp", undefined, "demo", sources, "avgDollarVolume20d");
   const lastEarningsDate = valueWithSource(quote?.lastEarningsDate, "schwab", undefined, "fmp", demo?.lastEarningsDate, "demo", sources, "lastEarningsDate");
   const nextEarningsDate = valueWithSource(fmp?.nextEarningsDate, "fmp", undefined, "schwab", demo?.nextEarningsDate, "demo", sources, "nextEarningsDate");
   const sector = valueWithSource(undefined, "schwab", fmp?.sector, "fmp", demo?.sector, "demo", sources, "sector");
@@ -646,10 +701,28 @@ export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: Fmp
     symbol,
     beta,
     marketCap,
+    avgShareVolume,
     avgDollarVolume20d,
     lastEarningsDate,
     nextEarningsDate,
     sector,
+    sources
+  };
+}
+
+export function withCandleLiquidityFallback(fundamentals: Fundamentals, candles: Candle[]): Fundamentals {
+  const recent = candles.slice(-20);
+  if (!recent.length) return fundamentals;
+  const sources = { ...(fundamentals.sources ?? {}) };
+  const avgShareVolume = fundamentals.avgShareVolume ?? averageCandleVolume(recent);
+  const avgDollarVolume20d = fundamentals.avgDollarVolume20d
+    ?? average(recent.map((candle) => candle.volume * candle.close));
+  if (fundamentals.avgShareVolume === undefined) sources.avgShareVolume = "history";
+  if (fundamentals.avgDollarVolume20d === undefined) sources.avgDollarVolume20d = "history";
+  return {
+    ...fundamentals,
+    avgShareVolume,
+    avgDollarVolume20d,
     sources
   };
 }
@@ -682,6 +755,7 @@ function valueWithSource<T>(
 function sourceLabel(source: FundamentalFieldSources[keyof FundamentalFieldSources]): string {
   if (source === "fmp") return "FMP fallback";
   if (source === "schwab") return "Schwab";
+  if (source === "history") return "price history";
   return "fundamental";
 }
 
@@ -706,6 +780,21 @@ function formatMoney(value: number): string {
   return "$" + value.toFixed(0);
 }
 
+function formatShares(value: number): string {
+  if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M shares";
+  if (value >= 1_000) return Math.round(value / 1_000) + "K shares";
+  return Math.round(value) + " shares";
+}
+
+function average(values: number[]): number {
+  if (!values.length) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function averageCandleVolume(candles: Candle[]): number {
+  return average(candles.slice(-20).map((candle) => candle.volume));
+}
+
 async function throttleIfLive() {
   if (!hasSchwabCredentials() || !await hasSchwabTokens()) return;
   await new Promise((resolve) => setTimeout(resolve, 120));
@@ -722,7 +811,8 @@ function shouldShowWarning(warning: string): boolean {
   const routineSkips = [
     "Schwab did not return a quote; skipped.",
     "skipped because Schwab quote price",
-    "skipped because Schwab average dollar volume"
+    "skipped because ETF average dollar volume",
+    "skipped because average share volume"
   ];
   if (internalMessages.some((message) => warning.includes(message))) return false;
   return !routineSkips.some((message) => warning.includes(message));

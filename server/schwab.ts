@@ -143,6 +143,7 @@ export async function fetchFundamentalAnalysis(symbol: string, scanResult?: Scan
   const fmpEnrichment = await fmp.enrich(upperSymbol, {
     beta: quote?.beta === undefined,
     marketCap: quote?.marketCap === undefined,
+    averageVolume: quote?.averageVolume === undefined,
     sector: true,
     nextEarningsDate: true
   });
@@ -299,6 +300,7 @@ export function mergeFundamentalAnalysis(input: {
   const symbol = input.schwab?.symbol ?? input.symbol;
   const marketCap = valueWithSource(input.schwab?.marketCap, "schwab", input.fmp?.marketCap, "fmp", fieldSources, "marketCap") ?? null;
   const beta = valueWithSource(input.schwab?.beta, "schwab", input.fmp?.beta, "fmp", fieldSources, "beta") ?? null;
+  const averageVolume = valueWithSource(input.schwab?.averageVolume, "schwab", input.fmp?.averageVolume, "fmp", fieldSources, "avgShareVolume") ?? null;
   const sector = valueWithSource(undefined, "schwab", input.fmp?.sector, "fmp", fieldSources, "sector");
   const lastEarningsDate = valueWithSource(input.schwab?.lastEarningsDate, "schwab", undefined, "fmp", fieldSources, "lastEarningsDate");
   const nextEarningsDate = valueWithSource(input.fmp?.nextEarningsDate, "fmp", undefined, "schwab", fieldSources, "nextEarningsDate");
@@ -308,7 +310,7 @@ export function mergeFundamentalAnalysis(input: {
     companyName: input.schwab?.companyName ?? input.fmp?.companyName,
     price: input.schwab?.price ?? null,
     volume: input.schwab?.volume ?? null,
-    averageVolume: input.schwab?.averageVolume ?? null,
+    averageVolume,
     avgDollarVolume: input.schwab?.avgDollarVolume ?? null,
     marketCap,
     beta,
@@ -355,6 +357,7 @@ function sourceNotes(sources: FundamentalFieldSources): string[] {
   const labels: Array<[keyof FundamentalFieldSources, string]> = [
     ["beta", "Beta"],
     ["marketCap", "Market cap"],
+    ["avgShareVolume", "Average share volume"],
     ["sector", "Sector"],
     ["nextEarningsDate", "Next earnings date"]
   ];

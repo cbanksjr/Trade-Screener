@@ -6,6 +6,7 @@ export type FmpFundamentals = {
   companyName?: string;
   beta?: number;
   marketCap?: number;
+  averageVolume?: number;
   sector?: string;
   nextEarningsDate?: string;
 };
@@ -13,6 +14,7 @@ export type FmpFundamentals = {
 export type FmpNeededFields = {
   beta?: boolean;
   marketCap?: boolean;
+  averageVolume?: boolean;
   sector?: boolean;
   nextEarningsDate?: boolean;
 };
@@ -196,6 +198,7 @@ export function normalizeFmpProfile(payload: unknown): FmpFundamentals | undefin
     companyName: stringValue(item.companyName, item.company, item.name, item.Name),
     beta: numberValue(item.beta, item.Beta),
     marketCap: numberValue(item.mktCap, item.marketCap, item.marketCapitalization, item.MarketCapitalization),
+    averageVolume: numberValue(item.averageVolume, item.avgVolume, item.avg10DaysVolume, item.avg1YearVolume),
     sector: stringValue(item.sector, item.Sector)
   };
   data.sector = normalizeFmpSector(data.sector);
@@ -296,7 +299,7 @@ function fmpUrl(baseUrl: string, path: string, params: Record<string, string>): 
 }
 
 function needsProfile(needed: FmpNeededFields): boolean {
-  return Boolean(needed.beta || needed.marketCap || needed.sector);
+  return Boolean(needed.beta || needed.marketCap || needed.averageVolume || needed.sector);
 }
 
 function needsAnyField(needed: FmpNeededFields): boolean {
@@ -310,6 +313,7 @@ function hasNeededFields(data: FmpFundamentals, needed: FmpNeededFields): boolea
 function hasNeededProfileFields(data: FmpFundamentals, needed: FmpNeededFields): boolean {
   return (!needed.beta || data.beta !== undefined)
     && (!needed.marketCap || data.marketCap !== undefined)
+    && (!needed.averageVolume || data.averageVolume !== undefined)
     && (!needed.sector || Boolean(data.sector));
 }
 
@@ -317,6 +321,7 @@ function filterNeeded(data: FmpFundamentals, needed: FmpNeededFields): FmpFundam
   const output: FmpFundamentals = { symbol: data.symbol };
   if (needed.beta) output.beta = data.beta;
   if (needed.marketCap) output.marketCap = data.marketCap;
+  if (needed.averageVolume) output.averageVolume = data.averageVolume;
   if (needed.sector) output.sector = data.sector;
   if (needed.nextEarningsDate) output.nextEarningsDate = data.nextEarningsDate;
   if (needed.sector) output.companyName = data.companyName;
@@ -331,6 +336,7 @@ function isFresh(updatedAt: string, now: Date): boolean {
 function hasFundamentalData(data: FmpFundamentals): boolean {
   return data.beta !== undefined
     || data.marketCap !== undefined
+    || data.averageVolume !== undefined
     || Boolean(data.sector)
     || Boolean(data.nextEarningsDate)
     || Boolean(data.companyName);

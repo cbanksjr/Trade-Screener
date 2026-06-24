@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeState } from "../shared/types";
 import { demoOptions } from "./demoData";
 import { activeSqueezeDotCount, latestIndicators, squeezeState } from "./indicators";
-import { gradeSetup, isSqueezeActive, rankCallOptions } from "./scoring";
+import { WEEKLY_ATR_GRADE_CAP_REASON, gradeSetup, isSqueezeActive, rankCallOptions, resolveWeeklyQualificationMode } from "./scoring";
 import { buildLowerTimeframeConfluence } from "./timeframes";
 
 describe("indicator calculations", () => {
@@ -269,6 +269,44 @@ describe("layer decision engine", () => {
 
     expect(result.setupScore).toBeGreaterThanOrEqual(90);
     expect(result.longCallDecision).toBe("Avoid");
+  });
+
+  it("qualifies mixed weekly structure within one ATR of the 21 EMA and caps it at B", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "WEEKLYATR",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("WEEKLYATR"),
+      optionable: true,
+      options: demoOptions("WEEKLYATR", price),
+      weeklyIndicators: weeklyProximityIndicator(price, 0.5),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.weeklyQualificationMode).toBe("ema21-atr");
+    expect(result.setupScore).toBeGreaterThanOrEqual(90);
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain(WEEKLY_ATR_GRADE_CAP_REASON);
+  });
+
+  it("uses inclusive weekly 21 EMA and one ATR boundaries", () => {
+    const price = 100;
+
+    expect(resolveWeeklyQualificationMode(weeklyProximityIndicator(price, 0), price)).toBe("ema21-atr");
+    expect(resolveWeeklyQualificationMode(weeklyProximityIndicator(price, 1), price)).toBe("ema21-atr");
+    expect(resolveWeeklyQualificationMode(weeklyProximityIndicator(price, -0.01), price)).toBe("none");
+    expect(resolveWeeklyQualificationMode(weeklyProximityIndicator(price, 1.01), price)).toBe("none");
+  });
+
+  it("keeps full weekly stack qualified even when price is more than one ATR above the 21 EMA", () => {
+    const indicators = weeklyIndicator("bullish");
+    const price = indicators.ema21 + indicators.atr14 * 3;
+
+    expect(resolveWeeklyQualificationMode(indicators, price)).toBe("full-stack");
   });
 
   it("keeps missing sector and earnings in the setup score", () => {
@@ -625,7 +663,7 @@ describe("layer decision engine", () => {
     });
 
     expect(result.longCallDecision).toBe("Avoid");
-    expect(result.reasonsAgainstTrade.join(" ")).toContain("Weekly bearish structure blocks");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("Weekly chart lacks both qualifying structures");
   });
 
   it("marks poor institutional context below qualified quality", () => {
@@ -649,31 +687,56 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
-  it("uses $300M as the average dollar volume liquidity threshold", () => {
+  it("passes stock liquidity with either 600K shares or $300M average dollar volume", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
-    const resultFor = (avgDollarVolume20d: number) => gradeSetup({
-      symbol: "DOLLARVOL" + avgDollarVolume20d,
+    const resultFor = (avgShareVolume: number, avgDollarVolume20d: number) => gradeSetup({
+      symbol: "LIQUIDITY" + avgShareVolume + avgDollarVolume20d,
       candles,
       currentPrice: price,
       fundamentals: {
-        ...strongFundamentals("DOLLARVOL" + avgDollarVolume20d),
+        ...strongFundamentals("LIQUIDITY" + avgShareVolume + avgDollarVolume20d),
+        avgShareVolume,
         avgDollarVolume20d
       },
       optionable: true,
-      options: [option("DOLLARVOL" + avgDollarVolume20d, 45, 500, 200, 0.55, 4, 102)],
+      options: [option("LIQUIDITY" + avgShareVolume + avgDollarVolume20d, 45, 500, 200, 0.55, 4, 102)],
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
 
-    const under = resultFor(299_000_000);
-    const exact = resultFor(300_000_000);
+    const failsBoth = resultFor(599_999, 299_999_999);
+    const sharePass = resultFor(600_000, 100_000_000);
+    const dollarPass = resultFor(100_000, 300_000_000);
 
-    expect(under.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Neutral");
-    expect(under.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bearish");
-    expect(exact.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
-    expect(exact.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bullish");
+    expect(failsBoth.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bearish");
+    expect(sharePass.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
+    expect(sharePass.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bullish");
+    expect(dollarPass.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
+    expect(dollarPass.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bullish");
+  });
+
+  it("keeps the $2B stock market-cap minimum", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const resultFor = (marketCap: number) => gradeSetup({
+      symbol: "MARKETCAP" + marketCap,
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        ...strongFundamentals("MARKETCAP" + marketCap),
+        marketCap
+      },
+      optionable: true,
+      options: [option("MARKETCAP" + marketCap, 45, 500, 200, 0.55, 4, 102)],
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(resultFor(1_999_999_999).passesUniverse).toBe(false);
+    expect(resultFor(2_000_000_000).passesUniverse).toBe(true);
   });
 
   it("ranks only 30-180 DTE swing calls and prefers 30-90 when quality is comparable", () => {
@@ -863,6 +926,22 @@ function weeklyIndicator(bias: "bullish" | "bearish" | "neutral", squeezeState: 
     momentumImproving: true,
     candleRangeContracting: true,
     squeezeState
+  };
+}
+
+function weeklyProximityIndicator(price: number, atrDistance: number) {
+  const atr14 = 8;
+  const ema21 = price - atr14 * atrDistance;
+  return {
+    ...weeklyIndicator("neutral"),
+    ema8: ema21 - 1,
+    ema21,
+    ema34: ema21 - 2,
+    ema50: ema21 - 3,
+    ema55: ema21 - 4,
+    ema89: ema21 - 5,
+    ema100: ema21 - 6,
+    atr14
   };
 }
 
