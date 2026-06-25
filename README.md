@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard only displays qualified `A` or `B` compression candidates with an approved Weekly context. `A` means a setup score of `90-100`, the full bullish Weekly EMA stack, at least 5 active Daily squeeze dots, the buffered A-entry pocket, and all hard gates satisfied. `B` means a setup score of `80-89`, or a higher-scoring setup capped by Weekly 21 EMA proximity, a developing 3-4 dot squeeze, or the broader Daily 21 EMA-to-8 EMA entry range. `C` setups at `79` or below, Watchlist, Avoid, and non-qualifying Weekly context results are excluded from the visible candidate list.
+The Dashboard displays qualified `A` or `B` compression candidates. `A` means a setup score of `90-100`, the full bullish Weekly EMA stack, at least 5 active Daily squeeze dots, the buffered A-entry pocket, and all hard gates satisfied. `B` means a setup score of `70-89`, or a higher-scoring setup capped by a controlled trend, entry, Weekly, maturity, or macro caution. `C` setups below `70`, Watchlist, Avoid, and bearish Weekly context results are excluded from the visible candidate list.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -79,13 +79,14 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Market cap >= $2B when Schwab provides market cap
 - ETFs bypass beta, market-cap, sector, and single-company earnings requirements
 - Stock liquidity passes with either average share volume >= 600K or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last
-- Long setup: the 8, 21, 34, 55, and 89 EMAs are positively stacked, with price above the 21 EMA and inside the approved 21-to-8 EMA entry range
+- A setups require the full bullish 8/21/34/55/89 EMA stack and the preferred 21-to-8 EMA entry pocket
+- B setups may use the expanded trend path when the Daily 8 EMA is above the 21 EMA and price is between the 21 EMA and 1.5 ATR above it
 - Selected timeframes: daily and weekly
-- At least 3 consecutive active Daily squeeze dots before expansion; 3-4 dots qualify as a developing B setup, while 5+ dots are eligible for A
+- At least 2 consecutive active Daily squeeze dots before expansion; 2-4 dots qualify as a developing B setup, while 5+ dots are eligible for A
 - Daily 20-period Squeeze histogram must be strictly above zero; both cyan (positive and rising) and blue (positive but falling) qualify
-- Daily price must be between the 21 EMA and 8 EMA; the buffered range from 0.1% above the 21 EMA through 0.1% below the 8 EMA is eligible for A, while the remaining range is capped at B
+- Daily price in the buffered range from 0.1% above the 21 EMA through 0.1% below the 8 EMA is eligible for A; the remaining 21-to-8 range and controlled extension up to 1.5 ATR above the 21 EMA are capped at B
 - Daily squeeze-dot count and a histogram above zero are compression gates; ATR contraction, Bollinger Band contraction, candle-range contraction, and whether positive momentum is improving remain context
-- Weekly qualification requires either the full bullish 8/21/34/55/89 EMA stack with price above the 21 EMA or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
+- Weekly full-stack or 21-EMA proximity confirmation remains preferred; neutral Weekly structure can qualify only as B, while bearish Weekly structure is still rejected
 - Weekly squeeze is bonus confirmation, not a requirement
 - Bearish SPY/QQQ Daily structure is a macro caution that reduces the setup score and caps qualifying setups at B; it does not automatically reject an otherwise valid squeeze
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
@@ -95,7 +96,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - ETF strength compares the ETF directly against SPY over the same 20-period window
 - Catalyst safety uses the next earnings date for stocks; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups. ETFs are treated as not having single-company earnings catalyst risk.
 - FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values
-- Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred when quality is comparable and delta around 0.40-0.70
+- Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred, delta around 0.35-0.75, spread no wider than 25%, and at least 25 open interest or 10 contracts of volume
 
 The automatic index universe is treated as prequalified if Schwab and FMP both omit market cap. If either provider supplies market cap below the configured threshold, the symbol is rejected.
 

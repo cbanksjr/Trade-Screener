@@ -192,7 +192,7 @@ describe("FMP Institutional Edge", () => {
     expect(result.setupScore).toBe(93);
     expect(result.grade).toBe("B");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain("Daily squeeze has 3-4 active dots; developing compression is capped at B.");
+    expect(result.gradeCapReasons).toContain("Daily squeeze has 2-4 active dots; developing compression is capped at B.");
   });
 });
 

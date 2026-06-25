@@ -330,9 +330,9 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
   }));
 
-  it("only displays A/B qualified strong or moderate candidates with qualifying weekly context", async () => withDbRestore(async () => {
+  it("displays A/B strong or moderate candidates and keeps neutral weekly structure as B", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
-    const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 79, grade: "C" };
+    const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 69, grade: "C" };
     const nonBullishWeekly: ScanResult = {
       ...qualifyingResult("WEEKLYNEUTRAL"),
       weeklyQualificationMode: "none",
@@ -345,7 +345,10 @@ describe("background scan refresh", () => {
       nonBullishWeekly
     ]);
 
-    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["QUALIFIED"]);
+    const results = await readDisplayResults();
+    expect(results.map((result) => result.symbol).sort()).toEqual(["QUALIFIED", "WEEKLYNEUTRAL"]);
+    expect(results.find((result) => result.symbol === "WEEKLYNEUTRAL")?.grade).toBe("B");
+    expect(results.find((result) => result.symbol === "WEEKLYNEUTRAL")?.longCallDecision).toBe("Moderate Long Call Candidate");
   }));
 
   it("keeps ATR-only weekly cached candidates visible but caps them at B", async () => withDbRestore(async () => {
@@ -401,7 +404,7 @@ describe("background scan refresh", () => {
     expect(result.symbol).toBe("DEVELOPING");
     expect(result.grade).toBe("B");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain("Daily squeeze has 3-4 active dots; developing compression is capped at B.");
+    expect(result.gradeCapReasons).toContain("Daily squeeze has 2-4 active dots; developing compression is capped at B.");
   }));
 
   it("normalizes old cached compression diagnostic text without using old scores as dots", async () => withDbRestore(async () => {

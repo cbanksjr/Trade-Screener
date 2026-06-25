@@ -11,6 +11,9 @@ import {
   B_SETUP_SCORE_THRESHOLD,
   BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
+  EXTENDED_ENTRY_GRADE_CAP_REASON,
+  RELAXED_TREND_GRADE_CAP_REASON,
+  RELAXED_WEEKLY_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON,
   applyInstitutionalEdge,
   defaultSettings,
@@ -473,13 +476,14 @@ function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.setupDirection === "long"
     && result.indicators.momentum > 0
-    && hasQualifyingWeeklyContext(result)
+    && !hasBearishOrUnavailableWeeklyContext(result)
     && (result.longCallDecision === "Strong Long Call Candidate" || result.longCallDecision === "Moderate Long Call Candidate")
     && (result.grade === "A" || result.grade === "B");
 }
 
-function hasQualifyingWeeklyContext(result: ScanResult): boolean {
-  return resolveCachedWeeklyQualificationMode(result) !== "none";
+function hasBearishOrUnavailableWeeklyContext(result: ScanResult): boolean {
+  const weekly = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "weekly");
+  return weekly?.bias === "bearish" || weekly?.bias === "unavailable";
 }
 
 function resolveCachedWeeklyQualificationMode(result: ScanResult): NonNullable<ScanResult["weeklyQualificationMode"]> {
@@ -524,7 +528,7 @@ function classifyFilteredResult(result: ScanResult): ScanDiagnosticReason {
   if (layer("Options Market Context")?.status === "Bearish") return "options";
   if (factor("Liquidity")?.status === "Bearish") return "spreadLiquidity";
   if (layer("Squeeze Market Structure")?.status === "Bearish") return "marketStructure";
-  if (!hasQualifyingWeeklyContext(result)) return "marketStructure";
+  if (hasBearishOrUnavailableWeeklyContext(result)) return "marketStructure";
   if (factor("Catalyst Safety")?.status === "Bearish") return "catalyst";
   if (factor("Sector Strength")?.status === "Insufficient Data") return "sectorDataCap";
   if (!result.passesUniverse) return "finalDisplayFilter";
@@ -540,9 +544,10 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const squeezeMaturityMode = result.squeezeMaturityMode
     ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
   const bearishMacro = hasBearishMacro(result);
-  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro);
+  const relaxedMarketStructure = hasRelaxedMarketStructure(result);
+  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure);
   const scoreGrade = gradeFromSetupScore(setupScore);
-  const grade = isCachedGradeCapped(weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro) && scoreGrade === "A" ? "B" : scoreGrade;
+  const grade = isCachedGradeCapped(weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure) && scoreGrade === "A" ? "B" : scoreGrade;
   const normalized: ScanResult = {
     ...result,
     assetType: result.assetType ?? "stock",
@@ -561,7 +566,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     dailyEntryQualificationMode,
     weeklyQualificationMode,
     squeezeMaturityMode,
-    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro),
+    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure),
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -570,7 +575,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
         detail: dotCount === undefined
           ? "Run scan for dot count."
           : layer.status === "Bearish"
-            ? "At least 3 consecutive active daily squeeze dots are required; current count is " + dotCount + "."
+            ? "At least 2 consecutive active daily squeeze dots are required; current count is " + dotCount + "."
             : dotCount < 5
               ? "Daily squeeze is developing with " + dotCount + " active dots; grade is capped at B."
               : "Daily chart has " + dotCount + " consecutive active squeeze dots."
@@ -607,12 +612,15 @@ function isCachedGradeCapped(
   weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>,
   dailyEntryQualificationMode: NonNullable<ScanResult["dailyEntryQualificationMode"]>,
   squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>,
-  bearishMacro = false
+  bearishMacro = false,
+  relaxedMarketStructure = false
 ): boolean {
-  return weeklyQualificationMode === "ema21-atr"
+  return weeklyQualificationMode !== "full-stack"
     || dailyEntryQualificationMode === "broad"
+    || dailyEntryQualificationMode === "extended"
     || squeezeMaturityMode === "developing"
-    || bearishMacro;
+    || bearishMacro
+    || relaxedMarketStructure;
 }
 
 function normalizeCachedDecision(
@@ -621,12 +629,13 @@ function normalizeCachedDecision(
   weeklyQualificationMode: ScanResult["weeklyQualificationMode"],
   dailyEntryQualificationMode: ScanResult["dailyEntryQualificationMode"],
   squeezeMaturityMode: ScanResult["squeezeMaturityMode"],
-  bearishMacro = false
+  bearishMacro = false,
+  relaxedMarketStructure = false
 ): ScanResult["longCallDecision"] {
   if (decision === "Avoid") return "Avoid";
   if (setupScore < B_SETUP_SCORE_THRESHOLD) return "Watchlist Candidate";
   if (decision === "Watchlist Candidate") return "Watchlist Candidate";
-  if (weeklyQualificationMode === "ema21-atr" || dailyEntryQualificationMode === "broad" || squeezeMaturityMode === "developing" || bearishMacro) return "Moderate Long Call Candidate";
+  if (weeklyQualificationMode !== "full-stack" || dailyEntryQualificationMode === "broad" || dailyEntryQualificationMode === "extended" || squeezeMaturityMode === "developing" || bearishMacro || relaxedMarketStructure) return "Moderate Long Call Candidate";
   if (decision === "Strong Long Call Candidate" && setupScore < A_SETUP_SCORE_THRESHOLD) return "Moderate Long Call Candidate";
   return decision;
 }
@@ -645,7 +654,8 @@ function cachedGradeCapReasons(result: ScanResult, decision: ScanResult["longCal
   if (setupScore < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 90.");
   const weeklyQualificationMode = resolveCachedWeeklyQualificationMode(result);
   if (weeklyQualificationMode === "ema21-atr") reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
-  if (weeklyQualificationMode === "none" && weekly) reasons.push("Weekly context does not qualify.");
+  if (weeklyQualificationMode === "none" && weekly?.bias === "neutral") reasons.push(RELAXED_WEEKLY_GRADE_CAP_REASON);
+  if (weeklyQualificationMode === "none" && (weekly?.bias === "bearish" || weekly?.bias === "unavailable")) reasons.push("Weekly context does not qualify.");
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");
   return reasons;
@@ -658,20 +668,28 @@ function mergeCachedGradeCapReasons(
   weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>,
   dailyEntryQualificationMode: NonNullable<ScanResult["dailyEntryQualificationMode"]>,
   squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>,
-  bearishMacro = false
+  bearishMacro = false,
+  relaxedMarketStructure = false
 ): string[] {
   const reasons = [...(result.gradeCapReasons ?? cachedGradeCapReasons(result, decision, setupScore))];
   if (weeklyQualificationMode === "ema21-atr" && !reasons.includes(WEEKLY_ATR_GRADE_CAP_REASON)) {
     reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
   }
   if (dailyEntryQualificationMode === "broad" && !reasons.includes(BROAD_ENTRY_GRADE_CAP_REASON)) reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
+  if (dailyEntryQualificationMode === "extended" && !reasons.includes(EXTENDED_ENTRY_GRADE_CAP_REASON)) reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing" && !reasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (bearishMacro && !reasons.includes(BEARISH_MACRO_GRADE_CAP_REASON)) reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
+  if (relaxedMarketStructure && !reasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
+  if (weeklyQualificationMode === "none" && !reasons.includes(RELAXED_WEEKLY_GRADE_CAP_REASON)) reasons.push(RELAXED_WEEKLY_GRADE_CAP_REASON);
   return reasons;
 }
 
 function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean {
   return result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
+}
+
+function hasRelaxedMarketStructure(result: Pick<ScanResult, "layerEvaluations">): boolean {
+  return result.layerEvaluations?.some((item) => item.layer === "Squeeze Market Structure" && item.status === "Neutral") ?? false;
 }
 
 function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {

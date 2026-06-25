@@ -83,7 +83,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const emaPocketLower = indicators.ema21 * 1.001;
   const emaPocketUpper = indicators.ema8 * 0.999;
   const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
-  const dailyEntryQualificationMode = resolveDailyEntryQualificationMode(indicators.ema21, indicators.ema8, price);
+  const dailyEntryQualificationMode = resolveDailyEntryQualificationMode(indicators.ema21, indicators.ema8, indicators.atr14, price);
   const priceAboveEmaStack = price >= indicators.ema21;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
@@ -120,15 +120,17 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   };
 }
 
-function resolveDailyEntryQualificationMode(ema21: number, ema8: number, price: number): DailyEntryQualificationMode {
-  if (price < ema21 || price > ema8) return "none";
+function resolveDailyEntryQualificationMode(ema21: number, ema8: number, atr14: number, price: number): DailyEntryQualificationMode {
+  if (price < ema21) return "none";
+  if (price > ema8) return atr14 > 0 && price <= ema21 + atr14 * 1.5 ? "extended" : "none";
   return price >= ema21 * 1.001 && price <= ema8 * 0.999 ? "strict" : "broad";
 }
 
 function dailyEntryDetail(mode: DailyEntryQualificationMode): string {
   if (mode === "strict") return "inside the buffered A-entry pocket";
   if (mode === "broad") return "inside the broader B-entry range between the 21 EMA and 8 EMA";
-  return "outside the qualifying range between the 21 EMA and 8 EMA";
+  if (mode === "extended") return "inside the controlled B-entry extension up to 1.5 ATR above the 21 EMA";
+  return "below the 21 EMA or more than 1.5 ATR above it";
 }
 
 function round(value: number, places = 2): number {
