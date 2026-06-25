@@ -471,6 +471,7 @@ async function scanSymbol(input: {
 function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.setupDirection === "long"
+    && result.indicators.momentum > 0
     && hasQualifyingWeeklyContext(result)
     && (result.longCallDecision === "Strong Long Call Candidate" || result.longCallDecision === "Moderate Long Call Candidate")
     && (result.grade === "A" || result.grade === "B");

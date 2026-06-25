@@ -294,6 +294,19 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LONG"]);
   }));
 
+  it("filters cached candidates whose Daily Squeeze histogram is not above zero", async () => withDbRestore(async () => {
+    const negativeHistogram: ScanResult = {
+      ...qualifyingResult("NEGHIST"),
+      indicators: { ...indicator("low"), momentum: -1, momentumImproving: true }
+    };
+    await replaceScanResults([
+      qualifyingResult("POSHIST"),
+      negativeHistogram
+    ]);
+
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["POSHIST"]);
+  }));
+
   it("only displays A/B qualified strong or moderate candidates with qualifying weekly context", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 79, grade: "C" };

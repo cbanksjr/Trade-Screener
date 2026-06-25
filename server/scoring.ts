@@ -96,7 +96,7 @@ export function gradeSetup(input: {
     minAvgShareVolume: input.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume
   });
-  const marketStructure = evaluateMarketStructure(dailyContext, weeklyContext);
+  const marketStructure = evaluateMarketStructure(dailyContext, weeklyContext, indicators);
   const optionLayer = evaluateOptions(options);
   const compression = evaluateCompression(dailySqueezeDotCount);
   const macro = evaluateMacro(input.spyCandles, input.qqqCandles);
@@ -185,8 +185,8 @@ export function gradeSetup(input: {
     stockStopPrice: round(Math.min(indicators.ema55, indicators.ema89), 2),
     target1: round(price + indicators.atr14 * 1.5, 2),
     target2: round(price + indicators.atr14 * 2.5, 2),
-    reasonsSupportingTrade: supportReasons(layerEvaluations, dailyContext, weeklyContext, recommendedOption),
-    reasonsAgainstTrade: riskReasons(layerEvaluations, dailyContext, weeklyContext, recommendedOption),
+    reasonsSupportingTrade: supportReasons(layerEvaluations, dailyContext, weeklyContext, indicators, recommendedOption),
+    reasonsAgainstTrade: riskReasons(layerEvaluations, dailyContext, weeklyContext, indicators, recommendedOption),
     alertMessage: alertMessage(input.symbol, decision, price, dailySqueezeDotCount),
     journalRecord: journalRecord(input.symbol, decision, price, dailyContext, weeklyContext, recommendedOption),
     rules: layerEvaluations.map(layerToRule),
@@ -258,9 +258,14 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   };
 }
 
-function evaluateMarketStructure(dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext): LayerEvaluation {
+function evaluateMarketStructure(
+  dailyContext: LowerTimeframeContext,
+  weeklyContext: LowerTimeframeContext,
+  indicators: IndicatorSnapshot
+): LayerEvaluation {
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
+  if (indicators.momentum <= 0) return layer("Squeeze Market Structure", "Bearish", "Daily Squeeze histogram must be above zero; current value is " + indicators.momentum.toFixed(2) + " (" + (indicators.momentumColor ?? "unknown") + ").");
   if (dailyContext.bias !== "bullish") return layer("Squeeze Market Structure", "Bearish", "Daily EMA structure is " + dailyContext.bias + "; bullish Daily structure is required.");
   if (dailyContext.dailyEntryQualificationMode === "none") return layer("Squeeze Market Structure", "Bearish", "Daily price is outside the qualifying range between the 21 EMA and 8 EMA.");
   if (weeklyContext.weeklyQualificationMode === "none") return layer("Squeeze Market Structure", "Bearish", "Weekly chart has neither the full bullish EMA stack nor price within one ATR above the 21 EMA.");
@@ -509,6 +514,7 @@ function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFa
 
 function evaluateVolatilityFit(indicators: IndicatorSnapshot, dailySqueezeDotCount: number): InstitutionalFactor {
   if (dailySqueezeDotCount < 3) return factor("Volatility Fit", "Bearish", "Daily squeeze dot count is below 3.");
+  if (indicators.momentum <= 0) return factor("Volatility Fit", "Bearish", "Daily Squeeze histogram is not above zero.");
   if (dailySqueezeDotCount < 5) return factor("Volatility Fit", "Neutral", "Daily squeeze is active but still developing with 3-4 dots.");
   const supportive = [indicators.atrContracting, indicators.bbContracting, indicators.candleRangeContracting, indicators.momentumImproving].filter(Boolean).length;
   if (supportive >= 3) return factor("Volatility Fit", "Bullish", "Daily squeeze active with contraction and improving momentum.");
@@ -724,17 +730,19 @@ function alignmentSummary(dailyContext: LowerTimeframeContext, weeklyContext: Lo
   return "Daily: " + dailyContext.bias + ". Weekly: " + weeklyContext.bias + ".";
 }
 
-function supportReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, option?: OptionContract): string[] {
+function supportReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, indicators: IndicatorSnapshot, option?: OptionContract): string[] {
   const reasons = layers.filter((layerItem) => layerItem.status === "Bullish").map((layerItem) => layerItem.layer + ": " + layerItem.detail);
   if (isSqueezeActive(dailyContext.squeezeState)) reasons.push("Daily squeeze is active.");
+  if (indicators.momentum > 0) reasons.push("Daily Squeeze histogram is above zero (" + (indicators.momentumColor ?? "positive") + ").");
   if (isSqueezeActive(weeklyContext.squeezeState)) reasons.push("Weekly squeeze adds bonus confirmation.");
   if (option) reasons.push("Recommended call has OI " + option.openInterest + ", spread " + option.spreadPct.toFixed(1) + "%, delta " + (option.delta?.toFixed(2) ?? "unavailable") + ".");
   return reasons.slice(0, 6);
 }
 
-function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, option?: OptionContract): string[] {
+function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeContext, weeklyContext: LowerTimeframeContext, indicators: IndicatorSnapshot, option?: OptionContract): string[] {
   const reasons = layers.filter((layerItem) => layerItem.status === "Bearish" || layerItem.status === "Conflicting").map((layerItem) => layerItem.layer + ": " + layerItem.detail);
   if (!isSqueezeActive(dailyContext.squeezeState)) reasons.push("Daily squeeze is not active; swing setup should be avoided.");
+  if (indicators.momentum <= 0) reasons.push("Daily Squeeze histogram is not above zero.");
   if (dailyContext.bias !== "bullish") reasons.push("Daily EMA structure is not bullish.");
   if (dailyContext.bias !== "unavailable" && dailyContext.dailyEntryQualificationMode === "none") reasons.push("Outside the qualifying Daily range between the 21 EMA and 8 EMA.");
   if (weeklyContext.weeklyQualificationMode === "none") reasons.push("Weekly chart lacks both qualifying structures.");

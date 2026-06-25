@@ -147,6 +147,30 @@ describe("layer decision engine", () => {
     expect(result.reasonsSupportingTrade.join(" ")).not.toContain("Bonus intraday squeeze");
   });
 
+  it("rejects an active Daily squeeze when the histogram is not above zero", () => {
+    const candles = activeDailySqueezeCandles().map((candle, index, all) => ({
+      ...candle,
+      close: candle.close - Math.max(0, index - (all.length - 20)) * 0.25
+    }));
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "NEGATIVEHIST",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("NEGATIVEHIST"),
+      optionable: true,
+      options: demoOptions("NEGATIVEHIST", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(isSqueezeActive(result.indicators.squeezeState)).toBe(true);
+    expect(result.indicators.momentum).toBeLessThanOrEqual(0);
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.reasonsAgainstTrade.join(" ")).toContain("histogram");
+  });
+
   it("qualifies 3-4 active daily squeeze dots as a developing B setup", () => {
     const candles = activeDailySqueezeCandles();
     const firstFiveDotIndex = candles.findIndex((_, index) => index >= 90 && activeSqueezeDotCount(candles.slice(0, index + 1)) >= 5);

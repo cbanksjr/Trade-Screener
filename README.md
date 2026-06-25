@@ -82,8 +82,9 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Long setup: the 8, 21, 34, 55, and 89 EMAs are positively stacked, with price above the 21 EMA and inside the approved 21-to-8 EMA entry range
 - Selected timeframes: daily and weekly
 - At least 3 consecutive active Daily squeeze dots before expansion; 3-4 dots qualify as a developing B setup, while 5+ dots are eligible for A
+- Daily 20-period Squeeze histogram must be strictly above zero; both cyan (positive and rising) and blue (positive but falling) qualify
 - Daily price must be between the 21 EMA and 8 EMA; the buffered range from 0.1% above the 21 EMA through 0.1% below the 8 EMA is eligible for A, while the remaining range is capped at B
-- Daily squeeze-dot count is used as the compression gate; ATR contraction, Bollinger Band contraction, candle-range contraction, and improving momentum remain context only
+- Daily squeeze-dot count and a histogram above zero are compression gates; ATR contraction, Bollinger Band contraction, candle-range contraction, and whether positive momentum is improving remain context
 - Weekly qualification requires either the full bullish 8/21/34/55/89 EMA stack with price above the 21 EMA or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
 - Weekly squeeze is bonus confirmation, not a requirement
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
