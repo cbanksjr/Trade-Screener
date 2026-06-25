@@ -4,7 +4,8 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, initDb, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, mergeFundamentals, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
+import { __resetScanStateForTest, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
+import { BEARISH_MACRO_GRADE_CAP_REASON } from "./scoring";
 
 describe("scan symbol resolution", () => {
   it("uses the automatic S&P 500 + Nasdaq 100 universe plus default ETFs", async () => withDbRestore(async () => {
@@ -307,6 +308,28 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["POSHIST"]);
   }));
 
+  it("keeps bearish-macro cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+    const macroCaution: ScanResult = {
+      ...qualifyingResult("MACROCAUTION"),
+      setupScore: 95,
+      grade: "A",
+      longCallDecision: "Strong Long Call Candidate",
+      layerEvaluations: [{
+        layer: "Macro Regime",
+        status: "Bearish",
+        detail: "SPY or QQQ daily EMA structure is bearish."
+      }]
+    };
+    await replaceScanResults([macroCaution]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("MACROCAUTION");
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+  }));
+
   it("only displays A/B qualified strong or moderate candidates with qualifying weekly context", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 79, grade: "C" };
@@ -484,6 +507,24 @@ describe("background scan refresh", () => {
       }
     });
   }));
+
+  it("keeps fresh scan diagnostics when merging existing scan metadata", async () => {
+    const stale = fakeDiagnostics({ scannedSymbols: 10, qualifiedResults: 0, stockLiquidity: 2 });
+    const fresh = fakeDiagnostics({ scannedSymbols: 603, qualifiedResults: 7, options: 118 });
+    const response = mergeScanResponseMetadata({
+      mode: "live",
+      results: [],
+      settings: await readSettings(),
+      warnings: [],
+      scanDiagnostics: fresh
+    }, {
+      scanStatus: "complete",
+      scanDiagnostics: stale
+    }, true);
+
+    expect(response.scanStatus).toBe("running");
+    expect(response.scanDiagnostics).toEqual(fresh);
+  });
 });
 
 async function withDbRestore(run: () => Promise<void>) {

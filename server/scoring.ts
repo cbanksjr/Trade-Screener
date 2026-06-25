@@ -32,6 +32,7 @@ export const B_SETUP_SCORE_THRESHOLD = 80;
 export const WEEKLY_ATR_GRADE_CAP_REASON = "Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.";
 export const DEVELOPING_SQUEEZE_GRADE_CAP_REASON = "Daily squeeze has 3-4 active dots; developing compression is capped at B.";
 export const BROAD_ENTRY_GRADE_CAP_REASON = "Daily price is between the 21 EMA and 8 EMA but outside the stricter buffered A-entry pocket.";
+export const BEARISH_MACRO_GRADE_CAP_REASON = "SPY or QQQ has a bearish Daily EMA structure; macro conditions cap the setup at B.";
 const EARNINGS_AVOID_DAYS = 14;
 const EARNINGS_NEUTRAL_DAYS = 29;
 
@@ -126,7 +127,8 @@ export function gradeSetup(input: {
   const weeklyQualificationMode = weeklyContext.weeklyQualificationMode ?? "none";
   const decision = finalDecision(layerEvaluations, dailyContext, dailyEntryQualificationMode, squeezeMaturityMode, weeklyQualificationMode, weeklySupport, setupScore);
   const scoreGrade = gradeFromSetupScore(setupScore.score);
-  const grade = hasGradeCap({ weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode }) && scoreGrade === "A" ? "B" : scoreGrade;
+  const gradeCapped = hasGradeCap({ weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode }) || macro.status === "Bearish";
+  const grade = gradeCapped && scoreGrade === "A" ? "B" : scoreGrade;
   const gradeCapReasons = decision === "Strong Long Call Candidate"
     ? []
     : gradeCapReasonsFor(layerEvaluations, weeklyContext, dailyEntryQualificationMode, squeezeMaturityMode, setupScore);
@@ -208,7 +210,8 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   const weeklyQualificationMode = result.weeklyQualificationMode ?? "full-stack";
   const dailyEntryQualificationMode = result.dailyEntryQualificationMode ?? "strict";
   const squeezeMaturityMode = result.squeezeMaturityMode ?? "mature";
-  const capped = hasGradeCap({ weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode });
+  const bearishMacro = hasBearishMacro(result);
+  const capped = hasGradeCap({ weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode }) || bearishMacro;
   const gradeCapReasons = (result.gradeCapReasons ?? []).filter((reason) => reason !== "Setup score below 90.");
   let longCallDecision: LongCallDecision = result.longCallDecision;
   let effectiveGrade = capped && scoreGrade === "A" ? "B" : scoreGrade;
@@ -236,6 +239,9 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   }
   if (squeezeMaturityMode === "developing" && !gradeCapReasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) {
     gradeCapReasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
+  }
+  if (bearishMacro && !gradeCapReasons.includes(BEARISH_MACRO_GRADE_CAP_REASON)) {
+    gradeCapReasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   }
   if (setupScore < A_SETUP_SCORE_THRESHOLD && !gradeCapReasons.includes("Setup score below 90.")) {
     gradeCapReasons.push("Setup score below 90.");
@@ -351,8 +357,8 @@ function finalDecision(
 ): LongCallDecision {
   const byLayer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name)?.status;
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
-  const bearishLayer = layerEvaluations.some((item) => item.status === "Bearish");
-  if (bearishLayer || setupScore.catalystBlock || !dailySqueezeActive || dailyEntryQualificationMode === "none" || squeezeMaturityMode === "insufficient" || dailyContext.bias !== "bullish" || weeklyQualificationMode === "none" || weeklyStatus === "Bearish") return "Avoid";
+  const blockingBearishLayer = layerEvaluations.some((item) => item.status === "Bearish" && item.layer !== "Macro Regime");
+  if (blockingBearishLayer || setupScore.catalystBlock || !dailySqueezeActive || dailyEntryQualificationMode === "none" || squeezeMaturityMode === "insufficient" || dailyContext.bias !== "bullish" || weeklyQualificationMode === "none" || weeklyStatus === "Bearish") return "Avoid";
   if (
     byLayer("Compression Quality") === "Bullish"
     && byLayer("Options Market Context") !== "Bearish"
@@ -367,7 +373,6 @@ function finalDecision(
     byLayer("Compression Quality") !== "Bearish"
     && byLayer("Options Market Context") !== "Bearish"
     && byLayer("Institutional Context") !== "Bearish"
-    && byLayer("Macro Regime") !== "Bearish"
     && setupScore.score >= B_SETUP_SCORE_THRESHOLD
   ) return "Moderate Long Call Candidate";
   return "Watchlist Candidate";
@@ -415,7 +420,7 @@ function evaluateSetupScore(input: {
   nextEarningsDate?: string;
 }): SetupScoreResult {
   const factors = [
-    factor("Market Regime", input.marketRegime.status, input.marketRegime.detail),
+    factor("Market Regime", input.marketRegime.status === "Bearish" ? "Neutral" : input.marketRegime.status, input.marketRegime.detail),
     input.assetType === "etf" ? evaluateEtfStrength(input.symbol, input.candles, input.spyCandles) : evaluateSectorStrength(input.sector, input.sectorCandles, input.spyCandles),
     evaluateRelativeStrengthFactor(input.candles, input.spyCandles, input.qqqCandles),
     evaluateLiquidityFactor(input.avgShareVolume, input.avgDollarVolume20d, input.assetType, input.optionLayer, input.options[0], input.minAvgShareVolume, input.minAvgDollarVolume),
@@ -472,6 +477,7 @@ function gradeCapReasonsFor(
   if (weeklyContext.weeklyQualificationMode === "ema21-atr") reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
   if (dailyEntryQualificationMode === "broad") reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing") reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
+  if (layer("Macro Regime")?.status === "Bearish") reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   if (weeklyContext.weeklyQualificationMode === "none") reasons.push("Weekly context does not qualify.");
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");
@@ -499,6 +505,10 @@ function evaluateLiquidityFactor(avgShareVolume: number, avgDollarVolume20d: num
     ? "High dollar volume and strong option liquidity."
     : "Average share or dollar volume passes and option liquidity is strong.");
   return factor("Liquidity", "Neutral", "Stock liquidity passes; option chain is usable but not ideal" + (option ? "." : " or unavailable."));
+}
+
+function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean {
+  return result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
 }
 
 export function stockLiquidityPasses(avgShareVolume: number | undefined, avgDollarVolume: number | undefined, minAvgShareVolume = defaultSettings.minAvgShareVolume, minAvgDollarVolume = defaultSettings.minAvgDollarVolume): boolean {

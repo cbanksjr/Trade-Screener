@@ -7,6 +7,7 @@ import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
 import {
   A_SETUP_SCORE_THRESHOLD,
+  BEARISH_MACRO_GRADE_CAP_REASON,
   B_SETUP_SCORE_THRESHOLD,
   BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
@@ -538,9 +539,10 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const dailyEntryQualificationMode = resolveCachedDailyEntryQualificationMode(result);
   const squeezeMaturityMode = result.squeezeMaturityMode
     ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
-  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode);
+  const bearishMacro = hasBearishMacro(result);
+  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro);
   const scoreGrade = gradeFromSetupScore(setupScore);
-  const grade = isCachedGradeCapped(weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode) && scoreGrade === "A" ? "B" : scoreGrade;
+  const grade = isCachedGradeCapped(weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro) && scoreGrade === "A" ? "B" : scoreGrade;
   const normalized: ScanResult = {
     ...result,
     assetType: result.assetType ?? "stock",
@@ -559,7 +561,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     dailyEntryQualificationMode,
     weeklyQualificationMode,
     squeezeMaturityMode,
-    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode),
+    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro),
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -604,11 +606,13 @@ function resolveCachedDailyEntryQualificationMode(result: ScanResult): NonNullab
 function isCachedGradeCapped(
   weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>,
   dailyEntryQualificationMode: NonNullable<ScanResult["dailyEntryQualificationMode"]>,
-  squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>
+  squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>,
+  bearishMacro = false
 ): boolean {
   return weeklyQualificationMode === "ema21-atr"
     || dailyEntryQualificationMode === "broad"
-    || squeezeMaturityMode === "developing";
+    || squeezeMaturityMode === "developing"
+    || bearishMacro;
 }
 
 function normalizeCachedDecision(
@@ -616,12 +620,13 @@ function normalizeCachedDecision(
   setupScore: number,
   weeklyQualificationMode: ScanResult["weeklyQualificationMode"],
   dailyEntryQualificationMode: ScanResult["dailyEntryQualificationMode"],
-  squeezeMaturityMode: ScanResult["squeezeMaturityMode"]
+  squeezeMaturityMode: ScanResult["squeezeMaturityMode"],
+  bearishMacro = false
 ): ScanResult["longCallDecision"] {
   if (decision === "Avoid") return "Avoid";
   if (setupScore < B_SETUP_SCORE_THRESHOLD) return "Watchlist Candidate";
   if (decision === "Watchlist Candidate") return "Watchlist Candidate";
-  if (weeklyQualificationMode === "ema21-atr" || dailyEntryQualificationMode === "broad" || squeezeMaturityMode === "developing") return "Moderate Long Call Candidate";
+  if (weeklyQualificationMode === "ema21-atr" || dailyEntryQualificationMode === "broad" || squeezeMaturityMode === "developing" || bearishMacro) return "Moderate Long Call Candidate";
   if (decision === "Strong Long Call Candidate" && setupScore < A_SETUP_SCORE_THRESHOLD) return "Moderate Long Call Candidate";
   return decision;
 }
@@ -652,7 +657,8 @@ function mergeCachedGradeCapReasons(
   setupScore: number,
   weeklyQualificationMode: NonNullable<ScanResult["weeklyQualificationMode"]>,
   dailyEntryQualificationMode: NonNullable<ScanResult["dailyEntryQualificationMode"]>,
-  squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>
+  squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>,
+  bearishMacro = false
 ): string[] {
   const reasons = [...(result.gradeCapReasons ?? cachedGradeCapReasons(result, decision, setupScore))];
   if (weeklyQualificationMode === "ema21-atr" && !reasons.includes(WEEKLY_ATR_GRADE_CAP_REASON)) {
@@ -660,7 +666,12 @@ function mergeCachedGradeCapReasons(
   }
   if (dailyEntryQualificationMode === "broad" && !reasons.includes(BROAD_ENTRY_GRADE_CAP_REASON)) reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing" && !reasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
+  if (bearishMacro && !reasons.includes(BEARISH_MACRO_GRADE_CAP_REASON)) reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   return reasons;
+}
+
+function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean {
+  return result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
 }
 
 function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {
@@ -688,11 +699,19 @@ function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>
 
 async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics }): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
+  return mergeScanResponseMetadata(input, metadata, Boolean(activeScan));
+}
+
+export function mergeScanResponseMetadata(
+  input: Pick<ScanResponse, "mode" | "results" | "settings" | "warnings" | "scanDiagnostics">,
+  metadata: ScanMetadata,
+  isRefreshing: boolean
+): ScanResponse {
   return {
-    ...input,
     ...metadata,
-    scanStatus: activeScan ? "running" : metadata.scanStatus,
-    isRefreshing: Boolean(activeScan)
+    ...input,
+    scanStatus: isRefreshing ? "running" : metadata.scanStatus,
+    isRefreshing
   };
 }
 

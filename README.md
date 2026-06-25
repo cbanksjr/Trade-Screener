@@ -87,6 +87,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Daily squeeze-dot count and a histogram above zero are compression gates; ATR contraction, Bollinger Band contraction, candle-range contraction, and whether positive momentum is improving remain context
 - Weekly qualification requires either the full bullish 8/21/34/55/89 EMA stack with price above the 21 EMA or price from 0 through 1 weekly ATR above the 21 EMA; the proximity-only path is capped at grade B
 - Weekly squeeze is bonus confirmation, not a requirement
+- Bearish SPY/QQQ Daily structure is a macro caution that reduces the setup score and caps qualifying setups at B; it does not automatically reject an otherwise valid squeeze
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
 - Optional FMP Institutional Edge overlay uses Starter-accessible endpoint probing for financial scores, analyst grades/targets, ownership/insider data, and ETF data when available; unavailable endpoints are skipped neutrally

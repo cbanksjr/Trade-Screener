@@ -10,9 +10,11 @@ import {
   squeezeState
 } from "./indicators";
 import {
+  BEARISH_MACRO_GRADE_CAP_REASON,
   BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON,
+  applyInstitutionalEdge,
   gradeSetup,
   isSqueezeActive,
   rankCallOptions,
@@ -607,6 +609,40 @@ describe("layer decision engine", () => {
     expect(volatilityFit?.detail).toContain("momentum");
   });
 
+  it("treats bearish SPY or QQQ structure as a B-grade macro caution instead of an automatic rejection", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "MACROCAUTION",
+      candles,
+      currentPrice: price,
+      fundamentals: strongFundamentals("MACROCAUTION"),
+      optionable: true,
+      options: demoOptions("MACROCAUTION", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      sector: "Information Technology",
+      sectorCandles: candles,
+      spyCandles: bearishMarketCandles(),
+      qqqCandles: bearishMarketCandles()
+    });
+
+    expect(result.layerEvaluations.find((layer) => layer.layer === "Macro Regime")?.status).toBe("Bearish");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+
+    const enriched = applyInstitutionalEdge(result, {
+      score: 100,
+      status: "Bullish",
+      adjustment: 5,
+      factors: [],
+      warnings: []
+    });
+    expect(enriched.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(enriched.grade).toBe("B");
+  });
+
   it("ignores lower-timeframe squeeze for grading and reasons", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
@@ -1007,6 +1043,20 @@ function institutionalSetupContext() {
     spyCandles: activeDailySqueezeCandles(),
     qqqCandles: activeDailySqueezeCandles()
   };
+}
+
+function bearishMarketCandles(): Candle[] {
+  return Array.from({ length: 180 }, (_, index) => {
+    const close = 220 - index * 0.4;
+    return {
+      date: "2026-01-" + String(index + 1).padStart(2, "0"),
+      open: close + 0.1,
+      high: close + 0.8,
+      low: close - 0.8,
+      close,
+      volume: 25_000_000
+    };
+  });
 }
 
 function intradayCandles(direction: "up" | "down", days = 90): Candle[] {
