@@ -368,7 +368,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
       <section className="panel">
         <div className="panel-head">
           <h2>Recommended Calls</h2>
-          <span>30-180 DTE swing calls</span>
+          <span>14-180 DTE swing calls</span>
         </div>
         <div className="contracts">
           {result.suggestedOptions.map((contract) => (

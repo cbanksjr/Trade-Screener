@@ -30,7 +30,7 @@ The scan uses Schwab for:
 
 - `/marketdata/v1/quotes` for quote and fundamental market data
 - `/marketdata/v1/pricehistory` for daily OHLCV history and weekly context aggregated from daily candles
-- `/marketdata/v1/chains` for 30-180 DTE swing call chains with Greeks
+- `/marketdata/v1/chains` for 14-180 DTE swing call chains with Greeks
 
 Financial Modeling Prep can be used for index universe refreshes and as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary for market data, then uses FMP to refresh the default universe and fill missing beta, market cap, sector, and next earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `1000`, to protect API limits.
 
@@ -100,7 +100,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - ETF strength compares the ETF directly against SPY over the same 20-period window
 - Catalyst safety uses the next earnings date for stocks; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups. ETFs are treated as not having single-company earnings catalyst risk.
 - FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values
-- Liquid 30-180 DTE swing call candidates, with 30-90 DTE preferred, delta around 0.35-0.75, spread no wider than 25%, and at least 25 open interest or 10 contracts of volume
+- Liquid 14-180 DTE swing call candidates, with 14-90 DTE preferred, delta around 0.35-0.75, spread no wider than 25%, and at least 25 open interest or 10 contracts of volume
 
 The automatic index universe is treated as prequalified if Schwab and FMP both omit market cap. If either provider supplies market cap below the configured threshold, the symbol is rejected.
 

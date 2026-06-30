@@ -77,7 +77,9 @@ export function gradeSetup(input: {
   minMarketCap?: number;
   minAvgShareVolume?: number;
   minAvgDollarVolume?: number;
+  scanRanAt?: Date | string;
 }): ScanResult {
+  const scanRanAt = normalizeDate(input.scanRanAt) ?? new Date();
   const indicators = latestIndicators(input.candles);
   const assetType = input.assetType ?? "stock";
   const dailySqueezeDotCount = activeSqueezeDotCount(input.candles);
@@ -132,7 +134,8 @@ export function gradeSetup(input: {
     assetType,
     sector,
     sectorCandles: input.sectorCandles,
-    nextEarningsDate: input.fundamentals?.nextEarningsDate
+    nextEarningsDate: input.fundamentals?.nextEarningsDate,
+    scanRanAt
   });
   const weeklyQualificationMode = weeklyContext.weeklyQualificationMode ?? "none";
   const scoreGrade = gradeFromSetupScore(setupScore.score);
@@ -212,7 +215,7 @@ export function gradeSetup(input: {
     rules: layerEvaluations.map(layerToRule),
     suggestedOptions: options.slice(0, 5),
     candles: input.candles.slice(-120),
-    lastUpdated: new Date().toISOString(),
+    lastUpdated: scanRanAt.toISOString(),
     warnings
   };
 }
@@ -405,6 +408,7 @@ function evaluateSetupScore(input: {
   sector?: string;
   sectorCandles?: Candle[];
   nextEarningsDate?: string;
+  scanRanAt: Date;
 }): SetupScoreResult {
   const factors = [
     evaluatePriceStructure(input.dailyContext),
@@ -412,7 +416,7 @@ function evaluateSetupScore(input: {
     evaluateVolatilityFit(input.indicators, input.dailySqueezeDotCount),
     evaluateRelativeStrengthFactor(input.candles, input.spyCandles, input.qqqCandles),
     input.assetType === "etf" ? evaluateEtfStrength(input.symbol, input.candles, input.spyCandles) : evaluateSectorStrength(input.sector, input.sectorCandles, input.spyCandles),
-    input.assetType === "etf" ? evaluateEtfCatalystSafety() : evaluateCatalystSafety(input.nextEarningsDate)
+    input.assetType === "etf" ? evaluateEtfCatalystSafety() : evaluateCatalystSafety(input.nextEarningsDate, input.scanRanAt)
   ];
   const scored = factors.map((item) => ({ ...item, contribution: factorContribution(item.name, item.status) }));
   const score = round(scored.reduce((sum, item) => sum + item.contribution, 0), 0);
@@ -555,9 +559,9 @@ function evaluateVolatilityFit(indicators: IndicatorSnapshot, dailySqueezeDotCou
   return factor("Compression Quality", "Bearish", "Daily squeeze active but contraction/momentum support is weak.");
 }
 
-function evaluateCatalystSafety(nextEarningsDate?: string): InstitutionalFactor {
+function evaluateCatalystSafety(nextEarningsDate: string | undefined, scanRanAt: Date): InstitutionalFactor {
   if (!nextEarningsDate) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
-  const days = daysUntil(nextEarningsDate);
+  const days = daysUntil(nextEarningsDate, scanRanAt);
   if (days === undefined || days < 0) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
   if (days <= EARNINGS_AVOID_DAYS) return factor("Catalyst Safety", "Bearish", "Earnings are within " + EARNINGS_AVOID_DAYS + " days.");
   if (days <= EARNINGS_NEUTRAL_DAYS) return factor("Catalyst Safety", "Neutral", "Earnings are 15-29 days away; catalyst risk is elevated.");
@@ -579,10 +583,33 @@ function factorContribution(name: InstitutionalFactorName, status: LayerStatus):
   return 0;
 }
 
-function daysUntil(value: string): number | undefined {
+function daysUntil(value: string, from: Date): number | undefined {
+  const target = dateOnlyUtc(value);
+  if (!target) return undefined;
+  const reference = dateOnlyUtc(from);
+  if (!reference) return undefined;
+  return Math.round((target.getTime() - reference.getTime()) / (24 * 60 * 60 * 1000));
+}
+
+function normalizeDate(value: Date | string | undefined): Date | undefined {
+  if (!value) return undefined;
+  const parsed = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed : undefined;
+}
+
+function dateOnlyUtc(value: string | Date): Date | undefined {
+  if (value instanceof Date) return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
+  if (match) {
+    const year = Number(match[1]);
+    const month = Number(match[2]);
+    const day = Number(match[3]);
+    const parsed = new Date(Date.UTC(year, month - 1, day));
+    return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day ? parsed : undefined;
+  }
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) return undefined;
-  return Math.ceil((parsed.getTime() - Date.now()) / (24 * 60 * 60 * 1000));
+  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
 }
 
 export function rankCallOptions(options: OptionContract[], price: number): OptionContract[] {
@@ -592,14 +619,14 @@ export function rankCallOptions(options: OptionContract[], price: number): Optio
     .filter((contract) => contract.openInterest >= 25 || contract.volume >= 10)
     .filter((contract) => contract.spreadPct <= 25)
     .filter((contract) => contract.delta === undefined || (contract.delta >= 0.35 && contract.delta <= 0.75))
-    .filter((contract) => contract.dte === undefined || (contract.dte >= 30 && contract.dte <= 180))
+    .filter((contract) => contract.dte === undefined || (contract.dte >= 14 && contract.dte <= 180))
     .filter((contract) => contract.strike <= price * 1.12)
     .sort((a, b) => optionQuality(b) - optionQuality(a));
 }
 
 function optionQuality(contract: OptionContract): number {
   const dte = contract.dte ?? 60;
-  const dteScore = dte >= 30 && dte <= 90 ? 25 : dte >= 91 && dte <= 180 ? 18 : 0;
+  const dteScore = dte >= 14 && dte <= 90 ? 25 : dte >= 91 && dte <= 180 ? 18 : 0;
   const deltaScore = contract.delta === undefined ? 10 : Math.max(0, 25 - Math.abs(contract.delta - 0.55) * 100);
   const spreadScore = Math.max(0, 25 - contract.spreadPct);
   const liquidityScore = Math.min(25, contract.openInterest / 40 + contract.volume / 25);
@@ -797,7 +824,7 @@ function invalidation(_price: number, indicators: IndicatorSnapshot): string {
 }
 
 function optionDteLabel(contract: OptionContract): string {
-  if (contract.dte === undefined) return "30-180 DTE swing";
+  if (contract.dte === undefined) return "14-180 DTE swing";
   return contract.dte + " DTE swing";
 }
 

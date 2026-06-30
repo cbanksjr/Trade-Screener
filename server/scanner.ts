@@ -149,6 +149,7 @@ export async function shouldAutoRefresh(): Promise<boolean> {
 }
 
 export async function runFullScan(): Promise<ScanResponse> {
+  const scanRanAt = new Date();
   const settings = await readSettings();
   const results: ScanResult[] = [];
   const scanWarnings = new Set<string>();
@@ -194,7 +195,8 @@ export async function runFullScan(): Promise<ScanResponse> {
       sectorCandles: sector ? sectorHistories.get(sector) : undefined,
       sectorHistories,
       nextEarningsDate: earningsBySymbol.get(symbol),
-      fmp
+      fmp,
+      scanRanAt
     });
   });
 
@@ -299,8 +301,10 @@ async function scanSymbol(input: {
   sectorHistories?: Map<string, Candle[]>;
   nextEarningsDate?: string;
   fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
+  scanRanAt?: Date;
 }): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason }> {
   const { symbol, settings, canUseLiveSchwab, assetType } = input;
+  const scanRanAt = input.scanRanAt ?? new Date();
   const warnings: string[] = [];
   let usedLive = false;
   let usedDemo = false;
@@ -441,7 +445,8 @@ async function scanSymbol(input: {
       sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
       minMarketCap: settings.minMarketCap,
       minAvgShareVolume: settings.minAvgShareVolume,
-      minAvgDollarVolume: settings.minAvgDollarVolume
+      minAvgDollarVolume: settings.minAvgDollarVolume,
+      scanRanAt
     });
     result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
     result.warnings.push(...warnings
@@ -472,7 +477,8 @@ async function scanSymbol(input: {
       spyCandles: input.spyCandles,
       qqqCandles: input.qqqCandles,
       sector: input.sector,
-      sectorCandles: input.sectorCandles
+      sectorCandles: input.sectorCandles,
+      scanRanAt
     });
     fallback.dataSource = "demo";
     fallback.assetType = input.assetType;

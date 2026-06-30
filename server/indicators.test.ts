@@ -556,6 +556,32 @@ describe("layer decision engine", () => {
     expect(fortyFiveDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bullish");
   });
 
+  it("bases catalyst safety on the scan run date", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const scanRanAt = new Date("2026-07-01T23:30:00-05:00");
+    const result = gradeSetup({
+      symbol: "SCANRANAT",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        ...strongFundamentals("SCANRANAT"),
+        nextEarningsDate: "2026-07-15"
+      },
+      optionable: true,
+      options: demoOptions("SCANRANAT", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      scanRanAt,
+      ...institutionalSetupContext()
+    });
+
+    expect(result.lastUpdated).toBe(scanRanAt.toISOString());
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bearish");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Earnings are within 14 days.");
+  });
+
   it("classifies sector strength versus SPY", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
@@ -943,16 +969,17 @@ describe("layer decision engine", () => {
     expect(resultFor(2_000_000_000).passesUniverse).toBe(true);
   });
 
-  it("ranks only 30-180 DTE swing calls and prefers 30-90 when quality is comparable", () => {
+  it("ranks only 14-180 DTE swing calls and prefers 14-90 when quality is comparable", () => {
     const ranked = rankCallOptions([
+      option("TOO-SHORT", 13, 900, 900, 0.55, 2, 102),
       option("SHORT", 14, 500, 200, 0.55, 4, 102),
       option("PREFERRED", 45, 500, 200, 0.55, 4, 102),
       option("LONGER", 120, 500, 200, 0.55, 4, 102),
       option("TOO-LONG", 220, 900, 900, 0.55, 2, 102)
     ], 100);
 
-    expect(ranked.map((contract) => contract.symbol)).toEqual(["PREFERRED", "LONGER"]);
-    expect(ranked.every((contract) => contract.dte !== undefined && contract.dte >= 30 && contract.dte <= 180)).toBe(true);
+    expect(ranked.map((contract) => contract.symbol)).toEqual(["SHORT", "PREFERRED", "LONGER"]);
+    expect(ranked.every((contract) => contract.dte !== undefined && contract.dte >= 14 && contract.dte <= 180)).toBe(true);
   });
 
   it("uses option spread bands for options market context", () => {
