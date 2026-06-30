@@ -6,6 +6,7 @@ import {
   normalizeDarkPool,
   normalizeOptionsExposure,
   normalizeOptionsFlow,
+  previousTradingSessionDate,
   type QuantDataCache
 } from "./quantData";
 
@@ -113,16 +114,20 @@ describe("QuantData Institutional Positioning", () => {
   });
 
   it("uses QuantData POST endpoints with bearer auth and reuses fresh cache", async () => {
-    const requests: { url: string; auth: string | null }[] = [];
+    const requests: { url: string; auth: string | null; body: Record<string, unknown> }[] = [];
     const cache: QuantDataCache = { responses: {} };
     const provider = createQuantDataPositioningProvider({
       apiKey: "test-key",
       baseUrl: "https://api.example.test",
       maxCalls: 4,
       cache,
-      now: () => new Date("2026-06-29T15:00:00.000Z"),
+      now: () => new Date("2026-06-30T15:00:00.000Z"),
       fetchImpl: async (input, init) => {
-        requests.push({ url: input.toString(), auth: new Headers(init?.headers).get("authorization") });
+        requests.push({
+          url: input.toString(),
+          auth: new Headers(init?.headers).get("authorization"),
+          body: JSON.parse(init?.body?.toString() ?? "{}") as Record<string, unknown>
+        });
         return new Response(JSON.stringify({ data: {} }), { status: 200 });
       }
     });
@@ -132,8 +137,18 @@ describe("QuantData Institutional Positioning", () => {
 
     expect(requests).toHaveLength(4);
     expect(requests[0].url).toContain("/v1/options/tool/net-drift");
+    expect(requests[0].body.sessionDateRange).toEqual({ startDate: "2026-06-29", endDate: "2026-06-29" });
+    expect(requests[1].body.sessionDateRange).toEqual({ startDate: "2026-06-29", endDate: "2026-06-29" });
+    expect(requests[2].body.sessionDateRange).toBeUndefined();
     expect(requests.every((request) => request.auth === "Bearer test-key")).toBe(true);
     expect(provider.remainingCalls()).toBe(0);
+  });
+
+  it("resolves the previous completed U.S. trading session for options flow", () => {
+    expect(previousTradingSessionDate(new Date("2026-06-30T15:00:00.000Z"))).toBe("2026-06-29");
+    expect(previousTradingSessionDate(new Date("2026-06-29T15:00:00.000Z"))).toBe("2026-06-26");
+    expect(previousTradingSessionDate(new Date("2026-07-06T15:00:00.000Z"))).toBe("2026-07-02");
+    expect(previousTradingSessionDate(new Date("2022-01-03T15:00:00.000Z"))).toBe("2021-12-30");
   });
 });
 

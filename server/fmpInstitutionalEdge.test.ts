@@ -151,16 +151,22 @@ describe("FMP Institutional Edge", () => {
     expect(provider.remainingCalls()).toBe(0);
   });
 
-  it("keeps setup grade while bearish edge marks the trade Avoid", () => {
+  it("keeps Institutional Edge informational without changing setup grade or trade mark", () => {
     expect(applyInstitutionalEdge(baseResult(88, "B"), edge("Bullish", 5)).grade).toBe("B");
 
-    const capped = applyInstitutionalEdge(baseResult(95, "A"), edge("Bearish", -5));
+    const capped = applyInstitutionalEdge({
+      ...baseResult(95, "A"),
+      tradeMark: "Take",
+      tradeMarkReasons: []
+    }, edge("Bearish", -5));
 
     expect(capped.setupScore).toBe(95);
     expect(capped.grade).toBe("A");
-    expect(capped.tradeMark).toBe("Avoid");
-    expect(capped.longCallDecision).toBe("Avoid");
-    expect(capped.tradeMarkReasons).toContain("Institutional Edge is bearish.");
+    expect(capped.tradeMark).toBe("Take");
+    expect(capped.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(capped.tradeMarkReasons).not.toContain("Institutional Edge is bearish.");
+    expect(capped.institutionalEdgeStatus).toBe("Bearish");
+    expect(capped.institutionalEdgeAdjustment).toBe(-5);
   });
 
   it("does not adjust score or grade for ATR-only weekly context", () => {
@@ -172,7 +178,7 @@ describe("FMP Institutional Edge", () => {
     expect(result.setupScore).toBe(88);
     expect(result.grade).toBe("B");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).not.toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
+    expect(result.gradeCapReasons ?? []).not.toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
   });
 
   it("does not promote a broad daily entry above B", () => {
@@ -184,7 +190,7 @@ describe("FMP Institutional Edge", () => {
     expect(result.setupScore).toBe(88);
     expect(result.grade).toBe("B");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).not.toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
+    expect(result.gradeCapReasons ?? []).not.toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
   });
 
   it("does not promote a developing squeeze above B", () => {
@@ -196,7 +202,7 @@ describe("FMP Institutional Edge", () => {
     expect(result.setupScore).toBe(88);
     expect(result.grade).toBe("B");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).not.toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
+    expect(result.gradeCapReasons ?? []).not.toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
   });
 });
 

@@ -357,6 +357,27 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
+  it("treats cached FMP Institutional Edge as informational only", async () => withDbRestore(async () => {
+    const staleEdgeAvoid: ScanResult = {
+      ...qualifyingResult("FMPINFO"),
+      setupScore: 95,
+      institutionalEdgeStatus: "Bearish",
+      tradeMarkReasons: ["Institutional Edge is bearish."],
+      tradeMark: "Avoid",
+      longCallDecision: "Avoid"
+    };
+    await replaceScanResults([staleEdgeAvoid]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("FMPINFO");
+    expect(result.grade).toBe("A");
+    expect(result.tradeMark).toBe("Take");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.tradeMarkReasons).not.toContain("Institutional Edge is bearish.");
+    expect(result.institutionalEdgeStatus).toBe("Bearish");
+  }));
+
   it("displays valid A/B candidates regardless of legacy decision and weekly structure", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 69, grade: "C" };

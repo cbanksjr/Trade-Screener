@@ -310,7 +310,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <div className="edge-section">
             <div className="panel-head compact">
               <h3>Institutional Edge</h3>
-              <span>{displayStatus(result.institutionalEdgeStatus)} · {signedAdjustment(result.institutionalEdgeAdjustment)}</span>
+              <span>{displayStatus(result.institutionalEdgeStatus)} · Context only</span>
             </div>
             {result.institutionalEdgeFactors?.length ? (
               <div className="factor-grid">
@@ -319,7 +319,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
                     <span className={"status-pill " + statusClass(factor.status)}>{displayStatus(factor.status)}</span>
                     <strong>{factor.name}</strong>
                     <small>{factor.detail}</small>
-                    <b>{signedAdjustment(factor.adjustment)}</b>
+                    <b>Info</b>
                   </div>
                 ))}
               </div>

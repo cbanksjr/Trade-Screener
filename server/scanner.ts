@@ -666,10 +666,9 @@ function mergeCachedGradeCapReasons(
 }
 
 function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], setupScore: number, bearishMacro: boolean): string[] {
-  const reasons = [...(result.tradeMarkReasons ?? [])];
+  const reasons = (result.tradeMarkReasons ?? []).filter((reason) => reason !== "Institutional Edge is bearish.");
   if (grade === "C" || setupScore < B_SETUP_SCORE_THRESHOLD) addUnique(reasons, "Setup grade is C.");
   if (bearishMacro) addUnique(reasons, BEARISH_MACRO_GRADE_CAP_REASON);
-  if (result.institutionalEdgeStatus === "Bearish") addUnique(reasons, "Institutional Edge is bearish.");
   if (result.institutionalPositioningStatus === "capped") addUnique(reasons, "Institutional positioning is not supportive.");
   if (result.institutionalPositioningStatus === "vetoed") addUnique(reasons, "Bearish Flow Veto");
   result.layerEvaluations?.filter((item) => (item.layer === "Squeeze Market Structure" || item.layer === "Compression Quality") && item.status === "Bearish")

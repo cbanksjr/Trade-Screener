@@ -103,10 +103,12 @@ export function createQuantDataPositioningProvider(input: {
   async function enrich(symbol: string, price: number): Promise<QuantDataPositioningResult> {
     const upperSymbol = symbol.trim().toUpperCase();
     if (!upperSymbol || !input.apiKey) return { positioning: DEFAULT_POSITIONING, warnings: [], usedLive: false };
+    const previousFlowSessionDate = previousTradingSessionDate(now());
+    const previousFlowSessionRange = { startDate: previousFlowSessionDate, endDate: previousFlowSessionDate };
 
     const [netDrift, orderFlow, exposure, darkPool] = await Promise.all([
-      loadEndpoint(upperSymbol, "net-drift", { filter: { ticker: upperSymbol } }),
-      loadEndpoint(upperSymbol, "order-flow-consolidated", { filter: { ticker: upperSymbol }, size: 100 }),
+      loadEndpoint(upperSymbol, "net-drift", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol } }),
+      loadEndpoint(upperSymbol, "order-flow-consolidated", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol }, size: 100 }),
       loadEndpoint(upperSymbol, "exposure-by-strike", {
         filter: { ticker: upperSymbol },
         greekMode: "GAMMA",
@@ -175,6 +177,14 @@ export function createQuantDataPositioningProvider(input: {
       // Overridden by createQuantDataPositioningScanProvider where persistent settings are available.
     }
   };
+}
+
+export function previousTradingSessionDate(from: Date): string {
+  let cursor = addDays(marketDateUtc(from), -1);
+  while (isWeekend(cursor) || isUsMarketHoliday(cursor)) {
+    cursor = addDays(cursor, -1);
+  }
+  return isoDate(cursor);
 }
 
 export function normalizeOptionsFlow(netDriftPayload: unknown, orderFlowPayload?: unknown): OptionsFlowEvaluation {
@@ -410,6 +420,79 @@ function maxBy<T>(items: T[], select: (item: T) => number): T | undefined {
 
 function addDays(date: Date, days: number): Date {
   return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function marketDateUtc(date: Date): Date {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return new Date(Date.UTC(Number(values.year), Number(values.month) - 1, Number(values.day)));
+}
+
+function isWeekend(date: Date): boolean {
+  const day = date.getUTCDay();
+  return day === 0 || day === 6;
+}
+
+function isUsMarketHoliday(date: Date): boolean {
+  const target = isoDate(date);
+  const year = date.getUTCFullYear();
+  const holidays = [
+    observedFixedHoliday(year - 1, 1, 1),
+    observedFixedHoliday(year, 1, 1),
+    observedFixedHoliday(year + 1, 1, 1),
+    nthWeekdayOfMonth(year, 0, 1, 3),
+    nthWeekdayOfMonth(year, 1, 1, 3),
+    addDays(easterSunday(year), -2),
+    lastWeekdayOfMonth(year, 4, 1),
+    observedFixedHoliday(year, 6, 19),
+    observedFixedHoliday(year, 7, 4),
+    nthWeekdayOfMonth(year, 8, 1, 1),
+    nthWeekdayOfMonth(year, 10, 4, 4),
+    observedFixedHoliday(year, 12, 25)
+  ];
+  return holidays.some((holiday) => isoDate(holiday) === target);
+}
+
+function observedFixedHoliday(year: number, month: number, day: number): Date {
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCDay() === 6) return addDays(date, -1);
+  if (date.getUTCDay() === 0) return addDays(date, 1);
+  return date;
+}
+
+function nthWeekdayOfMonth(year: number, monthIndex: number, weekday: number, occurrence: number): Date {
+  const first = new Date(Date.UTC(year, monthIndex, 1));
+  const offset = (weekday - first.getUTCDay() + 7) % 7;
+  return addDays(first, offset + (occurrence - 1) * 7);
+}
+
+function lastWeekdayOfMonth(year: number, monthIndex: number, weekday: number): Date {
+  const last = new Date(Date.UTC(year, monthIndex + 1, 0));
+  const offset = (last.getUTCDay() - weekday + 7) % 7;
+  return addDays(last, -offset);
+}
+
+function easterSunday(year: number): Date {
+  const a = year % 19;
+  const b = Math.floor(year / 100);
+  const c = year % 100;
+  const d = Math.floor(b / 4);
+  const e = b % 4;
+  const f = Math.floor((b + 8) / 25);
+  const g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30;
+  const i = Math.floor(c / 4);
+  const k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7;
+  const m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const month = Math.floor((h + l - 7 * m + 114) / 31);
+  const day = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(year, month - 1, day));
 }
 
 function isoDate(date: Date): string {

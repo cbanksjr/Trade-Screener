@@ -223,25 +223,14 @@ export function isSqueezeActive(state: SqueezeState | undefined): boolean {
 
 export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEdgeSummary): ScanResult {
   const adjustment = Math.max(-10, Math.min(5, edge.adjustment));
-  const gradeCapReasons = removeWeeklyGradeReasons(result.gradeCapReasons ?? []);
-  const tradeMarkReasons = [...(result.tradeMarkReasons ?? [])];
-  if (edge.status === "Bearish") addUnique(tradeMarkReasons, "Institutional Edge is bearish.");
-  const tradeMark: TradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
-  const longCallDecision = compatibilityDecision(result.grade, tradeMark);
 
   return {
     ...result,
-    tradeMark,
-    tradeMarkReasons,
-    longCallDecision,
-    setupQuality: result.grade === "A" ? "High" : "Moderate",
-    entryRecommendationType: entryType(longCallDecision, result.compressionQualityStatus),
     institutionalEdgeScore: edge.score,
     institutionalEdgeStatus: edge.status,
     institutionalEdgeFactors: edge.factors,
     institutionalEdgeAdjustment: adjustment,
-    institutionalEdgeWarnings: edge.warnings,
-    gradeCapReasons
+    institutionalEdgeWarnings: edge.warnings
   };
 }
 
