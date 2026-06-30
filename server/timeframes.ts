@@ -80,11 +80,9 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const percentAboveEma21 = indicators.ema21 > 0 ? ((price - indicators.ema21) / indicators.ema21) * 100 : Number.POSITIVE_INFINITY;
   const percentAboveEma50 = indicators.ema50 > 0 ? ((price - indicators.ema50) / indicators.ema50) * 100 : Number.POSITIVE_INFINITY;
   const percentBelowEma8 = indicators.ema8 > 0 ? ((indicators.ema8 - price) / indicators.ema8) * 100 : Number.NEGATIVE_INFINITY;
-  const emaPocketLower = indicators.ema21 * 1.001;
-  const emaPocketUpper = indicators.ema8 * 0.999;
-  const withinEmaPocket = price >= emaPocketLower && price <= emaPocketUpper;
-  const dailyEntryQualificationMode = resolveDailyEntryQualificationMode(indicators.ema21, indicators.ema8, indicators.atr14, price);
-  const priceAboveEmaStack = price >= indicators.ema21;
+  const dailyEntryQualificationMode = resolveDailyEntryQualificationMode(indicators.ema34, indicators.ema21, indicators.ema8, indicators.atr14, price);
+  const withinEmaPocket = dailyEntryQualificationMode === "strict";
+  const priceAboveEmaStack = price >= indicators.ema34;
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
   const bias = lowerTimeframeBias(positiveEmaStack, priceAboveEmaStack);
@@ -120,17 +118,17 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   };
 }
 
-function resolveDailyEntryQualificationMode(ema21: number, ema8: number, atr14: number, price: number): DailyEntryQualificationMode {
-  if (price < ema21) return "none";
-  if (price > ema8) return atr14 > 0 && price <= ema21 + atr14 * 1.5 ? "extended" : "none";
-  return price >= ema21 * 1.001 && price <= ema8 * 0.999 ? "strict" : "broad";
+function resolveDailyEntryQualificationMode(ema34: number, ema21: number, ema8: number, atr14: number, price: number): DailyEntryQualificationMode {
+  if (price < ema34) return "none";
+  if ((price >= ema34 && price <= ema8) || (atr14 > 0 && price >= ema21 && price <= ema21 + atr14)) return "strict";
+  return atr14 > 0 && price <= ema21 + atr14 * 1.5 ? "extended" : "none";
 }
 
 function dailyEntryDetail(mode: DailyEntryQualificationMode): string {
-  if (mode === "strict") return "inside the buffered A-entry pocket";
-  if (mode === "broad") return "inside the broader B-entry range between the 21 EMA and 8 EMA";
+  if (mode === "strict") return "inside the preferred A-entry zone";
+  if (mode === "broad") return "inside the broader valid entry range";
   if (mode === "extended") return "inside the controlled B-entry extension up to 1.5 ATR above the 21 EMA";
-  return "below the 21 EMA or more than 1.5 ATR above it";
+  return "below the 34 EMA or more than 1.5 ATR above the 21 EMA";
 }
 
 function round(value: number, places = 2): number {

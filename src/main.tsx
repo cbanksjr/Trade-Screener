@@ -228,7 +228,7 @@ function ResultRow({ result, activeSymbol, onSelect }: {
         <span>{money(result.price)}</span>
         <span>{dailySqueezeDotLabel(result)} dots</span>
       </div>
-      <small>{result.longCallDecision}</small>
+      <small>{setupTradeLabel(result)}</small>
     </div>
   );
 }
@@ -240,7 +240,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
         <div>
           <span className={"grade large grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
           <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null}</h2>
-          <p>{result.longCallDecision} · {money(result.price)} · {result.entryRecommendationType}</p>
+          <p>{setupTradeLabel(result)} · {money(result.price)} · {result.entryRecommendationType}</p>
         </div>
         <div className="indicator-grid">
           <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
@@ -259,15 +259,19 @@ function TickerDetail({ result }: { result: ScanResult }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Why This Grade / Setup Score</h2>
+          <h2>Why This Setup Grade</h2>
           <span>{setupScoreLabel(result)} · {displayStatus(result.setupScoreStatus)}</span>
         </div>
         {result.gradeCapReasons?.length ? (
           <div className="grade-cap">
-            <strong>Why this is capped at {result.grade}</strong>
+            <strong>Why this setup is {result.grade}</strong>
             <span>{result.gradeCapReasons.join(" ")}</span>
           </div>
         ) : null}
+        <div className={"grade-cap " + (tradeMark(result) === "Take" ? "take-mark" : "avoid-mark")}>
+          <strong>Trade Mark: {tradeMark(result)}</strong>
+          <span>{tradeMarkReasons(result).join(" ")}</span>
+        </div>
         {result.institutionalPositioningStatus ? (
           <div className="edge-section">
             <div className="panel-head compact">
@@ -418,6 +422,20 @@ function setupScoreLabel(result: ScanResult): string {
   return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
 }
 
+function tradeMark(result: ScanResult): "Take" | "Avoid" {
+  if (result.tradeMark) return result.tradeMark;
+  return result.longCallDecision === "Avoid" || result.longCallDecision === "Watchlist Candidate" ? "Avoid" : "Take";
+}
+
+function tradeMarkReasons(result: ScanResult): string[] {
+  const reasons = result.tradeMarkReasons ?? [];
+  return reasons.length ? reasons : tradeMark(result) === "Take" ? ["Setup is technically valid and no avoid overlay is active."] : ["One or more trade overlays recommends avoiding this setup."];
+}
+
+function setupTradeLabel(result: ScanResult): string {
+  return result.grade + " Setup · " + tradeMark(result);
+}
+
 function momentumLabel(result: ScanResult): string {
   const color = result.indicators.momentumColor;
   return formatNumber(result.indicators.momentum) + (color ? " · " + color[0].toUpperCase() + color.slice(1) : "");
@@ -461,7 +479,7 @@ function layerDetail(result: ScanResult, layer: { layer: string; detail: string;
   const dots = dailySqueezeDotCount(result);
   if (dots === null) return "Run scan for dot count.";
   if (dots < 2) return "At least 2 consecutive active Daily squeeze dots are required; current count is " + dots + ".";
-  if (dots < 5) return "Daily squeeze is developing with " + dots + " active dots; grade is capped at B.";
+  if (dots < 5) return "Daily squeeze is developing with " + dots + " active dots; compression contributes fewer setup points.";
   return "Daily chart has " + dots + " consecutive active squeeze dots.";
 }
 

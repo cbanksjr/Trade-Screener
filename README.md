@@ -11,7 +11,7 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard displays qualified `A` or `B` compression candidates. `A` means a setup score of `90-100`, the full bullish Weekly EMA stack, at least 5 active Daily squeeze dots, the buffered A-entry pocket, and all hard gates satisfied. `B` means a setup score of `70-89`, or a higher-scoring setup capped by a controlled trend, entry, Weekly, maturity, or macro caution. `C` setups below `70`, Watchlist, Avoid, and bearish Weekly context results are excluded from the visible candidate list.
+The Dashboard displays qualified `A` or `B` compression setups with a separate `Take` or `Avoid` trade mark. `A` means a setup score of `90-100`; `B` means `70-89`. Weekly squeeze is shown as bonus context only and Weekly EMA structure does not boost, cap, filter, or degrade the setup grade. Hostile overlays such as bearish macro, bearish institutional positioning, or unusable option context mark the trade `Avoid` without changing the setup grade.
 
 The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
@@ -87,13 +87,13 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Selected timeframes: daily and weekly
 - At least 2 consecutive active Daily squeeze dots before expansion; 2-4 dots qualify as a developing B setup, while 5+ dots are eligible for A
 - Daily 20-period Squeeze histogram must be strictly above zero; both cyan (positive and rising) and blue (positive but falling) qualify
-- Daily price in the buffered range from 0.1% above the 21 EMA through 0.1% below the 8 EMA is eligible for A; the remaining 21-to-8 range and controlled extension up to 1.5 ATR above the 21 EMA are capped at B
+- Daily price between the 34 EMA and 8 EMA, or within 1 ATR above the 21 EMA, is eligible for the preferred A-entry zone; controlled extension up to 1.5 ATR above the 21 EMA remains valid but contributes fewer setup points
 - Daily squeeze-dot count and a histogram above zero are compression gates; ATR contraction, Bollinger Band contraction, candle-range contraction, and whether positive momentum is improving remain context
 - Weekly full-stack or 21-EMA proximity confirmation remains preferred; neutral Weekly structure can qualify only as B, while bearish Weekly structure is still rejected
 - Weekly squeeze is bonus confirmation, not a requirement
 - Bearish SPY/QQQ Daily structure is a macro caution that reduces the setup score and caps qualifying setups at B; it does not automatically reject an otherwise valid squeeze
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
-- Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
+- Institutional setup score from 0-100 across weighted setup factors: Daily structure, Daily squeeze momentum, compression quality, relative strength, sector strength, and catalyst safety
 - Optional FMP Institutional Edge overlay uses Starter-accessible endpoint probing for financial scores, analyst grades/targets, insider data, and ETF data when available; unavailable endpoints are skipped neutrally
 - Optional QuantData Institutional Positioning overlay uses live options flow, options exposure, and dark-pool levels as a confirmation/cap/veto layer rather than a simple point bonus
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY

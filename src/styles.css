@@ -574,6 +574,16 @@ small,
   line-height: 1.4;
 }
 
+.grade-cap.take-mark {
+  background: color-mix(in srgb, var(--accent) 10%, var(--panel-soft));
+  border-color: color-mix(in srgb, var(--accent) 26%, var(--border));
+}
+
+.grade-cap.avoid-mark {
+  background: color-mix(in srgb, var(--danger) 10%, var(--panel-soft));
+  border-color: color-mix(in srgb, var(--danger) 26%, var(--border));
+}
+
 .factor-card {
   background: var(--panel-soft);
   border: 1px solid var(--border);

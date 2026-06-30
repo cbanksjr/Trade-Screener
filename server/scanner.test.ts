@@ -7,6 +7,7 @@ import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
 import { __resetScanStateForTest, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
+  BROAD_ENTRY_GRADE_CAP_REASON,
   RELAXED_TREND_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON
 } from "./scoring";
@@ -281,12 +282,12 @@ describe("background scan refresh", () => {
     expect(response.isRefreshing).toBe(false);
   }));
 
-  it("does not hard-filter cached results by daily or weekly squeeze state", async () => withDbRestore(async () => {
+  it("filters cached results when the Daily squeeze is inactive", async () => withDbRestore(async () => {
     await replaceScanResults([
       qualifyingResult("NOSQZ", indicator("none"), indicator("none"))
     ]);
 
-    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["NOSQZ"]);
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual([]);
   }));
 
   it("filters old cached short results from display", async () => withDbRestore(async () => {
@@ -312,7 +313,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["POSHIST"]);
   }));
 
-  it("keeps bearish-macro cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+  it("keeps bearish-macro cached candidates visible as A setups marked Avoid", async () => withDbRestore(async () => {
     const macroCaution: ScanResult = {
       ...qualifyingResult("MACROCAUTION"),
       setupScore: 95,
@@ -329,13 +330,15 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("MACROCAUTION");
-    expect(result.grade).toBe("B");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.grade).toBe("A");
+    expect(result.tradeMark).toBe("Avoid");
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.tradeMarkReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("displays A/B strong or moderate candidates and keeps neutral weekly structure as B", async () => withDbRestore(async () => {
+  it("displays valid A/B candidates regardless of legacy decision and weekly structure", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 69, grade: "C" };
     const nonBullishWeekly: ScanResult = {
@@ -351,12 +354,12 @@ describe("background scan refresh", () => {
     ]);
 
     const results = await readDisplayResults();
-    expect(results.map((result) => result.symbol).sort()).toEqual(["QUALIFIED", "WEEKLYNEUTRAL"]);
+    expect(results.map((result) => result.symbol).sort()).toEqual(["QUALIFIED", "WATCH", "WEEKLYNEUTRAL"]);
     expect(results.find((result) => result.symbol === "WEEKLYNEUTRAL")?.grade).toBe("B");
     expect(results.find((result) => result.symbol === "WEEKLYNEUTRAL")?.longCallDecision).toBe("Moderate Long Call Candidate");
   }));
 
-  it("keeps ATR-only weekly cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+  it("keeps ATR-only weekly cached candidates visible without capping them", async () => withDbRestore(async () => {
     const atrOnly: ScanResult = {
       ...qualifyingResult("WEEKLYATR"),
       weeklyQualificationMode: "ema21-atr",
@@ -369,9 +372,9 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("WEEKLYATR");
-    expect(result.grade).toBe("B");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain(WEEKLY_ATR_GRADE_CAP_REASON);
+    expect(result.grade).toBe("A");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.gradeCapReasons).not.toContain(WEEKLY_ATR_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
@@ -394,9 +397,9 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("CACHEDWEEKLY");
-    expect(result.grade).toBe("B");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain(WEEKLY_ATR_GRADE_CAP_REASON);
+    expect(result.grade).toBe("A");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.gradeCapReasons).not.toContain(WEEKLY_ATR_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
@@ -418,12 +421,12 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("CACHEDDAILY");
-    expect(result.grade).toBe("B");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("A");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.gradeCapReasons).toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("keeps broad-entry cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+  it("keeps broad-entry cached candidates visible without a weekly-style cap", async () => withDbRestore(async () => {
     const broadEntry: ScanResult = {
       ...qualifyingResult("BROADENTRY"),
       dailyEntryQualificationMode: "broad",
@@ -437,13 +440,13 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("BROADENTRY");
-    expect(result.grade).toBe("B");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain("Daily price is between the 21 EMA and 8 EMA but outside the stricter buffered A-entry pocket.");
+    expect(result.grade).toBe("A");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.gradeCapReasons).toContain(BROAD_ENTRY_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("keeps developing-squeeze cached candidates visible but caps them at B", async () => withDbRestore(async () => {
+  it("keeps developing-squeeze cached candidates visible with setup-grade explanation", async () => withDbRestore(async () => {
     const developing: ScanResult = {
       ...qualifyingResult("DEVELOPING"),
       dailyEntryQualificationMode: "strict",
@@ -458,9 +461,9 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("DEVELOPING");
-    expect(result.grade).toBe("B");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain("Daily squeeze has 2-4 active dots; developing compression is capped at B.");
+    expect(result.grade).toBe("A");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.gradeCapReasons).toContain("Daily squeeze has 2-4 active dots; developing compression contributes fewer setup points.");
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 

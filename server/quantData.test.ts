@@ -89,25 +89,27 @@ describe("QuantData Institutional Positioning", () => {
     expect(darkPool.flags).toContain("Dark-Pool Accumulation");
   });
 
-  it("caps A setups and vetoes Strong Long Call status when positioning is bearish", () => {
+  it("keeps setup grade and marks Avoid when positioning is bearish", () => {
     const capped = applyInstitutionalPositioning(baseResult(95, "A"), positioning("capped"));
     const vetoed = applyInstitutionalPositioning(baseResult(95, "A"), positioning("vetoed", ["Bearish Flow Veto"]));
 
     expect(capped.gradeBeforeQuantData).toBe("A");
-    expect(capped.grade).toBe("B");
-    expect(capped.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(capped.grade).toBe("A");
+    expect(capped.tradeMark).toBe("Avoid");
+    expect(capped.longCallDecision).toBe("Avoid");
     expect(capped.strongLongCallCandidate).toBe(false);
-    expect(vetoed.longCallDecision).toBe("Watchlist Candidate");
+    expect(vetoed.longCallDecision).toBe("Avoid");
     expect(vetoed.strongLongCallCandidate).toBe(false);
   });
 
-  it("can promote a clean high-B setup only when positioning confirms it", () => {
+  it("can confirm a clean high-B setup without changing setup grade", () => {
     const result = applyInstitutionalPositioning(baseResult(88, "B"), positioning("confirmed", ["Bullish Flow Confirmation"]));
 
     expect(result.gradeBeforeQuantData).toBe("B");
-    expect(result.grade).toBe("A");
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(result.strongLongCallCandidate).toBe(true);
+    expect(result.grade).toBe("B");
+    expect(result.tradeMark).toBe("Take");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.strongLongCallCandidate).toBe(false);
   });
 
   it("uses QuantData POST endpoints with bearer auth and reuses fresh cache", async () => {

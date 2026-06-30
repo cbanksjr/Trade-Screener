@@ -269,7 +269,7 @@ describe("layer decision engine", () => {
     expect(result.grade).toBe("A");
   });
 
-  it("avoids when daily qualifies but weekly context is unavailable", () => {
+  it("does not avoid when weekly context is unavailable", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -282,10 +282,11 @@ describe("layer decision engine", () => {
       options: demoOptions("ONEBULL", price)
     });
 
-    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.tradeMark).toBe("Take");
   });
 
-  it("calculates equal-weight institutional setup score factors", () => {
+  it("calculates weighted setup score factors", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -300,8 +301,8 @@ describe("layer decision engine", () => {
       ...institutionalSetupContext()
     });
 
-    expect(result.institutionalFactors).toHaveLength(7);
-    expect(result.institutionalFactors.find((factor) => factor.status === "Bullish")?.contribution).toBeCloseTo(100 / 7);
+    expect(result.institutionalFactors).toHaveLength(6);
+    expect(result.institutionalFactors.find((factor) => factor.name === "Daily Structure")?.contribution).toBe(30);
     expect(result.setupScore).toBe(Math.round(result.institutionalFactors.reduce((sum, factor) => sum + factor.contribution, 0)));
     expect(result.setupScoreStatus).toBe("Bullish");
   });
@@ -323,13 +324,13 @@ describe("layer decision engine", () => {
       spyCandles: returnCandles(100, 0.01)
     });
 
-    expect(result.setupScore).toBeLessThan(70);
-    expect(result.longCallDecision).toBe("Watchlist Candidate");
-    expect(result.grade).toBe("C");
+    expect(result.setupScore).toBeGreaterThanOrEqual(70);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.grade).toBe("B");
     expect(result.gradeCapReasons).toContain("Setup score below 90.");
   });
 
-  it("assigns B when a setup score lands in the 70-89 band", () => {
+  it("assigns A when a setup score reaches the A band", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -352,13 +353,12 @@ describe("layer decision engine", () => {
       qqqCandles: activeDailySqueezeCandles()
     });
 
-    expect(result.setupScore).toBeGreaterThanOrEqual(80);
-    expect(result.setupScore).toBeLessThan(90);
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.grade).toBe("B");
+    expect(result.setupScore).toBeGreaterThanOrEqual(90);
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
   });
 
-  it("allows neutral weekly structure as a B setup", () => {
+  it("allows neutral weekly structure without capping the setup", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -374,13 +374,13 @@ describe("layer decision engine", () => {
     });
 
     expect(result.setupScore).toBeGreaterThanOrEqual(90);
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.grade).toBe("B");
-    expect(result.gradeCapReasons).toContain(RELAXED_WEEKLY_GRADE_CAP_REASON);
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("A");
+    expect(result.gradeCapReasons).not.toContain(RELAXED_WEEKLY_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   });
 
-  it("qualifies mixed weekly structure within one ATR of the 21 EMA and caps it at B", () => {
+  it("keeps mixed weekly structure within one ATR as context only", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -397,9 +397,9 @@ describe("layer decision engine", () => {
 
     expect(result.weeklyQualificationMode).toBe("ema21-atr");
     expect(result.setupScore).toBeGreaterThanOrEqual(90);
-    expect(result.grade).toBe("B");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.gradeCapReasons).toContain(WEEKLY_ATR_GRADE_CAP_REASON);
+    expect(result.grade).toBe("A");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.gradeCapReasons).not.toContain(WEEKLY_ATR_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   });
 
@@ -611,14 +611,14 @@ describe("layer decision engine", () => {
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
-    const volatilityFit = result.institutionalFactors.find((factor) => factor.name === "Volatility Fit");
+    const volatilityFit = result.institutionalFactors.find((factor) => factor.name === "Compression Quality");
 
     expect(typeof result.indicators.momentum).toBe("number");
     expect(typeof result.indicators.momentumImproving).toBe("boolean");
     expect(volatilityFit?.detail).toContain("momentum");
   });
 
-  it("treats bearish SPY or QQQ structure as a B-grade macro caution instead of an automatic rejection", () => {
+  it("keeps bearish SPY or QQQ structure out of setup grade but marks trade Avoid", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -637,9 +637,11 @@ describe("layer decision engine", () => {
     });
 
     expect(result.layerEvaluations.find((layer) => layer.layer === "Macro Regime")?.status).toBe("Bearish");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.grade).toBe("B");
-    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.tradeMark).toBe("Avoid");
+    expect(result.grade).toBe("A");
+    expect(result.tradeMarkReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
 
     const enriched = applyInstitutionalEdge(result, {
@@ -649,8 +651,8 @@ describe("layer decision engine", () => {
       factors: [],
       warnings: []
     });
-    expect(enriched.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(enriched.grade).toBe("B");
+    expect(enriched.longCallDecision).toBe("Avoid");
+    expect(enriched.grade).toBe("A");
   });
 
   it("ignores lower-timeframe squeeze for grading and reasons", () => {
@@ -711,11 +713,11 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
-  it("allows entries from 0.1% above the 21 EMA through 0.1% below the 8 EMA", () => {
+  it("allows preferred entries from the 34 EMA through the 8 EMA", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const lowerPocketPrice = indicators.ema21 * 1.001;
-    const upperPocketPrice = indicators.ema8 * 0.999;
+    const lowerPocketPrice = indicators.ema34;
+    const upperPocketPrice = indicators.ema8;
     const resultAtLowerPocket = gradeSetup({
       symbol: "ABOVE21",
       candles,
@@ -745,10 +747,10 @@ describe("layer decision engine", () => {
     expect(resultAtUpperPocket.longCallDecision).not.toBe("Avoid");
     expect(resultAtLowerPocket.dailyEntryQualificationMode).toBe("strict");
     expect(resultAtUpperPocket.dailyEntryQualificationMode).toBe("strict");
-    expect(resultAtLowerPocket.suggestedEntryArea).toContain("A pocket");
+    expect(resultAtLowerPocket.suggestedEntryArea).toContain("preferred zone");
   });
 
-  it("qualifies the inclusive 21 EMA-to-8 EMA boundaries as B entries", () => {
+  it("qualifies the inclusive 21 EMA-to-8 EMA boundaries as preferred entries", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const atEma21 = gradeSetup({
@@ -773,15 +775,15 @@ describe("layer decision engine", () => {
     });
 
     for (const result of [atEma21, atEma8]) {
-      expect(result.dailyEntryQualificationMode).toBe("broad");
-      expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-      expect(result.grade).toBe("B");
-      expect(result.gradeCapReasons).toContain(BROAD_ENTRY_GRADE_CAP_REASON);
+      expect(result.dailyEntryQualificationMode).toBe("strict");
+      expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+      expect(result.grade).toBe("A");
+      expect(result.gradeCapReasons).not.toContain(BROAD_ENTRY_GRADE_CAP_REASON);
       expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
     }
   });
 
-  it("allows controlled extension above the 8 EMA but rejects below the 21 EMA or beyond 1.5 ATR", () => {
+  it("allows controlled extension above the preferred zone but rejects below the 34 EMA or beyond 1.5 ATR", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const resultFor = (symbol: string, price: number) => gradeSetup({
@@ -794,8 +796,8 @@ describe("layer decision engine", () => {
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
-    const below = resultFor("BELOW21", indicators.ema21 * 0.9999);
-    const extendedPrice = Math.max(indicators.ema8 * 1.0001, indicators.ema21 + indicators.atr14 * 0.5);
+    const below = resultFor("BELOW34", indicators.ema34 * 0.9999);
+    const extendedPrice = Math.max(indicators.ema8 * 1.0001, indicators.ema21 + indicators.atr14 * 1.1);
     const extended = resultFor("EXTENDED", extendedPrice);
     const overextended = resultFor("OVEREXTENDED", indicators.ema21 + indicators.atr14 * 1.51);
 
@@ -828,7 +830,7 @@ describe("layer decision engine", () => {
     expect(result.rules.some((rule) => rule.id === "weekly-squeeze")).toBe(false);
   });
 
-  it("blocks candidates when weekly structure is bearish", () => {
+  it("does not block candidates when weekly structure is bearish", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -842,8 +844,9 @@ describe("layer decision engine", () => {
       weeklyIndicators: weeklyIndicator("bearish")
     });
 
-    expect(result.longCallDecision).toBe("Avoid");
-    expect(result.reasonsAgainstTrade.join(" ")).toContain("Weekly EMA structure is bearish");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.tradeMark).toBe("Take");
+    expect(result.reasonsAgainstTrade.join(" ")).not.toContain("Weekly EMA structure is bearish");
   });
 
   it("marks poor institutional context below qualified quality", () => {
@@ -913,11 +916,9 @@ describe("layer decision engine", () => {
     const sharePass = resultFor(600_000, 100_000_000);
     const dollarPass = resultFor(100_000, 300_000_000);
 
-    expect(failsBoth.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bearish");
+    expect(failsBoth.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
     expect(sharePass.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
-    expect(sharePass.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bullish");
     expect(dollarPass.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
-    expect(dollarPass.institutionalFactors.find((factor) => factor.name === "Liquidity")?.status).toBe("Bullish");
   });
 
   it("keeps the $2B stock market-cap minimum", () => {

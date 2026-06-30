@@ -65,7 +65,8 @@ export type TimeframeBias = "bullish" | "bearish" | "neutral" | "unavailable";
 export type LayerStatus = "Bullish" | "Neutral" | "Bearish" | "Conflicting" | "Insufficient Data";
 export type LongCallDecision = "Strong Long Call Candidate" | "Moderate Long Call Candidate" | "Watchlist Candidate" | "Avoid";
 export type EntryRecommendationType = "Early Compression Entry" | "Mid Compression Entry" | "High Conviction Compression Entry" | "Compression Watchlist" | "Avoid";
-export type InstitutionalFactorName = "Market Regime" | "Sector Strength" | "Relative Strength" | "Liquidity" | "Price Structure" | "Volatility Fit" | "Catalyst Safety";
+export type TradeMark = "Take" | "Avoid";
+export type InstitutionalFactorName = "Daily Structure" | "Daily Squeeze Momentum" | "Compression Quality" | "Relative Strength" | "Sector Strength" | "Catalyst Safety";
 export type InstitutionalEdgeFactorName =
   | "Financial Quality"
   | "Analyst Conviction"
@@ -221,6 +222,8 @@ export type ScanResult = {
   optionable: boolean;
   passesUniverse: boolean;
   grade: Grade;
+  tradeMark?: TradeMark;
+  tradeMarkReasons?: string[];
   longCallDecision: LongCallDecision;
   setupQuality: "High" | "Moderate";
   entryRecommendationType: EntryRecommendationType;
