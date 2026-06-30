@@ -81,7 +81,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Stock beta >= 0.75
 - Market cap >= $2B when Schwab provides market cap
 - ETFs bypass beta, market-cap, sector, and single-company earnings requirements
-- Stock liquidity passes with either average share volume >= 600K or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last
+- Stock liquidity requires current-day volume >= 1M and passes with either average share volume >= 1.5M or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last
 - A setups require the full bullish 8/21/34/55/89 EMA stack and the preferred 21-to-8 EMA entry pocket
 - B setups may use the expanded trend path when the Daily 8 EMA is above the 21 EMA and price is between the 21 EMA and 1.5 ATR above it
 - Selected timeframes: daily and weekly
@@ -100,7 +100,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - ETF strength compares the ETF directly against SPY over the same 20-period window
 - Catalyst safety uses the next earnings date for stocks; earnings within 14 days block the setup, earnings 15-29 days away are neutral caution, and earnings 30+ days away are bullish for A setups. ETFs are treated as not having single-company earnings catalyst risk.
 - FMP fallback data can satisfy missing beta, market cap, sector, and next-earnings context when Schwab omits those values
-- Liquid 14-180 DTE swing call candidates, with 14-90 DTE preferred, delta around 0.35-0.75, spread no wider than 25%, and at least 25 open interest or 10 contracts of volume
+- Liquid 14-180 DTE swing call candidates, with 14-90 DTE preferred, delta around 0.35-0.75, spread no wider than 15%, preferred spread at or below 10%, and at least 100 open interest or 25 contracts of volume
 
 The automatic index universe is treated as prequalified if Schwab and FMP both omit market cap. If either provider supplies market cap below the configured threshold, the symbol is rejected.
 

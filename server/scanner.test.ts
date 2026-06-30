@@ -175,13 +175,14 @@ describe("fundamental provider merge", () => {
 });
 
 describe("settings", () => {
-  it("defaults average dollar volume to $300M", async () => withDbRestore(async () => {
+  it("defaults volume liquidity thresholds", async () => withDbRestore(async () => {
     await setSetting("settings", {});
 
     const settings = await readSettings();
 
     expect(settings.minAvgDollarVolume).toBe(300_000_000);
-    expect(settings.minAvgShareVolume).toBe(600_000);
+    expect(settings.minAvgShareVolume).toBe(1_500_000);
+    expect(settings.minCurrentVolume).toBe(1_000_000);
   }));
 
   it("migrates the old $600M average dollar volume default to $300M", async () => withDbRestore(async () => {
@@ -200,6 +201,16 @@ describe("settings", () => {
     const settings = await readSettings();
 
     expect(settings.minAvgDollarVolume).toBe(450_000_000);
+  }));
+
+  it("migrates the old 600K average share volume default to 1.5M", async () => withDbRestore(async () => {
+    await setSetting("settings", { minAvgShareVolume: 600_000 });
+
+    const settings = await readSettings();
+    const stored = await getSetting<Partial<Settings>>("settings", {});
+
+    expect(settings.minAvgShareVolume).toBe(1_500_000);
+    expect(stored.minAvgShareVolume).toBe(1_500_000);
   }));
 
   it("preserves custom average share volume settings", async () => withDbRestore(async () => {
@@ -580,7 +591,7 @@ describe("background scan refresh", () => {
     expect(metadata.scanDiagnostics).toMatchObject({
       scannedSymbols: 2,
       qualifiedResults: 1,
-      minAvgShareVolume: 600_000,
+      minAvgShareVolume: 1_500_000,
       minAvgDollarVolume: 300_000_000,
       skipped: {
         stockLiquidity: 1
@@ -602,7 +613,7 @@ describe("background scan refresh", () => {
     expect(response.scanDiagnostics).toMatchObject({
       scannedSymbols: 603,
       qualifiedResults: 19,
-      minAvgShareVolume: 600_000,
+      minAvgShareVolume: 1_500_000,
       minAvgDollarVolume: 300_000_000,
       skipped: {
         stockLiquidity: 42,
@@ -665,7 +676,7 @@ function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: numb
   return {
     scannedSymbols: input.scannedSymbols,
     qualifiedResults: input.qualifiedResults,
-    minAvgShareVolume: 600_000,
+    minAvgShareVolume: 1_500_000,
     minAvgDollarVolume: 300_000_000,
     skipped: {
       quoteMissing: 0,

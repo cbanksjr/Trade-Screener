@@ -46,12 +46,17 @@ export const RELAXED_WEEKLY_GRADE_CAP_REASON = "Weekly chart is context only and
 export const BEARISH_MACRO_GRADE_CAP_REASON = "SPY or QQQ has a bearish Daily EMA structure; trade should be avoided until macro improves.";
 const EARNINGS_AVOID_DAYS = 14;
 const EARNINGS_NEUTRAL_DAYS = 29;
+const MAX_OPTION_SPREAD_PCT = 15;
+const PREFERRED_OPTION_SPREAD_PCT = 10;
+const MIN_OPTION_OPEN_INTEREST = 100;
+const MIN_OPTION_VOLUME = 25;
 
 export const defaultSettings = {
   minPrice: 20,
   minBeta: 0.75,
   minMarketCap: 2_000_000_000,
-  minAvgShareVolume: 600_000,
+  minCurrentVolume: 1_000_000,
+  minAvgShareVolume: 1_500_000,
   minAvgDollarVolume: 300_000_000,
   useDemoDataWhenMissingApi: true
 };
@@ -62,6 +67,7 @@ export function gradeSetup(input: {
   assetType?: AssetType;
   candles: Candle[];
   currentPrice?: number;
+  currentVolume?: number;
   fundamentals?: Fundamentals;
   optionable: boolean;
   options: OptionContract[];
@@ -76,6 +82,7 @@ export function gradeSetup(input: {
   strictFundamentals?: boolean;
   minMarketCap?: number;
   minBeta?: number;
+  minCurrentVolume?: number;
   minAvgShareVolume?: number;
   minAvgDollarVolume?: number;
   scanRanAt?: Date | string;
@@ -103,6 +110,7 @@ export function gradeSetup(input: {
     price,
     beta,
     marketCap,
+    currentVolume: input.currentVolume,
     avgShareVolume,
     avgDollarVolume20d,
     optionable: input.optionable,
@@ -110,11 +118,12 @@ export function gradeSetup(input: {
     assetType,
     minMarketCap: input.minMarketCap ?? defaultSettings.minMarketCap,
     minBeta: input.minBeta ?? defaultSettings.minBeta,
+    minCurrentVolume: input.minCurrentVolume ?? defaultSettings.minCurrentVolume,
     minAvgShareVolume: input.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume
   });
   const marketStructure = evaluateMarketStructure(dailyContext, indicators);
-  const optionLayer = evaluateOptions(options);
+  const optionLayer = evaluateOptions(input.options, options, price);
   const compression = evaluateCompression(dailySqueezeDotCount);
   const macro = evaluateMacro(input.spyCandles, input.qqqCandles);
   const relativeStrengthSummary = evaluateRelativeStrength(input.candles, input.spyCandles, input.qqqCandles);
@@ -168,6 +177,7 @@ export function gradeSetup(input: {
     price,
     beta: beta ?? null,
     marketCap: marketCap ?? null,
+    currentVolume: input.currentVolume === undefined ? undefined : round(input.currentVolume, 0),
     avgShareVolume: round(avgShareVolume, 0),
     avgDollarVolume20d: round(avgDollarVolume20d, 0),
     fundamentalSources: input.fundamentals?.sources,
@@ -312,6 +322,7 @@ function evaluateInstitutional(input: {
   price: number;
   beta?: number;
   marketCap?: number;
+  currentVolume?: number;
   avgShareVolume: number;
   avgDollarVolume20d: number;
   optionable: boolean;
@@ -319,32 +330,53 @@ function evaluateInstitutional(input: {
   assetType: AssetType;
   minMarketCap: number;
   minBeta: number;
+  minCurrentVolume: number;
   minAvgShareVolume: number;
   minAvgDollarVolume: number;
 }): LayerEvaluation {
   const priceOk = input.price > defaultSettings.minPrice;
   const betaOk = input.assetType === "etf" || (input.beta === undefined ? !input.strictFundamentals : input.beta >= input.minBeta);
   const marketCapOk = input.assetType === "etf" || (input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= input.minMarketCap);
+  const currentVolumeOk = input.assetType === "etf" || (input.currentVolume === undefined ? !input.strictFundamentals : input.currentVolume >= input.minCurrentVolume);
   const volumeOk = input.assetType === "etf"
     ? input.avgDollarVolume20d >= input.minAvgDollarVolume
     : stockLiquidityPasses(input.avgShareVolume, input.avgDollarVolume20d, input.minAvgShareVolume, input.minAvgDollarVolume);
-  const passed = [priceOk, betaOk, marketCapOk, volumeOk, input.optionable].filter(Boolean).length;
+  const passed = [priceOk, betaOk, marketCapOk, currentVolumeOk, volumeOk, input.optionable].filter(Boolean).length;
   const detail = input.assetType === "etf"
     ? "ETF price $" + input.price.toFixed(2) + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + "; beta and market cap are not required."
     : "Price $" + input.price.toFixed(2)
       + ", beta " + (input.beta?.toFixed(2) ?? "unavailable")
       + ", market cap " + (input.marketCap ? formatMoney(input.marketCap) : "unavailable")
+      + ", current volume " + formatShares(input.currentVolume)
       + ", avg share volume " + formatShares(input.avgShareVolume)
       + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + ".";
-  if (passed === 5) return layer("Institutional Context", "Bullish", detail);
+  if (passed === 6) return layer("Institutional Context", "Bullish", detail);
   return layer("Institutional Context", "Bearish", detail);
 }
 
-function evaluateOptions(options: OptionContract[]): LayerEvaluation {
-  if (!options.length) return layer("Options Market Context", "Bearish", "No call contract met the 25% maximum spread and minimum liquidity filters.");
-  const best = options[0];
-  if (best.spreadPct <= 10) return layer("Options Market Context", "Bullish", "Best call spread is " + best.spreadPct.toFixed(1) + "%, inside the 10% institutional-quality threshold.");
-  return layer("Options Market Context", "Neutral", "Best call spread is " + best.spreadPct.toFixed(1) + "%; usable but wider than the 10% institutional-quality threshold.");
+function evaluateOptions(allOptions: OptionContract[], rankedOptions: OptionContract[], price: number): LayerEvaluation {
+  if (!rankedOptions.length) return layer("Options Market Context", "Bearish", optionFailureDetail(allOptions, price));
+  const best = rankedOptions[0];
+  if (best.spreadPct <= PREFERRED_OPTION_SPREAD_PCT) return layer("Options Market Context", "Bullish", "Best call spread is " + best.spreadPct.toFixed(1) + "%, inside the " + PREFERRED_OPTION_SPREAD_PCT + "% institutional-quality threshold.");
+  return layer("Options Market Context", "Bearish", "No preferred call spread at or below " + PREFERRED_OPTION_SPREAD_PCT + "% was found; best usable spread is " + best.spreadPct.toFixed(1) + "%.");
+}
+
+function optionFailureDetail(options: OptionContract[], price: number): string {
+  const calls = options.filter((contract) => contract.optionType === "call");
+  if (!calls.length) return "No call contracts were returned.";
+  const quoted = calls.filter((contract) => contract.bid > 0 && contract.ask > 0);
+  if (!quoted.length) return "No call contracts had live bid/ask quotes.";
+  const liquid = quoted.filter((contract) => contract.openInterest >= MIN_OPTION_OPEN_INTEREST || contract.volume >= MIN_OPTION_VOLUME);
+  if (!liquid.length) return "No call contract met minimum option liquidity (" + MIN_OPTION_OPEN_INTEREST + " OI or " + MIN_OPTION_VOLUME + " volume).";
+  const tight = liquid.filter((contract) => contract.spreadPct <= MAX_OPTION_SPREAD_PCT);
+  if (!tight.length) return "No call contract met the " + MAX_OPTION_SPREAD_PCT + "% maximum spread.";
+  const deltaOk = tight.filter((contract) => contract.delta === undefined || (contract.delta >= 0.35 && contract.delta <= 0.75));
+  if (!deltaOk.length) return "No call contract was in the 0.35-0.75 delta band.";
+  const dteOk = deltaOk.filter((contract) => contract.dte === undefined || (contract.dte >= 14 && contract.dte <= 180));
+  if (!dteOk.length) return "No call contract was within the 14-180 DTE window.";
+  const strikeOk = dteOk.filter((contract) => contract.strike <= price * 1.12);
+  if (!strikeOk.length) return "No call contract was within 12% above the stock price.";
+  return "No call contract met the tightened option quality filters.";
 }
 
 function evaluateCompression(dailySqueezeDotCount: number): LayerEvaluation {
@@ -499,7 +531,8 @@ function tradeMarkReasonsFor(input: {
   if (input.setupScore.catalystBlock) reasons.push("Earnings are within 14 days.");
   if (input.macro.status === "Bearish") reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   if (input.institutional.status === "Bearish" || input.institutional.status === "Insufficient Data") reasons.push("Basic universe, liquidity, market-cap, or optionability filters failed.");
-  if (optionLayer?.status === "Bearish" || !input.recommendedOption) reasons.push("No preferred call contract was found.");
+  if (optionLayer?.status === "Bearish") reasons.push(optionLayer.detail);
+  else if (!input.recommendedOption) reasons.push("No preferred call contract was found.");
   return unique(reasons);
 }
 
@@ -631,8 +664,8 @@ export function rankCallOptions(options: OptionContract[], price: number): Optio
   return options
     .filter((contract) => contract.optionType === "call")
     .filter((contract) => contract.bid > 0 && contract.ask > 0)
-    .filter((contract) => contract.openInterest >= 25 || contract.volume >= 10)
-    .filter((contract) => contract.spreadPct <= 25)
+    .filter((contract) => contract.openInterest >= MIN_OPTION_OPEN_INTEREST || contract.volume >= MIN_OPTION_VOLUME)
+    .filter((contract) => contract.spreadPct <= MAX_OPTION_SPREAD_PCT)
     .filter((contract) => contract.delta === undefined || (contract.delta >= 0.35 && contract.delta <= 0.75))
     .filter((contract) => contract.dte === undefined || (contract.dte >= 14 && contract.dte <= 180))
     .filter((contract) => contract.strike <= price * 1.12)
@@ -643,8 +676,8 @@ function optionQuality(contract: OptionContract): number {
   const dte = contract.dte ?? 60;
   const dteScore = dte >= 14 && dte <= 90 ? 25 : dte >= 91 && dte <= 180 ? 18 : 0;
   const deltaScore = contract.delta === undefined ? 10 : Math.max(0, 25 - Math.abs(contract.delta - 0.55) * 100);
-  const spreadScore = Math.max(0, 25 - contract.spreadPct);
-  const liquidityScore = Math.min(25, contract.openInterest / 40 + contract.volume / 25);
+  const spreadScore = Math.max(0, 30 - contract.spreadPct * 1.5);
+  const liquidityScore = Math.min(25, contract.openInterest / 80 + contract.volume / 40);
   const ivPenalty = contract.impliedVolatility !== undefined && contract.impliedVolatility > 1.25 ? 15 : 0;
   return dteScore + deltaScore + spreadScore + liquidityScore - ivPenalty;
 }
@@ -813,7 +846,9 @@ function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeCont
   if (indicators.momentum <= 0) reasons.push("Daily Squeeze histogram is not above zero.");
   if (!hasPositiveFastTrend(dailyContext)) reasons.push("Daily 8 EMA is not above the 21 EMA with price at or above the 21 EMA.");
   if (dailyContext.bias !== "unavailable" && dailyContext.dailyEntryQualificationMode === "none") reasons.push("Daily price is below the 21 EMA or more than 1.5 ATR above it.");
-  if (!option) reasons.push("No preferred call contract was found.");
+  const optionLayer = layers.find((layerItem) => layerItem.layer === "Options Market Context");
+  if (optionLayer?.status === "Bearish") reasons.push(optionLayer.detail);
+  else if (!option) reasons.push("No preferred call contract was found.");
   return reasons.slice(0, 6);
 }
 
@@ -905,7 +940,8 @@ function formatMoney(value: number): string {
   return "$" + value.toFixed(0);
 }
 
-function formatShares(value: number): string {
+function formatShares(value: number | undefined): string {
+  if (value === undefined) return "unavailable";
   if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M shares";
   if (value >= 1_000) return Math.round(value / 1_000) + "K shares";
   return Math.round(value) + " shares";

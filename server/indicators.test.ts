@@ -317,7 +317,7 @@ describe("layer decision engine", () => {
       currentPrice: price,
       fundamentals: strongFundamentals("LOWA"),
       optionable: true,
-      options: [option("LOWA", 45, 500, 200, 0.55, 15, 102)],
+      options: [option("LOWA", 45, 500, 200, 0.55, 4, 102)],
       weeklyIndicators: weeklyIndicator("bullish"),
       sector: "Information Technology",
       sectorCandles: returnCandles(100, 0.005),
@@ -515,6 +515,31 @@ describe("layer decision engine", () => {
     expect(result.institutionalFactors.find((factor) => factor.name === "Sector Strength")?.detail).toBe("SMH ETF outperforming SPY over 20 periods.");
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bullish");
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("ETF has no single-company earnings date; catalyst risk is not applicable.");
+  });
+
+  it("requires stocks to meet the current-day volume floor", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "THINVOL",
+      candles,
+      currentPrice: price,
+      currentVolume: 332_446,
+      fundamentals: {
+        ...strongFundamentals("THINVOL"),
+        avgShareVolume: 5_000_000,
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("THINVOL", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      ...institutionalSetupContext()
+    });
+
+    expect(result.passesUniverse).toBe(false);
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
   });
 
   it("classifies catalyst safety by earnings distance", () => {
@@ -930,7 +955,7 @@ describe("layer decision engine", () => {
     expect(qualifiedBeta.longCallDecision).toBe("Strong Long Call Candidate");
   });
 
-  it("passes stock liquidity with either 600K shares or $300M average dollar volume", () => {
+  it("passes stock liquidity with either 1.5M shares or $300M average dollar volume", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -949,8 +974,8 @@ describe("layer decision engine", () => {
       ...institutionalSetupContext()
     });
 
-    const failsBoth = resultFor(599_999, 299_999_999);
-    const sharePass = resultFor(600_000, 100_000_000);
+    const failsBoth = resultFor(1_499_999, 299_999_999);
+    const sharePass = resultFor(1_500_000, 100_000_000);
     const dollarPass = resultFor(100_000, 300_000_000);
 
     expect(failsBoth.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
@@ -1010,18 +1035,18 @@ describe("layer decision engine", () => {
 
     const ten = resultFor(10);
     const fifteen = resultFor(15);
-    const twentyFive = resultFor(25);
-    const twentySix = resultFor(26);
+    const sixteen = resultFor(16);
 
     expect(optionLayer(ten)?.status).toBe("Bullish");
     expect(optionLayer(ten)?.detail).toBe("Best call spread is 10.0%, inside the 10% institutional-quality threshold.");
-    expect(optionLayer(fifteen)?.status).toBe("Neutral");
-    expect(optionLayer(fifteen)?.detail).toBe("Best call spread is 15.0%; usable but wider than the 10% institutional-quality threshold.");
-    expect(optionLayer(twentyFive)?.status).toBe("Neutral");
-    expect(optionLayer(twentySix)?.status).toBe("Bearish");
-    expect(optionLayer(twentySix)?.detail).toBe("No call contract met the 25% maximum spread and minimum liquidity filters.");
-    expect(twentySix.longCallDecision).toBe("Avoid");
-    expect(twentySix.suggestedOptions).toEqual([]);
+    expect(optionLayer(fifteen)?.status).toBe("Bearish");
+    expect(optionLayer(fifteen)?.detail).toBe("No preferred call spread at or below 10% was found; best usable spread is 15.0%.");
+    expect(fifteen.longCallDecision).toBe("Avoid");
+    expect(fifteen.suggestedOptions).toHaveLength(1);
+    expect(optionLayer(sixteen)?.status).toBe("Bearish");
+    expect(optionLayer(sixteen)?.detail).toBe("No call contract met the 15% maximum spread.");
+    expect(sixteen.longCallDecision).toBe("Avoid");
+    expect(sixteen.suggestedOptions).toEqual([]);
   });
 
   it("allows 91-180 DTE when contract quality is meaningfully better", () => {
@@ -1033,13 +1058,23 @@ describe("layer decision engine", () => {
     expect(ranked[0].symbol).toBe("STRONG-150");
   });
 
-  it("filters calls wider than the 25% maximum spread", () => {
+  it("filters calls wider than the 15% maximum spread", () => {
     const ranked = rankCallOptions([
-      option("WIDE", 45, 500, 200, 0.55, 26, 102),
-      option("MAX", 45, 500, 200, 0.55, 25, 102)
+      option("WIDE", 45, 500, 200, 0.55, 16, 102),
+      option("MAX", 45, 500, 200, 0.55, 15, 102)
     ], 100);
 
     expect(ranked.map((contract) => contract.symbol)).toEqual(["MAX"]);
+  });
+
+  it("requires tighter option open interest or volume", () => {
+    const ranked = rankCallOptions([
+      option("THIN", 45, 99, 24, 0.55, 4, 102),
+      option("OI-PASS", 45, 100, 0, 0.55, 4, 102),
+      option("VOL-PASS", 45, 0, 25, 0.55, 4, 102)
+    ], 100);
+
+    expect(ranked.map((contract) => contract.symbol).sort()).toEqual(["OI-PASS", "VOL-PASS"]);
   });
 });
 

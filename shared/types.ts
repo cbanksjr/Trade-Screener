@@ -216,6 +216,7 @@ export type ScanResult = {
   price: number;
   beta: number | null;
   marketCap: number | null;
+  currentVolume?: number;
   avgShareVolume?: number;
   avgDollarVolume20d: number;
   fundamentalSources?: FundamentalFieldSources;
@@ -289,6 +290,7 @@ export type Settings = {
   minPrice: number;
   minBeta: number;
   minMarketCap: number;
+  minCurrentVolume: number;
   minAvgShareVolume: number;
   minAvgDollarVolume: number;
   brokerBaseUrl: string;

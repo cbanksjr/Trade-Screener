@@ -34,6 +34,7 @@ import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniver
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
+const OLD_DEFAULT_MIN_AVG_SHARE_VOLUME = 600_000;
 type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
   "Communication Services": "XLC",
@@ -52,8 +53,12 @@ let activeScan: Promise<void> | null = null;
 
 export async function readSettings(): Promise<Settings> {
   const stored = await getSetting<Partial<Settings>>("settings", {});
-  const normalizedStored = stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME
-    ? { ...stored, minAvgDollarVolume: defaultSettings.minAvgDollarVolume }
+  const normalizedStored = stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME || stored.minAvgShareVolume === OLD_DEFAULT_MIN_AVG_SHARE_VOLUME
+    ? {
+      ...stored,
+      ...(stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME ? { minAvgDollarVolume: defaultSettings.minAvgDollarVolume } : {}),
+      ...(stored.minAvgShareVolume === OLD_DEFAULT_MIN_AVG_SHARE_VOLUME ? { minAvgShareVolume: defaultSettings.minAvgShareVolume } : {})
+    }
     : stored;
   if (normalizedStored !== stored) await setSetting("settings", normalizedStored);
   const defaultUniverse = await getDefaultUniverseStatus();
@@ -62,6 +67,7 @@ export async function readSettings(): Promise<Settings> {
     minPrice: normalizedStored.minPrice ?? defaultSettings.minPrice,
     minBeta: normalizedStored.minBeta ?? defaultSettings.minBeta,
     minMarketCap: normalizedStored.minMarketCap ?? defaultSettings.minMarketCap,
+    minCurrentVolume: normalizedStored.minCurrentVolume ?? defaultSettings.minCurrentVolume,
     minAvgShareVolume: normalizedStored.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: normalizedStored.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
     brokerBaseUrl: config.schwabMarketDataBaseUrl,
@@ -82,6 +88,7 @@ export async function writeSettings(input: Partial<Settings>): Promise<Settings>
     minPrice: input.minPrice ?? current.minPrice,
     minBeta: input.minBeta ?? current.minBeta,
     minMarketCap: input.minMarketCap ?? current.minMarketCap,
+    minCurrentVolume: input.minCurrentVolume ?? current.minCurrentVolume,
     minAvgShareVolume: input.minAvgShareVolume ?? current.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? current.minAvgDollarVolume,
     useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
@@ -335,6 +342,11 @@ async function scanSymbol(input: {
       warnings.push(symbol + ": skipped because ETF average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
       return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
     }
+    if (assetType === "stock" && (quote?.volume === undefined || quote.volume < settings.minCurrentVolume)) {
+      const currentVolumeLabel = quote?.volume === undefined ? "unavailable" : formatShares(quote.volume);
+      warnings.push(symbol + ": skipped because current volume " + currentVolumeLabel + " is below " + formatShares(settings.minCurrentVolume) + ".");
+      return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
+    }
     if (
       assetType === "stock"
       && quote?.averageVolume !== undefined
@@ -435,6 +447,7 @@ async function scanSymbol(input: {
         assetType,
         candles,
         currentPrice: price,
+        currentVolume: quote?.volume,
         fundamentals: fundamentalData,
         optionable: options.length > 0,
         options,
@@ -446,6 +459,7 @@ async function scanSymbol(input: {
         sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
         minMarketCap: settings.minMarketCap,
         minBeta: settings.minBeta,
+        minCurrentVolume: settings.minCurrentVolume,
         minAvgShareVolume: settings.minAvgShareVolume,
         minAvgDollarVolume: settings.minAvgDollarVolume,
         scanRanAt
@@ -700,7 +714,8 @@ function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], 
   if (result.institutionalPositioningStatus === "vetoed") addUnique(reasons, "Bearish Flow Veto");
   result.layerEvaluations?.filter((item) => (item.layer === "Squeeze Market Structure" || item.layer === "Compression Quality") && item.status === "Bearish")
     .forEach((item) => addUnique(reasons, item.detail));
-  if (result.layerEvaluations?.some((item) => item.layer === "Options Market Context" && item.status === "Bearish")) addUnique(reasons, "No preferred call contract was found.");
+  result.layerEvaluations?.filter((item) => item.layer === "Options Market Context" && item.status === "Bearish")
+    .forEach((item) => addUnique(reasons, item.detail));
   return reasons;
 }
 
