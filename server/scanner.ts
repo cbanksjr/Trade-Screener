@@ -486,9 +486,18 @@ function shouldIncludeResult(result: ScanResult): boolean {
   return result.passesUniverse
     && result.setupDirection === "long"
     && result.indicators.momentum > 0
-    && result.squeezeStatusByTimeframe?.some((item) => item.timeframe === "daily" && isSqueezeActive(item.squeezeState === "unavailable" ? undefined : item.squeezeState))
+    && dailySqueezeCriteriaPass(result)
     && result.dailyEntryQualificationMode !== "none"
     && (result.grade === "A" || result.grade === "B");
+}
+
+function dailySqueezeCriteriaPass(result: ScanResult): boolean {
+  const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
+  if (!isSqueezeActive(daily?.squeezeState === "unavailable" ? undefined : daily?.squeezeState)) return false;
+  if (result.squeezeMaturityMode === "insufficient") return false;
+  if (typeof result.dailySqueezeDotCount === "number" && result.dailySqueezeDotCount < 2) return false;
+  if (result.layerEvaluations?.some((item) => item.layer === "Compression Quality" && item.status === "Bearish")) return false;
+  return true;
 }
 
 function hasBearishOrUnavailableWeeklyContext(result: ScanResult): boolean {

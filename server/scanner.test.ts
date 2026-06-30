@@ -313,6 +313,25 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["POSHIST"]);
   }));
 
+  it("filters cached candidates with fewer than 2 active Daily squeeze dots", async () => withDbRestore(async () => {
+    const insufficientDots: ScanResult = {
+      ...qualifyingResult("ONEDOT"),
+      dailySqueezeDotCount: 1,
+      squeezeMaturityMode: "insufficient",
+      layerEvaluations: [{
+        layer: "Compression Quality",
+        status: "Bearish",
+        detail: "At least 2 consecutive active daily squeeze dots are required; current count is 1."
+      }]
+    };
+    await replaceScanResults([
+      qualifyingResult("TWODOTS"),
+      insufficientDots
+    ]);
+
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["TWODOTS"]);
+  }));
+
   it("keeps bearish-macro cached candidates visible as A setups marked Avoid", async () => withDbRestore(async () => {
     const macroCaution: ScanResult = {
       ...qualifyingResult("MACROCAUTION"),
