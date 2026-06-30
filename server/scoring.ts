@@ -137,7 +137,7 @@ export function gradeSetup(input: {
   const grade = gradeCapped && scoreGrade === "A" ? "B" : scoreGrade;
   const gradeCapReasons = decision === "Strong Long Call Candidate"
     ? []
-    : gradeCapReasonsFor(layerEvaluations, weeklyContext, dailyEntryQualificationMode, squeezeMaturityMode, setupScore);
+    : gradeCapReasonsFor(layerEvaluations, dailyContext, weeklyContext, dailyEntryQualificationMode, squeezeMaturityMode, setupScore);
   const compressionQualityScoreValue = dailySqueezeDotCount;
   const warnings = input.lowerTimeframeWarnings ?? [];
   if (input.weeklySqueezeWarning) warnings.push(input.weeklySqueezeWarning);
@@ -218,8 +218,11 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   const squeezeMaturityMode = result.squeezeMaturityMode ?? "mature";
   const bearishMacro = hasBearishMacro(result);
   const relaxedMarketStructure = hasRelaxedMarketStructure(result);
+  const missingDailyEmaStack = hasMissingDailyEmaStack(result);
   const capped = hasGradeCap({ weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode }) || bearishMacro || relaxedMarketStructure;
-  const gradeCapReasons = (result.gradeCapReasons ?? []).filter((reason) => reason !== "Setup score below 90.");
+  const gradeCapReasons = (result.gradeCapReasons ?? []).filter((reason) =>
+    reason !== "Setup score below 90." && (reason !== RELAXED_TREND_GRADE_CAP_REASON || missingDailyEmaStack)
+  );
   let longCallDecision: LongCallDecision = result.longCallDecision;
   let effectiveGrade = capped && scoreGrade === "A" ? "B" : scoreGrade;
 
@@ -253,7 +256,7 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   if (bearishMacro && !gradeCapReasons.includes(BEARISH_MACRO_GRADE_CAP_REASON)) {
     gradeCapReasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   }
-  if (relaxedMarketStructure && !gradeCapReasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) {
+  if (relaxedMarketStructure && missingDailyEmaStack && !gradeCapReasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) {
     gradeCapReasons.push(RELAXED_TREND_GRADE_CAP_REASON);
   }
   if (weeklyQualificationMode === "none" && !gradeCapReasons.includes(RELAXED_WEEKLY_GRADE_CAP_REASON)) {
@@ -550,6 +553,7 @@ function evaluateEtfStrength(symbol: string, candles: Candle[], spyCandles?: Can
 
 function gradeCapReasonsFor(
   layerEvaluations: LayerEvaluation[],
+  dailyContext: LowerTimeframeContext,
   weeklyContext: LowerTimeframeContext,
   dailyEntryQualificationMode: DailyEntryQualificationMode,
   squeezeMaturityMode: SqueezeMaturityMode,
@@ -564,7 +568,7 @@ function gradeCapReasonsFor(
   if (dailyEntryQualificationMode === "extended") reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing") reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (layer("Macro Regime")?.status === "Bearish") reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
-  if (layer("Squeeze Market Structure")?.status === "Neutral") reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
+  if (layer("Squeeze Market Structure")?.status === "Neutral" && !dailyContext.positiveEmaStack) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
   if (weeklyContext.weeklyQualificationMode === "none" && weeklyContext.bias === "neutral") reasons.push(RELAXED_WEEKLY_GRADE_CAP_REASON);
   if (weeklyContext.bias === "bearish" || weeklyContext.bias === "unavailable") reasons.push("Weekly context does not qualify.");
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
@@ -597,6 +601,11 @@ function evaluateLiquidityFactor(avgShareVolume: number, avgDollarVolume20d: num
 
 function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean {
   return result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
+}
+
+function hasMissingDailyEmaStack(result: Pick<ScanResult, "squeezeStatusByTimeframe">): boolean {
+  const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
+  return daily?.positiveEmaStack === false;
 }
 
 export function stockLiquidityPasses(avgShareVolume: number | undefined, avgDollarVolume: number | undefined, minAvgShareVolume = defaultSettings.minAvgShareVolume, minAvgDollarVolume = defaultSettings.minAvgDollarVolume): boolean {

@@ -69,7 +69,6 @@ export type InstitutionalFactorName = "Market Regime" | "Sector Strength" | "Rel
 export type InstitutionalEdgeFactorName =
   | "Financial Quality"
   | "Analyst Conviction"
-  | "Institutional Positioning"
   | "Insider Safety"
   | "ETF Quality"
   | "ETF Exposure";

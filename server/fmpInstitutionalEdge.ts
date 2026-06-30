@@ -8,7 +8,6 @@ type EndpointId =
   | "financial-scores"
   | "grades-consensus"
   | "price-target-summary"
-  | "institutional-ownership"
   | "insider-statistics"
   | "etf-info"
   | "etf-sector-weightings";
@@ -44,7 +43,6 @@ const DEFAULT_EDGE: InstitutionalEdgeSummary = {
   warnings: []
 };
 const RESPONSE_TTL_MS = 24 * 60 * 60 * 1000;
-const OWNERSHIP_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 export async function createFmpInstitutionalEdgeScanProvider(): Promise<ReturnType<typeof createFmpInstitutionalEdgeProvider> | undefined> {
   if (!config.fmpInstitutionalEdgeEnabled || !config.fmpApiKey) return undefined;
@@ -108,23 +106,20 @@ export function createFmpInstitutionalEdgeProvider(input: {
       return { edge: summarizeFactors(factors, warnings), warnings, usedLive };
     }
 
-    const [financial, grades, targets, ownership, insider] = await Promise.all([
+    const [financial, grades, targets, insider] = await Promise.all([
       loadEndpoint(upperSymbol, "financial-scores", { symbol: upperSymbol }),
       loadEndpoint(upperSymbol, "grades-consensus", { symbol: upperSymbol }),
       loadEndpoint(upperSymbol, "price-target-summary", { symbol: upperSymbol }),
-      loadEndpoint(upperSymbol, "institutional-ownership", latestQuarterParams(upperSymbol, now())),
       loadEndpoint(upperSymbol, "insider-statistics", { symbol: upperSymbol })
     ]);
 
-    usedLive = [financial, grades, targets, ownership, insider].some((item) => item.usedLive);
-    warnings.push(...financial.warnings, ...grades.warnings, ...targets.warnings, ...ownership.warnings, ...insider.warnings);
+    usedLive = [financial, grades, targets, insider].some((item) => item.usedLive);
+    warnings.push(...financial.warnings, ...grades.warnings, ...targets.warnings, ...insider.warnings);
     const financialQuality = normalizeFinancialScores(financial.data);
     const analystConviction = normalizeAnalystConviction(grades.data, targets.data, price);
-    const institutionalPositioning = normalizeInstitutionalOwnership(ownership.data);
     const insiderSafety = normalizeInsiderStatistics(insider.data);
     if (financialQuality) factors.push(financialQuality);
     if (analystConviction) factors.push(analystConviction);
-    if (institutionalPositioning) factors.push(institutionalPositioning);
     if (insiderSafety) factors.push(insiderSafety);
 
     return { edge: summarizeFactors(factors, warnings), warnings, usedLive };
@@ -137,7 +132,7 @@ export function createFmpInstitutionalEdgeProvider(input: {
     }
 
     const cached = cache.responses[symbol]?.[endpoint];
-    if (cached && isFresh(cached.updatedAt, responseTtl(endpoint), now())) return { data: cached.data, warnings: [], usedLive: false };
+    if (cached && isFresh(cached.updatedAt, responseTtl(), now())) return { data: cached.data, warnings: [], usedLive: false };
     if (remainingCalls <= 0) return { warnings: ["FMP Institutional Edge call budget exhausted."], usedLive: false };
 
     remainingCalls -= 1;
@@ -219,17 +214,6 @@ export function normalizeAnalystConviction(gradesPayload: unknown, targetPayload
   return edgeFactor("Analyst Conviction", status, detail || "Analyst data was mixed.");
 }
 
-export function normalizeInstitutionalOwnership(payload: unknown): InstitutionalEdgeFactor | undefined {
-  const item = firstObject(payload);
-  if (!item) return undefined;
-  const sharesChange = numberValue(item.changeInSharesNumberPercentage, item.changeInSharesPercentage, item.sharesChangePercentage, item.changeInShares);
-  const holderChange = numberValue(item.changeInInvestorsHolding, item.investorCountChange, item.holdersChange);
-  if (sharesChange === undefined && holderChange === undefined) return undefined;
-  const bullish = (sharesChange ?? 0) > 0 || (holderChange ?? 0) > 0;
-  const bearish = (sharesChange !== undefined && sharesChange < -5) || (holderChange !== undefined && holderChange < 0);
-  return edgeFactor("Institutional Positioning", bearish ? "Bearish" : bullish ? "Bullish" : "Neutral", `Institutional shares change ${formatPercent(sharesChange)}, holder change ${formatValue(holderChange)}.`);
-}
-
 export function normalizeInsiderStatistics(payload: unknown): InstitutionalEdgeFactor | undefined {
   const item = firstObject(payload);
   if (!item) return undefined;
@@ -309,21 +293,14 @@ function edgeFactor(name: InstitutionalEdgeFactor["name"], status: LayerStatus, 
 }
 
 function endpointPath(endpoint: EndpointId): string {
-  if (endpoint === "institutional-ownership") return "institutional-ownership/symbol-positions-summary";
   if (endpoint === "insider-statistics") return "insider-trading/statistics";
   if (endpoint === "etf-info") return "etf/info";
   if (endpoint === "etf-sector-weightings") return "etf/sector-weightings";
   return endpoint;
 }
 
-function latestQuarterParams(symbol: string, now: Date): Record<string, string> {
-  const year = now.getUTCMonth() < 3 ? now.getUTCFullYear() - 1 : now.getUTCFullYear();
-  const quarter = Math.max(1, Math.ceil(now.getUTCMonth() / 3));
-  return { symbol, year: String(year), quarter: String(quarter) };
-}
-
-function responseTtl(endpoint: EndpointId): number {
-  return endpoint === "institutional-ownership" ? OWNERSHIP_TTL_MS : RESPONSE_TTL_MS;
+function responseTtl(): number {
+  return RESPONSE_TTL_MS;
 }
 
 function fmpUrl(baseUrl: string, path: string, params: Record<string, string>): URL {

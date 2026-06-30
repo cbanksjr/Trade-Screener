@@ -554,6 +554,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
   const bearishMacro = hasBearishMacro(result);
   const relaxedMarketStructure = hasRelaxedMarketStructure(result);
+  const missingDailyEmaStack = hasMissingCachedDailyEmaStack(result);
   const hasQuantDataFinal = Boolean(result.institutionalPositioningStatus);
   const longCallDecision = hasQuantDataFinal
     ? result.longCallDecision
@@ -580,7 +581,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     dailyEntryQualificationMode,
     weeklyQualificationMode,
     squeezeMaturityMode,
-    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure),
+    gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure, missingDailyEmaStack),
     finalGrade: result.finalGrade ?? grade,
     strongLongCallCandidate: result.strongLongCallCandidate ?? (longCallDecision === "Strong Long Call Candidate" && grade === "A"),
     flags: result.flags ?? [],
@@ -686,9 +687,11 @@ function mergeCachedGradeCapReasons(
   dailyEntryQualificationMode: NonNullable<ScanResult["dailyEntryQualificationMode"]>,
   squeezeMaturityMode: NonNullable<ScanResult["squeezeMaturityMode"]>,
   bearishMacro = false,
-  relaxedMarketStructure = false
+  relaxedMarketStructure = false,
+  missingDailyEmaStack = false
 ): string[] {
-  const reasons = [...(result.gradeCapReasons ?? cachedGradeCapReasons(result, decision, setupScore))];
+  const reasons = (result.gradeCapReasons ?? cachedGradeCapReasons(result, decision, setupScore))
+    .filter((reason) => reason !== RELAXED_TREND_GRADE_CAP_REASON || missingDailyEmaStack);
   if (weeklyQualificationMode === "ema21-atr" && !reasons.includes(WEEKLY_ATR_GRADE_CAP_REASON)) {
     reasons.push(WEEKLY_ATR_GRADE_CAP_REASON);
   }
@@ -696,7 +699,7 @@ function mergeCachedGradeCapReasons(
   if (dailyEntryQualificationMode === "extended" && !reasons.includes(EXTENDED_ENTRY_GRADE_CAP_REASON)) reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing" && !reasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (bearishMacro && !reasons.includes(BEARISH_MACRO_GRADE_CAP_REASON)) reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
-  if (relaxedMarketStructure && !reasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
+  if (relaxedMarketStructure && missingDailyEmaStack && !reasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
   if (weeklyQualificationMode === "none" && !reasons.includes(RELAXED_WEEKLY_GRADE_CAP_REASON)) reasons.push(RELAXED_WEEKLY_GRADE_CAP_REASON);
   return reasons;
 }
@@ -707,6 +710,11 @@ function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean 
 
 function hasRelaxedMarketStructure(result: Pick<ScanResult, "layerEvaluations">): boolean {
   return result.layerEvaluations?.some((item) => item.layer === "Squeeze Market Structure" && item.status === "Neutral") ?? false;
+}
+
+function hasMissingCachedDailyEmaStack(result: Pick<ScanResult, "squeezeStatusByTimeframe">): boolean {
+  const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
+  return daily?.positiveEmaStack === false;
 }
 
 function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {

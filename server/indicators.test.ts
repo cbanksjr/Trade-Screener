@@ -14,6 +14,7 @@ import {
   BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
+  RELAXED_TREND_GRADE_CAP_REASON,
   RELAXED_WEEKLY_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON,
   applyInstitutionalEdge,
@@ -200,6 +201,7 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.grade).toBe("B");
     expect(result.gradeCapReasons).toContain(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   });
 
   it("rejects daily squeezes with fewer than 2 active dots", () => {
@@ -375,6 +377,7 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.grade).toBe("B");
     expect(result.gradeCapReasons).toContain(RELAXED_WEEKLY_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   });
 
   it("qualifies mixed weekly structure within one ATR of the 21 EMA and caps it at B", () => {
@@ -397,6 +400,7 @@ describe("layer decision engine", () => {
     expect(result.grade).toBe("B");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.gradeCapReasons).toContain(WEEKLY_ATR_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   });
 
   it("uses inclusive weekly 21 EMA and one ATR boundaries", () => {
@@ -636,6 +640,7 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.grade).toBe("B");
     expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
 
     const enriched = applyInstitutionalEdge(result, {
       score: 100,
@@ -772,6 +777,7 @@ describe("layer decision engine", () => {
       expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
       expect(result.grade).toBe("B");
       expect(result.gradeCapReasons).toContain(BROAD_ENTRY_GRADE_CAP_REASON);
+      expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
     }
   });
 
@@ -799,6 +805,7 @@ describe("layer decision engine", () => {
     expect(extended.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(extended.grade).toBe("B");
     expect(extended.gradeCapReasons).toContain(EXTENDED_ENTRY_GRADE_CAP_REASON);
+    expect(extended.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
     expect(overextended.dailyEntryQualificationMode).toBe("none");
     expect(overextended.longCallDecision).toBe("Avoid");
     expect(overextended.reasonsAgainstTrade.join(" ")).toContain("more than 1.5 ATR");

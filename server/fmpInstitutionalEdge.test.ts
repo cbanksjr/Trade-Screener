@@ -7,7 +7,6 @@ import {
   normalizeEtfSectorWeightings,
   normalizeFinancialScores,
   normalizeInsiderStatistics,
-  normalizeInstitutionalOwnership,
   type FmpInstitutionalEdgeCache
 } from "./fmpInstitutionalEdge";
 import { applyInstitutionalEdge } from "./scoring";
@@ -50,11 +49,7 @@ describe("FMP Institutional Edge", () => {
     });
   });
 
-  it("normalizes ownership, insider, and ETF fields when available", () => {
-    expect(normalizeInstitutionalOwnership([{ changeInSharesNumberPercentage: 8, changeInInvestorsHolding: 3 }])).toMatchObject({
-      name: "Institutional Positioning",
-      status: "Bullish"
-    });
+  it("normalizes insider and ETF fields when available", () => {
     expect(normalizeInsiderStatistics([{ totalPurchases: 1, totalSales: 4 }])).toMatchObject({
       name: "Insider Safety",
       status: "Bearish"
@@ -71,6 +66,7 @@ describe("FMP Institutional Edge", () => {
 
   it("marks plan-restricted endpoints unavailable and avoids repeated probes during the TTL", async () => {
     let calls = 0;
+    const requests: string[] = [];
     const cache: FmpInstitutionalEdgeCache = { availability: {}, responses: {} };
     const provider = createFmpInstitutionalEdgeProvider({
       apiKey: "test",
@@ -78,8 +74,9 @@ describe("FMP Institutional Edge", () => {
       maxCalls: 10,
       cache,
       now: () => new Date("2026-06-23T12:00:00.000Z"),
-      fetchImpl: async () => {
+      fetchImpl: async (input) => {
         calls += 1;
+        requests.push(new URL(input.toString()).pathname);
         return new Response(JSON.stringify({ message: "Please upgrade your plan." }), { status: 403 });
       }
     });
@@ -90,9 +87,15 @@ describe("FMP Institutional Edge", () => {
     expect(first.edge.factors).toEqual([]);
     expect(first.edge.status).toBe("Neutral");
     expect(second.edge.status).toBe("Neutral");
-    expect(calls).toBe(5);
+    expect(calls).toBe(4);
+    expect(requests.sort()).toEqual([
+      "/stable/financial-scores",
+      "/stable/grades-consensus",
+      "/stable/insider-trading/statistics",
+      "/stable/price-target-summary"
+    ]);
     expect(provider.cache().availability["financial-scores"]?.available).toBe(false);
-    expect(provider.remainingCalls()).toBe(5);
+    expect(provider.remainingCalls()).toBe(6);
   });
 
   it("reuses fresh cached endpoint payloads without live FMP calls", async () => {

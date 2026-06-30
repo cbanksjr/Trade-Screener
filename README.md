@@ -94,7 +94,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Bearish SPY/QQQ Daily structure is a macro caution that reduces the setup score and caps qualifying setups at B; it does not automatically reject an otherwise valid squeeze
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across seven equal-weight factors: market regime, sector strength, relative strength, liquidity, price structure, volatility fit, and catalyst safety
-- Optional FMP Institutional Edge overlay uses Starter-accessible endpoint probing for financial scores, analyst grades/targets, ownership/insider data, and ETF data when available; unavailable endpoints are skipped neutrally
+- Optional FMP Institutional Edge overlay uses Starter-accessible endpoint probing for financial scores, analyst grades/targets, insider data, and ETF data when available; unavailable endpoints are skipped neutrally
 - Optional QuantData Institutional Positioning overlay uses live options flow, options exposure, and dark-pool levels as a confirmation/cap/veto layer rather than a simple point bonus
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
 - ETF strength compares the ETF directly against SPY over the same 20-period window
