@@ -268,6 +268,26 @@ function TickerDetail({ result }: { result: ScanResult }) {
             <span>{result.gradeCapReasons.join(" ")}</span>
           </div>
         ) : null}
+        {result.institutionalPositioningStatus ? (
+          <div className="edge-section">
+            <div className="panel-head compact">
+              <h3>Institutional Positioning</h3>
+              <span>{positioningStatusLabel(result.institutionalPositioningStatus)} · {positioningScoreLabel(result)}</span>
+            </div>
+            <div className="summary-grid">
+              <Metric label="Options Flow" value={signalLabel(result.optionsFlowSignal)} />
+              <Metric label="Options Exposure" value={signalLabel(result.optionsExposureSignal)} />
+              <Metric label="Dark Pool" value={signalLabel(result.darkPoolSignal)} />
+              <Metric label="Final Grade" value={(result.gradeBeforeQuantData ? result.gradeBeforeQuantData + " to " : "") + (result.finalGrade ?? result.grade)} />
+            </div>
+            {result.flags?.length ? (
+              <div className="flag-list">
+                {result.flags.map((flag) => <span key={flag}>{flag}</span>)}
+              </div>
+            ) : null}
+            {result.institutionalPositioningReason ? <p className="edge-note">{result.institutionalPositioningReason}</p> : null}
+          </div>
+        ) : null}
         {result.institutionalFactors?.length ? (
           <div className="factor-grid">
             {result.institutionalFactors.map((factor) => (
@@ -414,6 +434,22 @@ function statusClass(status: LayerStatus | undefined): string {
 function signedAdjustment(value: number | undefined): string {
   const rounded = Math.round(value ?? 0);
   return (rounded > 0 ? "+" : "") + rounded + " pts";
+}
+
+function positioningScoreLabel(result: ScanResult): string {
+  return typeof result.institutionalPositioningScore === "number" ? formatNumber(result.institutionalPositioningScore, { maximumFractionDigits: 0 }) + "/100" : "No score";
+}
+
+function positioningStatusLabel(status: ScanResult["institutionalPositioningStatus"]): string {
+  if (status === "confirmed") return "Confirmed";
+  if (status === "capped") return "Capped";
+  if (status === "vetoed") return "Vetoed";
+  return "Neutral";
+}
+
+function signalLabel(value: string | undefined): string {
+  if (!value) return "Unavailable";
+  return value.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
 }
 
 function layerLabel(layer: string): string {

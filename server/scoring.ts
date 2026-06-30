@@ -8,6 +8,7 @@ import type {
   InstitutionalFactor,
   InstitutionalFactorName,
   InstitutionalEdgeSummary,
+  InstitutionalPositioningSummary,
   LayerEvaluation,
   LayerStatus,
   LongCallDecision,
@@ -277,6 +278,76 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
     institutionalEdgeWarnings: edge.warnings,
     gradeCapReasons
   };
+}
+
+export function applyInstitutionalPositioning(result: ScanResult, positioning: InstitutionalPositioningSummary): ScanResult {
+  const flags = unique([...(result.flags ?? []), ...positioning.flags]);
+  const gradeBeforeQuantData = result.gradeBeforeQuantData ?? result.grade;
+  const gradeCapReasons = [...(result.gradeCapReasons ?? [])];
+  let grade = result.grade;
+  let longCallDecision: LongCallDecision = result.longCallDecision;
+  let setupQuality = result.setupQuality;
+
+  if (positioning.status === "vetoed") {
+    if (!gradeCapReasons.includes("Bearish Flow Veto")) gradeCapReasons.push("Bearish Flow Veto");
+    if (!flags.includes("Bearish Flow Veto")) flags.push("Bearish Flow Veto");
+    longCallDecision = "Watchlist Candidate";
+    setupQuality = grade === "A" ? "High" : "Moderate";
+  } else if (positioning.status === "capped" && grade === "A") {
+    grade = "B";
+    setupQuality = "Moderate";
+    if (longCallDecision === "Strong Long Call Candidate") longCallDecision = "Moderate Long Call Candidate";
+    if (!gradeCapReasons.includes("Institutional positioning is not supportive.")) {
+      gradeCapReasons.push("Institutional positioning is not supportive.");
+    }
+  } else if (positioning.status === "confirmed" && canQuantDataPromote(result)) {
+    grade = "A";
+    setupQuality = "High";
+    longCallDecision = "Strong Long Call Candidate";
+    removeItem(gradeCapReasons, "Setup score below 90.");
+  }
+
+  const strongLongCallCandidate = longCallDecision === "Strong Long Call Candidate" && grade === "A" && positioning.status !== "vetoed";
+
+  return {
+    ...result,
+    grade,
+    longCallDecision,
+    setupQuality,
+    entryRecommendationType: entryType(longCallDecision, result.compressionQualityStatus),
+    institutionalPositioningScore: Math.max(0, Math.min(100, round(positioning.score, 0))),
+    optionsFlowSignal: positioning.optionsFlowSignal,
+    optionsExposureSignal: positioning.optionsExposureSignal,
+    darkPoolSignal: positioning.darkPoolSignal,
+    institutionalPositioningStatus: positioning.status,
+    institutionalPositioningReason: positioning.reason,
+    gradeBeforeQuantData,
+    finalGrade: grade,
+    strongLongCallCandidate,
+    flags,
+    gradeCapReasons,
+    reasonsSupportingTrade: positioning.status === "confirmed"
+      ? unique([...result.reasonsSupportingTrade, positioning.reason]).slice(0, 8)
+      : result.reasonsSupportingTrade,
+    reasonsAgainstTrade: positioning.status === "capped" || positioning.status === "vetoed"
+      ? unique([...result.reasonsAgainstTrade, positioning.reason]).slice(0, 8)
+      : result.reasonsAgainstTrade,
+    warnings: unique([...result.warnings, ...positioning.warnings])
+  };
+}
+
+function canQuantDataPromote(result: ScanResult): boolean {
+  return result.longCallDecision !== "Avoid"
+    && result.longCallDecision !== "Watchlist Candidate"
+    && result.setupScore >= 85
+    && result.passesUniverse
+    && result.optionable
+    && result.weeklyQualificationMode === "full-stack"
+    && result.dailyEntryQualificationMode === "strict"
+    && result.squeezeMaturityMode === "mature"
+    && !hasBearishMacro(result)
+    && !hasRelaxedMarketStructure(result)
+    && !result.gradeCapReasons?.some((reason) => reason !== "Setup score below 90.");
 }
 
 function evaluateMarketStructure(
@@ -846,6 +917,15 @@ function percentReturn(candles: Candle[]): number {
 function average(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
+function removeItem(items: string[], value: string): void {
+  const index = items.indexOf(value);
+  if (index >= 0) items.splice(index, 1);
 }
 
 function formatMoney(value: number): string {

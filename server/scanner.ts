@@ -5,6 +5,7 @@ import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators } from "./indicators";
+import { createQuantDataPositioningScanProvider } from "./quantData";
 import {
   A_SETUP_SCORE_THRESHOLD,
   BEARISH_MACRO_GRADE_CAP_REASON,
@@ -16,6 +17,7 @@ import {
   RELAXED_WEEKLY_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON,
   applyInstitutionalEdge,
+  applyInstitutionalPositioning,
   defaultSettings,
   gradeSetup,
   resolveDailyEntryQualificationMode,
@@ -166,6 +168,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
   const fmpInstitutionalEdge = canUseLiveSchwab ? await createFmpInstitutionalEdgeScanProvider() : undefined;
+  const quantDataPositioning = canUseLiveSchwab ? await createQuantDataPositioningScanProvider() : undefined;
   const fmpEarnings = fmp && stockSymbolsToScan.length ? await fmp.earningsCalendar(stockSymbolsToScan) : undefined;
   const earningsBySymbol = fmpEarnings?.earningsBySymbol ?? new Map<string, string>();
   fmpEarnings?.warnings.forEach((warning) => scanWarnings.add(warning));
@@ -204,6 +207,11 @@ export async function runFullScan(): Promise<ScanResponse> {
         if (edge.usedLive) usedLive = true;
         result = applyInstitutionalEdge(result, edge.edge);
       }
+      if (quantDataPositioning) {
+        const positioning = await quantDataPositioning.enrich(result.symbol, result.price);
+        if (positioning.usedLive) usedLive = true;
+        result = applyInstitutionalPositioning(result, positioning.positioning);
+      }
       if (shouldIncludeResult(result)) results.push(result);
       else diagnostics.skipped[classifyFilteredResult(result)] += 1;
     } else if (outcome.result) diagnostics.skipped[classifyFilteredResult(outcome.result)] += 1;
@@ -222,6 +230,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   };
   if (fmp) await fmp.flush();
   if (fmpInstitutionalEdge) await fmpInstitutionalEdge.flush();
+  if (quantDataPositioning) await quantDataPositioning.flush();
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
     results: results.sort(sortByDecision),
@@ -545,9 +554,14 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
   const bearishMacro = hasBearishMacro(result);
   const relaxedMarketStructure = hasRelaxedMarketStructure(result);
-  const longCallDecision = normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure);
+  const hasQuantDataFinal = Boolean(result.institutionalPositioningStatus);
+  const longCallDecision = hasQuantDataFinal
+    ? result.longCallDecision
+    : normalizeCachedDecision(result.longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure);
   const scoreGrade = gradeFromSetupScore(setupScore);
-  const grade = isCachedGradeCapped(weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure) && scoreGrade === "A" ? "B" : scoreGrade;
+  const grade = hasQuantDataFinal && result.finalGrade
+    ? result.finalGrade
+    : isCachedGradeCapped(weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure) && scoreGrade === "A" ? "B" : scoreGrade;
   const normalized: ScanResult = {
     ...result,
     assetType: result.assetType ?? "stock",
@@ -567,6 +581,9 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     weeklyQualificationMode,
     squeezeMaturityMode,
     gradeCapReasons: mergeCachedGradeCapReasons(result, longCallDecision, setupScore, weeklyQualificationMode, dailyEntryQualificationMode, squeezeMaturityMode, bearishMacro, relaxedMarketStructure),
+    finalGrade: result.finalGrade ?? grade,
+    strongLongCallCandidate: result.strongLongCallCandidate ?? (longCallDecision === "Strong Long Call Candidate" && grade === "A"),
+    flags: result.flags ?? [],
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;

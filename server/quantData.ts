@@ -1,0 +1,429 @@
+import type {
+  DarkPoolSignal,
+  InstitutionalPositioningStatus,
+  InstitutionalPositioningSummary,
+  OptionsExposureSignal,
+  OptionsFlowSignal
+} from "../shared/types";
+import { config } from "./config";
+import { getSetting, setSetting } from "./sqlite";
+
+type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
+type EndpointId = "net-drift" | "order-flow-consolidated" | "exposure-by-strike" | "dark-pool-levels";
+
+type EndpointCacheEntry = {
+  updatedAt: string;
+  data: unknown;
+};
+
+export type QuantDataCache = {
+  responses: Record<string, Partial<Record<EndpointId, EndpointCacheEntry>>>;
+};
+
+export type QuantDataPositioningResult = {
+  positioning: InstitutionalPositioningSummary;
+  warnings: string[];
+  usedLive: boolean;
+};
+
+type OptionsFlowEvaluation = {
+  signal: OptionsFlowSignal;
+  score: number;
+  detail: string;
+  flags: string[];
+  stronglyBearish: boolean;
+};
+
+type OptionsExposureEvaluation = {
+  signal: OptionsExposureSignal;
+  score: number;
+  detail: string;
+  flags: string[];
+};
+
+type DarkPoolEvaluation = {
+  signal: DarkPoolSignal;
+  score: number;
+  detail: string;
+  flags: string[];
+};
+
+const CACHE_KEY = "quantDataCache";
+const ENDPOINT_PATHS: Record<EndpointId, string> = {
+  "net-drift": "/v1/options/tool/net-drift",
+  "order-flow-consolidated": "/v1/options/tool/order-flow-consolidated",
+  "exposure-by-strike": "/v1/options/tool/exposure-by-strike",
+  "dark-pool-levels": "/v1/equities/tool/dark-pool-levels"
+};
+const DEFAULT_POSITIONING: InstitutionalPositioningSummary = {
+  score: 50,
+  optionsFlowSignal: "neutral",
+  optionsExposureSignal: "neutral",
+  darkPoolSignal: "no_data",
+  status: "neutral",
+  reason: "QuantData positioning was unavailable; grade unchanged.",
+  flags: [],
+  warnings: []
+};
+
+export async function createQuantDataPositioningScanProvider(): Promise<ReturnType<typeof createQuantDataPositioningProvider> | undefined> {
+  if (!config.quantDataEnabled || !config.quantDataApiKey) return undefined;
+  const cache = await getSetting<QuantDataCache>(CACHE_KEY, { responses: {} });
+  const provider = createQuantDataPositioningProvider({
+    apiKey: config.quantDataApiKey,
+    baseUrl: config.quantDataBaseUrl,
+    maxCalls: Math.max(0, config.quantDataMaxCallsPerScan),
+    cacheTtlMs: Math.max(1, config.quantDataCacheTtlMinutes) * 60 * 1000,
+    cache
+  });
+  return {
+    ...provider,
+    async flush() {
+      if (provider.isDirty()) await setSetting(CACHE_KEY, provider.cache());
+    }
+  };
+}
+
+export function createQuantDataPositioningProvider(input: {
+  apiKey: string;
+  baseUrl: string;
+  maxCalls: number;
+  cacheTtlMs?: number;
+  cache?: QuantDataCache;
+  fetchImpl?: FetchLike;
+  now?: () => Date;
+}) {
+  let remainingCalls = input.maxCalls;
+  let dirty = false;
+  const cache: QuantDataCache = { responses: { ...(input.cache?.responses ?? {}) } };
+  const fetchImpl = input.fetchImpl ?? fetch;
+  const now = input.now ?? (() => new Date());
+  const cacheTtlMs = input.cacheTtlMs ?? 15 * 60 * 1000;
+
+  async function enrich(symbol: string, price: number): Promise<QuantDataPositioningResult> {
+    const upperSymbol = symbol.trim().toUpperCase();
+    if (!upperSymbol || !input.apiKey) return { positioning: DEFAULT_POSITIONING, warnings: [], usedLive: false };
+
+    const [netDrift, orderFlow, exposure, darkPool] = await Promise.all([
+      loadEndpoint(upperSymbol, "net-drift", { filter: { ticker: upperSymbol } }),
+      loadEndpoint(upperSymbol, "order-flow-consolidated", { filter: { ticker: upperSymbol }, size: 100 }),
+      loadEndpoint(upperSymbol, "exposure-by-strike", {
+        filter: { ticker: upperSymbol },
+        greekMode: "GAMMA",
+        representationMode: "NOTIONAL"
+      }),
+      loadEndpoint(upperSymbol, "dark-pool-levels", {
+        sessionDateRange: { startDate: isoDate(addDays(now(), -14)) },
+        filter: { ticker: upperSymbol }
+      })
+    ]);
+
+    const warnings = [...netDrift.warnings, ...orderFlow.warnings, ...exposure.warnings, ...darkPool.warnings];
+    const flowEvaluation = normalizeOptionsFlow(netDrift.data, orderFlow.data);
+    const exposureEvaluation = normalizeOptionsExposure(exposure.data, price);
+    const darkPoolEvaluation = normalizeDarkPool(darkPool.data, price);
+    const positioning = summarizePositioning(flowEvaluation, exposureEvaluation, darkPoolEvaluation, warnings);
+    return {
+      positioning,
+      warnings,
+      usedLive: [netDrift, orderFlow, exposure, darkPool].some((item) => item.usedLive)
+    };
+  }
+
+  async function loadEndpoint(symbol: string, endpoint: EndpointId, body: Record<string, unknown>): Promise<{ data?: unknown; warnings: string[]; usedLive: boolean }> {
+    const cached = cache.responses[symbol]?.[endpoint];
+    if (cached && isFresh(cached.updatedAt, cacheTtlMs, now())) return { data: cached.data, warnings: [], usedLive: false };
+    if (remainingCalls <= 0) return { warnings: ["QuantData call budget exhausted."], usedLive: false };
+
+    remainingCalls -= 1;
+    const response = await fetchImpl(quantDataUrl(input.baseUrl, ENDPOINT_PATHS[endpoint]), {
+      method: "POST",
+      headers: {
+        Authorization: "Bearer " + input.apiKey,
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    const text = await response.text();
+    if (response.status === 401 || response.status === 403) {
+      return { warnings: [`QuantData ${endpoint} was not authorized; skipped.`], usedLive: true };
+    }
+    if (response.status === 422) return { warnings: [], usedLive: true };
+    if (response.status === 429) return { warnings: [`QuantData ${endpoint} was rate limited; skipped.`], usedLive: true };
+    if (!response.ok) return { warnings: [`QuantData ${endpoint} request failed: ${response.status} ${response.statusText}`], usedLive: true };
+
+    let data: unknown;
+    try {
+      data = JSON.parse(text);
+    } catch {
+      return { warnings: [`QuantData ${endpoint} returned malformed JSON; skipped.`], usedLive: true };
+    }
+    cache.responses[symbol] = {
+      ...(cache.responses[symbol] ?? {}),
+      [endpoint]: { updatedAt: now().toISOString(), data }
+    };
+    dirty = true;
+    return { data, warnings: [], usedLive: true };
+  }
+
+  return {
+    enrich,
+    cache: () => cache,
+    remainingCalls: () => remainingCalls,
+    isDirty: () => dirty,
+    async flush() {
+      // Overridden by createQuantDataPositioningScanProvider where persistent settings are available.
+    }
+  };
+}
+
+export function normalizeOptionsFlow(netDriftPayload: unknown, orderFlowPayload?: unknown): OptionsFlowEvaluation {
+  const driftBuckets = payloadRows(netDriftPayload);
+  const orderRows = payloadRows(orderFlowPayload);
+  const netCallPremium = sumNumbers(driftBuckets, ["netCallPremium", "callPremium", "callsPremium"]);
+  const netPutPremium = Math.abs(sumNumbers(driftBuckets, ["netPutPremium", "putPremium", "putsPremium"]));
+  const netCallVolume = sumNumbers(driftBuckets, ["netCallVolume", "callVolume", "callsVolume"]);
+  const netPutVolume = Math.abs(sumNumbers(driftBuckets, ["netPutVolume", "putVolume", "putsVolume"]));
+  let askSideCallPremium = 0;
+  let callSweepCount = 0;
+  let openingCallCount = 0;
+  let bullishRowCount = 0;
+  let bearishRowCount = 0;
+
+  for (const row of orderRows) {
+    const contractType = normalizedString(row.contractType, row.optionType, row.putCall, row.side);
+    const premium = numberValue(row.premium, row.totalPremium, row.notionalValue, row.costBasis) ?? 0;
+    const sentiment = normalizedString(row.sentiment, row.direction, row.tradeSide, row.aggressorSide);
+    const isCall = contractType.includes("call");
+    const isPut = contractType.includes("put");
+    const askSide = sentiment.includes("ask") || sentiment.includes("buy") || sentiment.includes("bull");
+    if (isCall && askSide) askSideCallPremium += Math.abs(premium);
+    if (isCall && booleanish(row.isSweep, row.sweep, row.isSweepTrade)) callSweepCount += 1;
+    if (isCall && normalizedString(row.openClose, row.opening, row.transactionType).includes("open")) openingCallCount += 1;
+    if ((isCall && askSide) || sentiment.includes("bull")) bullishRowCount += 1;
+    if ((isPut && askSide) || sentiment.includes("bear")) bearishRowCount += 1;
+  }
+
+  const callPremium = netCallPremium + askSideCallPremium;
+  const putPremium = netPutPremium;
+  const totalPremium = callPremium + putPremium;
+  const flags: string[] = [];
+  if (callPremium >= Math.max(100_000, putPremium * 1.35)) flags.push("Bullish Flow Confirmation");
+  if (askSideCallPremium >= 50_000) flags.push("Ask-Side Call Buying");
+  if (netCallVolume >= 5_000 || callSweepCount >= 2) flags.push("Unusual Call Volume");
+  if (callSweepCount >= 2) flags.push("Repeated Bullish Call Sweeps");
+  if (openingCallCount >= 2) flags.push("Opening Call Activity");
+
+  const stronglyBearish = putPremium >= Math.max(250_000, callPremium * 2.2) || bearishRowCount >= bullishRowCount + 5;
+  const signal: OptionsFlowSignal = totalPremium <= 0
+    ? "neutral"
+    : stronglyBearish || putPremium >= Math.max(100_000, callPremium * 1.35)
+      ? "bearish"
+      : callPremium >= Math.max(100_000, putPremium * 1.35) || bullishRowCount >= bearishRowCount + 3
+        ? "bullish"
+        : "mixed";
+  if (signal === "bearish") flags.push(stronglyBearish ? "Bearish Flow Veto" : "Good Chart, Weak Sponsorship");
+  const score = signal === "bullish" ? 45 : signal === "mixed" ? 24 : signal === "neutral" ? 18 : 0;
+  const detail = totalPremium <= 0
+    ? "Options flow unavailable or quiet."
+    : "Call premium " + formatMoney(callPremium) + " vs put premium " + formatMoney(putPremium) + ".";
+  return { signal, score, detail, flags, stronglyBearish };
+}
+
+export function normalizeOptionsExposure(payload: unknown, currentPrice: number): OptionsExposureEvaluation {
+  const cells = exposureCells(payload, currentPrice);
+  if (!cells.length) return { signal: "neutral", score: 18, detail: "Options exposure unavailable.", flags: [] };
+  const below = cells.filter((cell) => cell.strike < currentPrice && cell.strike >= currentPrice * 0.95);
+  const above = cells.filter((cell) => cell.strike > currentPrice && cell.strike <= currentPrice * 1.05);
+  const putSupport = maxBy(below, (cell) => Math.abs(cell.putExposure));
+  const callWall = maxBy(above, (cell) => Math.abs(cell.callExposure));
+  const totalGamma = cells.reduce((sum, cell) => sum + cell.callExposure + cell.putExposure, 0);
+  const putSupportValue = putSupport ? Math.abs(putSupport.putExposure) : 0;
+  const callWallValue = callWall ? Math.abs(callWall.callExposure) : 0;
+  const flags: string[] = [];
+
+  if (putSupport && putSupportValue >= 75_000) flags.push("Put Support Below Price");
+  if (callWall && callWallValue >= 75_000 && callWall.strike <= currentPrice * 1.025) flags.push("Call Wall Overhead");
+  if (totalGamma < -100_000) flags.push("Squeeze-Prone Exposure");
+  if (putSupportValue >= 75_000 && putSupportValue >= callWallValue * 1.2) flags.push("Supportive Gamma Structure");
+
+  const signal: OptionsExposureSignal = callWallValue >= 100_000 && callWallValue > putSupportValue * 1.4 && (callWall?.strike ?? Infinity) <= currentPrice * 1.025
+    ? "hostile"
+    : totalGamma < -100_000
+      ? "squeeze_prone"
+      : putSupportValue >= 75_000 && putSupportValue >= callWallValue * 0.75
+        ? "supportive"
+        : "neutral";
+  if (signal === "hostile") flags.push("Good Chart, Options Resistance");
+  const score = signal === "supportive" || signal === "squeeze_prone" ? 35 : signal === "neutral" ? 18 : 0;
+  const detail = "Near put support " + formatMoney(putSupportValue) + "; overhead call exposure " + formatMoney(callWallValue) + ".";
+  return { signal, score, detail, flags };
+}
+
+export function normalizeDarkPool(payload: unknown, currentPrice: number): DarkPoolEvaluation {
+  const levels = darkPoolLevels(payload);
+  if (!levels.length) return { signal: "no_data", score: 10, detail: "No meaningful dark-pool levels returned.", flags: [] };
+  const nearby = levels.filter((level) => level.price >= currentPrice * 0.95 && level.price <= currentPrice * 1.05);
+  const top = maxBy(nearby.length ? nearby : levels, (level) => level.notionalValue);
+  if (!top || top.notionalValue < 1_000_000) return { signal: "neutral", score: 10, detail: "Dark-pool activity was not meaningful.", flags: [] };
+  const distancePct = Math.abs(top.price - currentPrice) / currentPrice;
+  const flags: string[] = [];
+  const signal: DarkPoolSignal = top.price <= currentPrice && distancePct <= 0.04
+    ? "accumulation"
+    : top.price > currentPrice && distancePct <= 0.025
+      ? "distribution"
+      : "neutral";
+  if (signal === "accumulation") flags.push("Dark-Pool Accumulation");
+  const score = signal === "accumulation" ? 20 : signal === "neutral" ? 10 : 0;
+  const detail = "Largest nearby dark-pool level " + formatMoney(top.notionalValue) + " near $" + top.price.toFixed(2) + ".";
+  return { signal, score, detail, flags };
+}
+
+function summarizePositioning(
+  flow: OptionsFlowEvaluation,
+  exposure: OptionsExposureEvaluation,
+  darkPool: DarkPoolEvaluation,
+  warnings: string[]
+): InstitutionalPositioningSummary {
+  const flags = unique([...flow.flags, ...exposure.flags, ...darkPool.flags]);
+  const score = Math.round(flow.score + exposure.score + darkPool.score);
+  const status: InstitutionalPositioningStatus = flow.stronglyBearish || (flow.signal === "bearish" && (exposure.signal === "hostile" || darkPool.signal === "distribution"))
+    ? "vetoed"
+    : flow.signal === "bearish" || exposure.signal === "hostile" || darkPool.signal === "distribution"
+      ? "capped"
+      : flow.signal === "bullish" && (exposure.signal === "supportive" || exposure.signal === "squeeze_prone" || darkPool.signal === "accumulation")
+        ? "confirmed"
+        : "neutral";
+  const reason = [
+    "Flow: " + flow.detail,
+    "Exposure: " + exposure.detail,
+    "Dark pool: " + darkPool.detail
+  ].join(" ");
+  return {
+    score,
+    optionsFlowSignal: flow.signal,
+    optionsExposureSignal: exposure.signal,
+    darkPoolSignal: darkPool.signal,
+    status,
+    reason,
+    flags,
+    warnings
+  };
+}
+
+function payloadRows(payload: unknown): Record<string, unknown>[] {
+  const data = objectValue(payload)?.data ?? payload;
+  if (Array.isArray(data)) return data.filter(isObject);
+  if (isObject(data)) {
+    const values = Object.values(data);
+    if (values.every(isObject)) return values as Record<string, unknown>[];
+    const rows = [data, ...values.flatMap((value) => Array.isArray(value) ? value.filter(isObject) : [])];
+    return rows.filter(isObject);
+  }
+  return [];
+}
+
+function exposureCells(payload: unknown, fallbackPrice: number): { strike: number; callExposure: number; putExposure: number }[] {
+  const root = objectValue(payload);
+  const data = objectValue(root?.data);
+  const tickerEntry = firstObject(Object.values(data ?? {})) ?? root;
+  const exposureMap = objectValue(tickerEntry?.exposureMap ?? root?.exposureMap);
+  const cells: { strike: number; callExposure: number; putExposure: number }[] = [];
+  for (const expiration of Object.values(exposureMap ?? {})) {
+    const strikes = objectValue(expiration);
+    for (const [strikeText, cellValue] of Object.entries(strikes ?? {})) {
+      const cell = objectValue(cellValue);
+      const strike = Number(strikeText);
+      if (!Number.isFinite(strike) || !cell) continue;
+      cells.push({
+        strike,
+        callExposure: numberValue(cell.callExposure, cell.callGammaExposure, cell.gammaCallExposure) ?? 0,
+        putExposure: numberValue(cell.putExposure, cell.putGammaExposure, cell.gammaPutExposure) ?? 0
+      });
+    }
+  }
+  if (cells.length) return cells;
+  return payloadRows(payload).map((row) => ({
+    strike: numberValue(row.strike, row.strikePrice) ?? fallbackPrice,
+    callExposure: numberValue(row.callExposure, row.callGammaExposure) ?? 0,
+    putExposure: numberValue(row.putExposure, row.putGammaExposure) ?? 0
+  })).filter((cell) => Number.isFinite(cell.strike));
+}
+
+function darkPoolLevels(payload: unknown): { price: number; notionalValue: number }[] {
+  const root = objectValue(payload);
+  const data = objectValue(root?.data ?? payload);
+  const levels: { price: number; notionalValue: number }[] = [];
+  for (const [priceText, value] of Object.entries(data ?? {})) {
+    const row = objectValue(value);
+    const price = Number(priceText);
+    const notionalValue = numberValue(row?.notionalValue, row?.premium, row?.value) ?? 0;
+    if (Number.isFinite(price) && notionalValue > 0) levels.push({ price, notionalValue });
+  }
+  return levels;
+}
+
+function quantDataUrl(baseUrl: string, path: string): string {
+  return baseUrl.replace(/\/$/, "") + path;
+}
+
+function isFresh(value: string, ttlMs: number, now: Date): boolean {
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) && now.getTime() - parsed < ttlMs;
+}
+
+function objectValue(value: unknown): Record<string, unknown> | undefined {
+  return isObject(value) ? value : undefined;
+}
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function firstObject(values: unknown[]): Record<string, unknown> | undefined {
+  return values.find(isObject);
+}
+
+function numberValue(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const number = typeof value === "number" ? value : typeof value === "string" ? Number(value.replace(/[$,%]/g, "")) : NaN;
+    if (Number.isFinite(number)) return number;
+  }
+  return undefined;
+}
+
+function sumNumbers(rows: Record<string, unknown>[], fields: string[]): number {
+  return rows.reduce((sum, row) => sum + (numberValue(...fields.map((field) => row[field])) ?? 0), 0);
+}
+
+function normalizedString(...values: unknown[]): string {
+  return values.find((value) => typeof value === "string")?.toString().toLowerCase() ?? "";
+}
+
+function booleanish(...values: unknown[]): boolean {
+  return values.some((value) => value === true || value === "true" || value === "yes" || value === 1);
+}
+
+function maxBy<T>(items: T[], select: (item: T) => number): T | undefined {
+  return items.reduce<T | undefined>((best, item) => best === undefined || select(item) > select(best) ? item : best, undefined);
+}
+
+function addDays(date: Date, days: number): Date {
+  return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+}
+
+function isoDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function unique<T>(items: T[]): T[] {
+  return [...new Set(items)];
+}
+
+function formatMoney(value: number): string {
+  const absolute = Math.abs(value);
+  if (absolute >= 1_000_000_000) return "$" + (value / 1_000_000_000).toFixed(1) + "B";
+  if (absolute >= 1_000_000) return "$" + (value / 1_000_000).toFixed(1) + "M";
+  if (absolute >= 1_000) return "$" + Math.round(value / 1_000) + "K";
+  return "$" + Math.round(value);
+}

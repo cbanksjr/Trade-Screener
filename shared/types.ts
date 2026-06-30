@@ -96,6 +96,22 @@ export type InstitutionalEdgeSummary = {
   warnings: string[];
 };
 
+export type OptionsFlowSignal = "bullish" | "mixed" | "bearish" | "neutral";
+export type OptionsExposureSignal = "supportive" | "neutral" | "hostile" | "squeeze_prone";
+export type DarkPoolSignal = "accumulation" | "neutral" | "distribution" | "no_data";
+export type InstitutionalPositioningStatus = "confirmed" | "neutral" | "capped" | "vetoed";
+
+export type InstitutionalPositioningSummary = {
+  score: number;
+  optionsFlowSignal: OptionsFlowSignal;
+  optionsExposureSignal: OptionsExposureSignal;
+  darkPoolSignal: DarkPoolSignal;
+  status: InstitutionalPositioningStatus;
+  reason: string;
+  flags: string[];
+  warnings: string[];
+};
+
 export type LowerTimeframeContext = {
   timeframe: AnalysisTimeframe;
   bias: TimeframeBias;
@@ -230,6 +246,16 @@ export type ScanResult = {
   institutionalEdgeFactors?: InstitutionalEdgeFactor[];
   institutionalEdgeAdjustment?: number;
   institutionalEdgeWarnings?: string[];
+  institutionalPositioningScore?: number;
+  optionsFlowSignal?: OptionsFlowSignal;
+  optionsExposureSignal?: OptionsExposureSignal;
+  darkPoolSignal?: DarkPoolSignal;
+  institutionalPositioningStatus?: InstitutionalPositioningStatus;
+  institutionalPositioningReason?: string;
+  gradeBeforeQuantData?: Grade;
+  finalGrade?: Grade;
+  strongLongCallCandidate?: boolean;
+  flags?: string[];
   gradeCapReasons?: string[];
   multiTimeframeAlignmentSummary: string;
   relativeStrengthSummary: string;

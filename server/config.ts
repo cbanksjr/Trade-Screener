@@ -26,5 +26,10 @@ export const config = {
   fmpStarterSafeMode: (process.env.FMP_STARTER_SAFE_MODE ?? "true") !== "false",
   fmpInstitutionalEdgeMaxCallsPerScan: Number(process.env.FMP_INSTITUTIONAL_EDGE_MAX_CALLS_PER_SCAN ?? 250),
   fmpInstitutionalEdgeProbeTtlHours: Number(process.env.FMP_INSTITUTIONAL_EDGE_PROBE_TTL_HOURS ?? 24),
+  quantDataApiKey: process.env.QUANTDATA_API_KEY ?? "",
+  quantDataBaseUrl: process.env.QUANTDATA_BASE_URL ?? "https://api.quantdata.us",
+  quantDataEnabled: (process.env.QUANTDATA_ENABLED ?? "true") !== "false",
+  quantDataMaxCallsPerScan: Number(process.env.QUANTDATA_MAX_CALLS_PER_SCAN ?? 300),
+  quantDataCacheTtlMinutes: Number(process.env.QUANTDATA_CACHE_TTL_MINUTES ?? 15),
   etfSymbols: process.env.ETF_SYMBOLS ?? ""
 };
