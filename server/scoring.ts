@@ -75,6 +75,7 @@ export function gradeSetup(input: {
   sectorCandles?: Candle[];
   strictFundamentals?: boolean;
   minMarketCap?: number;
+  minBeta?: number;
   minAvgShareVolume?: number;
   minAvgDollarVolume?: number;
   scanRanAt?: Date | string;
@@ -106,6 +107,7 @@ export function gradeSetup(input: {
     strictFundamentals: Boolean(input.strictFundamentals),
     assetType,
     minMarketCap: input.minMarketCap ?? defaultSettings.minMarketCap,
+    minBeta: input.minBeta ?? defaultSettings.minBeta,
     minAvgShareVolume: input.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume
   });
@@ -312,15 +314,17 @@ function evaluateInstitutional(input: {
   strictFundamentals: boolean;
   assetType: AssetType;
   minMarketCap: number;
+  minBeta: number;
   minAvgShareVolume: number;
   minAvgDollarVolume: number;
 }): LayerEvaluation {
   const priceOk = input.price > defaultSettings.minPrice;
+  const betaOk = input.assetType === "etf" || (input.beta === undefined ? !input.strictFundamentals : input.beta >= input.minBeta);
   const marketCapOk = input.assetType === "etf" || (input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= input.minMarketCap);
   const volumeOk = input.assetType === "etf"
     ? input.avgDollarVolume20d >= input.minAvgDollarVolume
     : stockLiquidityPasses(input.avgShareVolume, input.avgDollarVolume20d, input.minAvgShareVolume, input.minAvgDollarVolume);
-  const passed = [priceOk, marketCapOk, volumeOk, input.optionable].filter(Boolean).length;
+  const passed = [priceOk, betaOk, marketCapOk, volumeOk, input.optionable].filter(Boolean).length;
   const detail = input.assetType === "etf"
     ? "ETF price $" + input.price.toFixed(2) + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + "; beta and market cap are not required."
     : "Price $" + input.price.toFixed(2)
@@ -328,7 +332,7 @@ function evaluateInstitutional(input: {
       + ", market cap " + (input.marketCap ? formatMoney(input.marketCap) : "unavailable")
       + ", avg share volume " + formatShares(input.avgShareVolume)
       + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + ".";
-  if (passed === 4) return layer("Institutional Context", "Bullish", detail);
+  if (passed === 5) return layer("Institutional Context", "Bullish", detail);
   return layer("Institutional Context", "Bearish", detail);
 }
 

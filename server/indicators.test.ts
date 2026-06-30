@@ -896,27 +896,32 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
-  it("treats low beta as context rather than a rejection or score penalty", () => {
+  it("requires stocks to have at least 0.75 beta", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
-    const result = gradeSetup({
-      symbol: "LOWBETA",
+    const resultFor = (beta: number) => gradeSetup({
+      symbol: "BETA" + beta,
       candles,
       currentPrice: price,
       fundamentals: {
-        ...strongFundamentals("LOWBETA"),
-        beta: 0.4
+        ...strongFundamentals("BETA" + beta),
+        beta
       },
       optionable: true,
-      options: demoOptions("LOWBETA", price),
+      options: demoOptions("BETA" + beta, price),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
+    const lowBeta = resultFor(0.74);
+    const qualifiedBeta = resultFor(0.75);
 
-    expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(result.grade).toBe("A");
+    expect(lowBeta.passesUniverse).toBe(false);
+    expect(lowBeta.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
+    expect(lowBeta.longCallDecision).toBe("Avoid");
+    expect(qualifiedBeta.passesUniverse).toBe(true);
+    expect(qualifiedBeta.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
+    expect(qualifiedBeta.longCallDecision).toBe("Strong Long Call Candidate");
   });
 
   it("passes stock liquidity with either 600K shares or $300M average dollar volume", () => {

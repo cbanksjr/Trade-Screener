@@ -78,7 +78,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 
 - Optionable stock or selected ETF
 - Price above $20
-- Beta is displayed as context when available but is not a rejection gate or scoring penalty
+- Stock beta >= 0.75
 - Market cap >= $2B when Schwab provides market cap
 - ETFs bypass beta, market-cap, sector, and single-company earnings requirements
 - Stock liquidity passes with either average share volume >= 600K or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last

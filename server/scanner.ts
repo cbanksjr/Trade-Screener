@@ -444,6 +444,7 @@ async function scanSymbol(input: {
       sector,
       sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
       minMarketCap: settings.minMarketCap,
+      minBeta: settings.minBeta,
       minAvgShareVolume: settings.minAvgShareVolume,
       minAvgDollarVolume: settings.minAvgDollarVolume,
       scanRanAt
