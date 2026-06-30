@@ -427,28 +427,48 @@ async function scanSymbol(input: {
     }
     fundamentals = withCandleLiquidityFallback(fundamentals, candles);
 
-    const sector = input.sector ?? fundamentals.sector;
-    const result = gradeSetup({
-      symbol,
-      companyName: quote?.companyName,
-      assetType,
-      candles,
-      currentPrice: price,
-      fundamentals,
-      optionable: options.length > 0,
-      options,
-      weeklyIndicators: weekly.indicators,
-      weeklySqueezeWarning: weekly.warning,
-      spyCandles: input.spyCandles,
-      qqqCandles: input.qqqCandles,
-      sector,
-      sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
-      minMarketCap: settings.minMarketCap,
-      minBeta: settings.minBeta,
-      minAvgShareVolume: settings.minAvgShareVolume,
-      minAvgDollarVolume: settings.minAvgDollarVolume,
-      scanRanAt
-    });
+    const buildResult = (fundamentalData: Fundamentals) => {
+      const sector = input.sector ?? fundamentalData.sector;
+      return gradeSetup({
+        symbol,
+        companyName: quote?.companyName,
+        assetType,
+        candles,
+        currentPrice: price,
+        fundamentals: fundamentalData,
+        optionable: options.length > 0,
+        options,
+        weeklyIndicators: weekly.indicators,
+        weeklySqueezeWarning: weekly.warning,
+        spyCandles: input.spyCandles,
+        qqqCandles: input.qqqCandles,
+        sector,
+        sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
+        minMarketCap: settings.minMarketCap,
+        minBeta: settings.minBeta,
+        minAvgShareVolume: settings.minAvgShareVolume,
+        minAvgDollarVolume: settings.minAvgDollarVolume,
+        scanRanAt
+      });
+    };
+
+    let result = buildResult(fundamentals);
+    if (assetType === "stock" && input.fmp && shouldIncludeResult(result)) {
+      const verified = await input.fmp.verifyNextEarningsDate(symbol, fundamentals.nextEarningsDate);
+      verified.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
+      if (verified.usedLive) usedLive = true;
+      const verifiedDate = verified.data?.nextEarningsDate;
+      if (verifiedDate && verifiedDate !== fundamentals.nextEarningsDate) {
+        fundamentals = mergeFundamentals(symbol, quote, {
+          ...(earlyFmp?.data ?? { symbol }),
+          ...(contextFmp?.data ?? {}),
+          nextEarningsDate: verifiedDate,
+          symbol
+        });
+        fundamentals = withCandleLiquidityFallback(fundamentals, candles);
+        result = buildResult(fundamentals);
+      }
+    }
     result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
     result.warnings.push(...warnings
       .filter((warning) => warning.startsWith(symbol + ": "))

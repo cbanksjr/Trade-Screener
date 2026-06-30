@@ -55,6 +55,20 @@ describe("FMP fallback fundamentals", () => {
     ], "AAPL", new Date("2026-06-20T12:00:00Z"))).toBe("2026-07-25");
   });
 
+  it("ignores fiscal period end dates when selecting earnings reports", () => {
+    expect(normalizeFmpEarnings([
+      { symbol: "AAPL", fiscalDateEnding: "2026-07-01" },
+      { symbol: "AAPL", reportDate: "2026-07-25" }
+    ], "AAPL", new Date("2026-06-20T12:00:00Z"))).toBe("2026-07-25");
+
+    const calendar = normalizeFmpEarningsCalendar([
+      { symbol: "AAPL", fiscalDateEnding: "2026-07-01" },
+      { symbol: "AAPL", reportedDate: "2026-07-25" }
+    ], ["AAPL"], new Date("2026-06-20T12:00:00Z"));
+
+    expect([...calendar.entries()]).toEqual([["AAPL", "2026-07-25"]]);
+  });
+
   it("builds next earnings dates from a shared calendar response", () => {
     const calendar = normalizeFmpEarningsCalendar([
       { symbol: "AAPL", date: "2026-05-01" },
@@ -211,6 +225,36 @@ describe("FMP fallback fundamentals", () => {
     expect(requests).toEqual(["/stable/earnings"]);
     expect(result.warnings).toEqual([]);
     expect(result.data?.nextEarningsDate).toBe("2026-07-25");
+  });
+
+  it("verifies cached calendar earnings with exact-symbol earnings and keeps the earliest future date", async () => {
+    const requests: string[] = [];
+    const fallback = createFmpFallback({
+      apiKey: "test",
+      baseUrl: "https://example.test/stable",
+      maxCalls: 1,
+      cache: {
+        AAPL: {
+          updatedAt: "2026-06-20T12:00:00.000Z",
+          data: { symbol: "AAPL", nextEarningsDate: "2026-08-04" }
+        }
+      },
+      now: () => new Date("2026-06-20T13:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = new URL(input.toString());
+        requests.push(url.pathname);
+        return new Response(JSON.stringify([
+          { symbol: "AAPL", date: "2026-07-17" },
+          { symbol: "AAPL", date: "2026-08-04" }
+        ]));
+      }
+    });
+
+    const result = await fallback.verifyNextEarningsDate("AAPL", "2026-08-04");
+
+    expect(requests).toEqual(["/stable/earnings"]);
+    expect(result.data?.nextEarningsDate).toBe("2026-07-17");
+    expect(fallback.cache().AAPL.data.nextEarningsDate).toBe("2026-07-17");
   });
 
   it("warns when exact-symbol earnings fallback has no future date", async () => {

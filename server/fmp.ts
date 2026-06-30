@@ -173,8 +173,39 @@ export function createFmpFallback(input: {
     }
   }
 
+  async function verifyNextEarningsDate(symbol: string, candidateDate?: string): Promise<FmpEnrichment> {
+    const upperSymbol = symbol.trim().toUpperCase();
+    if (!upperSymbol || !input.apiKey) return { warnings: [], usedLive: false };
+
+    const call = await callWithBudget(() => fetchNextEarningsDate(upperSymbol, input, fetchImpl, now()));
+    if (call.warning) return { warnings: [call.warning], usedLive: false };
+
+    if (!call.data?.nextEarningsDate) {
+      return {
+        data: candidateDate ? { symbol: upperSymbol, nextEarningsDate: candidateDate } : undefined,
+        warnings: ["Exact-symbol next earnings date unavailable from FMP."],
+        usedLive: true
+      };
+    }
+
+    const nextEarningsDate = earliestFutureDate([candidateDate, call.data.nextEarningsDate], now());
+    if (!nextEarningsDate) return { warnings: ["Next earnings date unavailable from FMP."], usedLive: true };
+
+    cache[upperSymbol] = {
+      updatedAt: now().toISOString(),
+      data: {
+        ...(cache[upperSymbol]?.data ?? { symbol: upperSymbol }),
+        symbol: upperSymbol,
+        nextEarningsDate
+      }
+    };
+    dirty = true;
+    return { data: { symbol: upperSymbol, nextEarningsDate }, warnings: [], usedLive: true };
+  }
+
   return {
     enrich,
+    verifyNextEarningsDate,
     earningsCalendar,
     cache: () => cache,
     isDirty: () => dirty,
@@ -225,7 +256,7 @@ export function normalizeFmpEarnings(payload: unknown, symbol: string, now = new
       const rowSymbol = stringValue(item.symbol, item.Symbol)?.toUpperCase();
       return rowSymbol === upperSymbol;
     })
-    .map((item) => stringValue(item.date, item.reportDate, item.reportedDate, item.fiscalDateEnding))
+    .map((item) => stringValue(item.date, item.reportDate, item.reportedDate))
     .filter((value): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
     .filter((value) => new Date(value + "T00:00:00.000Z").getTime() >= today.getTime())
     .sort()[0];
@@ -244,7 +275,7 @@ export function normalizeFmpEarningsCalendar(payload: unknown, symbols: Iterable
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item))
     .map((item) => ({
       symbol: stringValue(item.symbol, item.Symbol)?.toUpperCase(),
-      date: stringValue(item.date, item.reportDate, item.reportedDate, item.fiscalDateEnding)
+      date: stringValue(item.date, item.reportDate, item.reportedDate)
     }))
     .filter((item): item is { symbol: string; date: string } => typeof item.symbol === "string" && wanted.has(item.symbol) && typeof item.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(item.date))
     .filter((item) => new Date(item.date + "T00:00:00.000Z").getTime() >= today.getTime())
@@ -304,6 +335,15 @@ function needsProfile(needed: FmpNeededFields): boolean {
 
 function needsAnyField(needed: FmpNeededFields): boolean {
   return Boolean(needsProfile(needed) || needed.nextEarningsDate);
+}
+
+function earliestFutureDate(values: Array<string | undefined>, now: Date): string | undefined {
+  const today = new Date(now);
+  today.setHours(0, 0, 0, 0);
+  return values
+    .filter((value): value is string => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value))
+    .filter((value) => new Date(value + "T00:00:00.000Z").getTime() >= today.getTime())
+    .sort()[0];
 }
 
 function hasNeededFields(data: FmpFundamentals, needed: FmpNeededFields): boolean {

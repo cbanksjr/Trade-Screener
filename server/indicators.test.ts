@@ -507,6 +507,8 @@ describe("layer decision engine", () => {
     });
 
     expect(result.assetType).toBe("etf");
+    expect(result.nextEarningsDate).toBeUndefined();
+    expect(result.daysUntilNextEarnings).toBeUndefined();
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
     expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
@@ -541,17 +543,19 @@ describe("layer decision engine", () => {
     const fortyFiveDay = resultFor(45);
 
     expect(fiveDay.longCallDecision).toBe("Avoid");
+    expect(fiveDay.nextEarningsDate).toBeDefined();
+    expect(fiveDay.daysUntilNextEarnings).toBe(5);
     expect(fiveDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bearish");
-    expect(fiveDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Earnings are within 14 days.");
+    expect(fiveDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Next earnings " + fiveDay.nextEarningsDate?.slice(0, 10) + " is within 14 days.");
     expect(fourteenDay.longCallDecision).toBe("Avoid");
     expect(fourteenDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bearish");
     expect(fifteenDay.longCallDecision).not.toBe("Avoid");
     expect(fifteenDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Neutral");
-    expect(fifteenDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Earnings are 15-29 days away; catalyst risk is elevated.");
+    expect(fifteenDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Next earnings " + fifteenDay.nextEarningsDate?.slice(0, 10) + " is 15-29 days away; catalyst risk is elevated.");
     expect(twentyNineDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Neutral");
     expect(thirtyDay.longCallDecision).toBe("Strong Long Call Candidate");
     expect(thirtyDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bullish");
-    expect(thirtyDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Next earnings is at least 30 days away.");
+    expect(thirtyDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Next earnings " + thirtyDay.nextEarningsDate?.slice(0, 10) + " is at least 30 days away.");
     expect(fortyFiveDay.longCallDecision).toBe("Strong Long Call Candidate");
     expect(fortyFiveDay.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bullish");
   });
@@ -577,9 +581,11 @@ describe("layer decision engine", () => {
     });
 
     expect(result.lastUpdated).toBe(scanRanAt.toISOString());
+    expect(result.nextEarningsDate).toBe("2026-07-15");
+    expect(result.daysUntilNextEarnings).toBe(14);
     expect(result.longCallDecision).toBe("Avoid");
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bearish");
-    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Earnings are within 14 days.");
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Next earnings 2026-07-15 is within 14 days.");
   });
 
   it("classifies sector strength versus SPY", () => {

@@ -247,6 +247,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
           <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
           <Metric label="Setup Score" value={setupScoreLabel(result)} />
+          <Metric label="Next Earnings" value={nextEarningsLabel(result)} />
           <Metric label="Momentum" value={momentumLabel(result)} />
           <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
@@ -420,6 +421,12 @@ function setupScoreValue(result: ScanResult): number {
 
 function setupScoreLabel(result: ScanResult): string {
   return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
+}
+
+function nextEarningsLabel(result: ScanResult): string {
+  if (result.assetType === "etf") return "N/A";
+  if (!result.nextEarningsDate) return "Unavailable";
+  return result.nextEarningsDate + (typeof result.daysUntilNextEarnings === "number" ? " · " + result.daysUntilNextEarnings + "d" : "");
 }
 
 function tradeMark(result: ScanResult): "Take" | "Avoid" {

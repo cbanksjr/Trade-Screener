@@ -219,6 +219,8 @@ export type ScanResult = {
   avgShareVolume?: number;
   avgDollarVolume20d: number;
   fundamentalSources?: FundamentalFieldSources;
+  nextEarningsDate?: string;
+  daysUntilNextEarnings?: number;
   optionable: boolean;
   passesUniverse: boolean;
   grade: Grade;

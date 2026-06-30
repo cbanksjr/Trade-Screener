@@ -89,6 +89,8 @@ export function gradeSetup(input: {
   const beta = input.fundamentals?.beta;
   const marketCap = input.fundamentals?.marketCap;
   const sector = input.sector ?? input.fundamentals?.sector;
+  const nextEarningsDate = input.fundamentals?.nextEarningsDate;
+  const daysUntilNextEarnings = assetType === "stock" ? daysUntil(nextEarningsDate, scanRanAt) : undefined;
   const avgShareVolume = input.fundamentals?.avgShareVolume ?? average(input.candles.slice(-20).map((candle) => candle.volume));
   const avgDollarVolume20d = input.fundamentals?.avgDollarVolume20d ?? average(input.candles.slice(-20).map((candle) => candle.volume * candle.close));
   const dailyContext = withCurrentPrice(buildTimeframeContext("daily", input.candles), price);
@@ -136,7 +138,7 @@ export function gradeSetup(input: {
     assetType,
     sector,
     sectorCandles: input.sectorCandles,
-    nextEarningsDate: input.fundamentals?.nextEarningsDate,
+    nextEarningsDate,
     scanRanAt
   });
   const weeklyQualificationMode = weeklyContext.weeklyQualificationMode ?? "none";
@@ -169,6 +171,8 @@ export function gradeSetup(input: {
     avgShareVolume: round(avgShareVolume, 0),
     avgDollarVolume20d: round(avgDollarVolume20d, 0),
     fundamentalSources: input.fundamentals?.sources,
+    nextEarningsDate,
+    daysUntilNextEarnings,
     optionable: input.optionable,
     passesUniverse: institutional.status !== "Bearish" && institutional.status !== "Insufficient Data",
     grade,
@@ -567,9 +571,10 @@ function evaluateCatalystSafety(nextEarningsDate: string | undefined, scanRanAt:
   if (!nextEarningsDate) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
   const days = daysUntil(nextEarningsDate, scanRanAt);
   if (days === undefined || days < 0) return factor("Catalyst Safety", "Insufficient Data", "Next earnings date unavailable; A grade capped.");
-  if (days <= EARNINGS_AVOID_DAYS) return factor("Catalyst Safety", "Bearish", "Earnings are within " + EARNINGS_AVOID_DAYS + " days.");
-  if (days <= EARNINGS_NEUTRAL_DAYS) return factor("Catalyst Safety", "Neutral", "Earnings are 15-29 days away; catalyst risk is elevated.");
-  return factor("Catalyst Safety", "Bullish", "Next earnings is at least 30 days away.");
+  const dateLabel = dateOnlyLabel(nextEarningsDate) ?? nextEarningsDate;
+  if (days <= EARNINGS_AVOID_DAYS) return factor("Catalyst Safety", "Bearish", "Next earnings " + dateLabel + " is within " + EARNINGS_AVOID_DAYS + " days.");
+  if (days <= EARNINGS_NEUTRAL_DAYS) return factor("Catalyst Safety", "Neutral", "Next earnings " + dateLabel + " is 15-29 days away; catalyst risk is elevated.");
+  return factor("Catalyst Safety", "Bullish", "Next earnings " + dateLabel + " is at least 30 days away.");
 }
 
 function evaluateEtfCatalystSafety(): InstitutionalFactor {
@@ -587,7 +592,8 @@ function factorContribution(name: InstitutionalFactorName, status: LayerStatus):
   return 0;
 }
 
-function daysUntil(value: string, from: Date): number | undefined {
+function daysUntil(value: string | undefined, from: Date): number | undefined {
+  if (!value) return undefined;
   const target = dateOnlyUtc(value);
   if (!target) return undefined;
   const reference = dateOnlyUtc(from);
@@ -614,6 +620,11 @@ function dateOnlyUtc(value: string | Date): Date | undefined {
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) return undefined;
   return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+}
+
+function dateOnlyLabel(value: string): string | undefined {
+  const date = dateOnlyUtc(value);
+  return date?.toISOString().slice(0, 10);
 }
 
 export function rankCallOptions(options: OptionContract[], price: number): OptionContract[] {
