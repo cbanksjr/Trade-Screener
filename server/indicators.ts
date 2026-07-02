@@ -5,9 +5,20 @@ export const MIN_CANDLES_REQUIRED = 90;
 export function ema(values: number[], period: number): number[] {
   const multiplier = 2 / (period + 1);
   const output: number[] = [];
+  const seedLength = Math.min(period, values.length);
+  let seedSum = 0;
   values.forEach((value, index) => {
-    if (index === 0) output.push(value);
-    else output.push(value * multiplier + output[index - 1] * (1 - multiplier));
+    if (index < seedLength - 1) {
+      seedSum += value;
+      output.push(NaN);
+      return;
+    }
+    if (index === seedLength - 1) {
+      seedSum += value;
+      output.push(seedSum / seedLength);
+      return;
+    }
+    output.push(value * multiplier + output[index - 1] * (1 - multiplier));
   });
   return output;
 }

@@ -3,6 +3,7 @@ import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeSt
 import { demoOptions } from "./demoData";
 import {
   activeSqueezeDotCount,
+  ema,
   latestIndicators,
   linearRegressionLast,
   MIN_CANDLES_REQUIRED,
@@ -27,6 +28,25 @@ import {
 import { buildLowerTimeframeConfluence } from "./timeframes";
 
 describe("indicator calculations", () => {
+  it("seeds the EMA with a simple moving average instead of the first raw value", () => {
+    const values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    const series = ema(values, 3);
+
+    expect(series[0]).toBeNaN();
+    expect(series[1]).toBeNaN();
+    expect(series[2]).toBeCloseTo(2);
+    expect(series[3]).toBeCloseTo(3);
+    expect(series[4]).toBeCloseTo(4);
+    expect(series[9]).toBeCloseTo(9);
+  });
+
+  it("falls back to an SMA of the whole series when it is shorter than the period", () => {
+    const series = ema([2, 4, 6], 5);
+
+    expect(series).toEqual([NaN, NaN, 4]);
+  });
+
   it("calculates five-EMA compression indicators from candle history", () => {
     const indicators = latestIndicators(bullishCompressionCandles());
 
