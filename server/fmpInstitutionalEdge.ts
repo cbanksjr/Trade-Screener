@@ -1,5 +1,6 @@
 import type { AssetType, InstitutionalEdgeFactor, InstitutionalEdgeSummary, LayerStatus } from "../shared/types";
 import { config } from "./config";
+import { fetchWithRetry } from "./httpRetry";
 import { getSetting, setSetting } from "./sqlite";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -137,7 +138,7 @@ export function createFmpInstitutionalEdgeProvider(input: {
 
     remainingCalls -= 1;
     const path = endpointPath(endpoint);
-    const response = await fetchImpl(fmpUrl(input.baseUrl, path, { ...params, apikey: input.apiKey }));
+    const response = await fetchWithRetry(() => fetchImpl(fmpUrl(input.baseUrl, path, { ...params, apikey: input.apiKey })));
     const text = await response.text();
     if (isUnavailableStatus(response.status)) {
       markAvailability(endpoint, false, `FMP ${path} unavailable: ${response.status}`);

@@ -6,6 +6,7 @@ import type {
   OptionsFlowSignal
 } from "../shared/types";
 import { config } from "./config";
+import { fetchWithRetry } from "./httpRetry";
 import { getSetting, setSetting } from "./sqlite";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -138,14 +139,14 @@ export function createQuantDataPositioningProvider(input: {
     if (remainingCalls <= 0) return { warnings: ["QuantData call budget exhausted."], usedLive: false };
 
     remainingCalls -= 1;
-    const response = await fetchImpl(quantDataUrl(input.baseUrl, ENDPOINT_PATHS[endpoint]), {
+    const response = await fetchWithRetry(() => fetchImpl(quantDataUrl(input.baseUrl, ENDPOINT_PATHS[endpoint]), {
       method: "POST",
       headers: {
         Authorization: "Bearer " + input.apiKey,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(body)
-    });
+    }));
     const text = await response.text();
     if (response.status === 401 || response.status === 403) {
       return { warnings: [`QuantData ${endpoint} was not authorized; skipped.`], usedLive: true };

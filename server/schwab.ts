@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
+import { fetchWithRetry } from "./httpRetry";
 import { getSetting, setSetting } from "./sqlite";
 import type { BrokerStatus, Candle, FundamentalAnalysis, FundamentalFieldSources, OptionContract, ScanResult } from "../shared/types";
 
@@ -458,14 +459,14 @@ async function refreshAccessToken(tokens: SchwabTokens): Promise<SchwabTokens> {
 
 async function tokenRequest(params: Record<string, string>): Promise<SchwabTokenResponse> {
   const body = new URLSearchParams(params);
-  const response = await fetch(`${config.schwabAuthBaseUrl}/token`, {
+  const response = await fetchWithRetry(() => fetch(`${config.schwabAuthBaseUrl}/token`, {
     method: "POST",
     headers: {
       Authorization: `Basic ${Buffer.from(`${config.schwabAppKey}:${config.schwabAppSecret}`).toString("base64")}`,
       "Content-Type": "application/x-www-form-urlencoded"
     },
     body
-  });
+  }));
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Schwab token request failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 180)}` : ""}`);
@@ -477,12 +478,12 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
   const token = await getAccessToken();
   const url = new URL(`${config.schwabMarketDataBaseUrl}${path}`);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(() => fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json"
     }
-  });
+  }));
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Schwab request failed: ${response.status} ${response.statusText}${body ? ` - ${body.slice(0, 180)}` : ""}`);
@@ -490,11 +491,18 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
   return response.json() as Promise<T>;
 }
 
+let refreshPromise: Promise<SchwabTokens> | null = null;
+
 async function getAccessToken(): Promise<string> {
   const tokens = await readTokens();
   if (!tokens) throw new Error("Schwab is not connected. Use Connect Schwab first.");
   if (new Date(tokens.accessTokenExpiresAt).getTime() > Date.now() + 60_000) return tokens.accessToken;
-  return (await refreshAccessToken(tokens)).accessToken;
+  if (!refreshPromise) {
+    refreshPromise = refreshAccessToken(tokens).finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return (await refreshPromise).accessToken;
 }
 
 async function readTokens(): Promise<SchwabTokens | undefined> {
