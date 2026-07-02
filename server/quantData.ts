@@ -6,6 +6,7 @@ import type {
   OptionsFlowSignal
 } from "../shared/types";
 import { config } from "./config";
+import { fetchWithRetry } from "./httpRetry";
 import { getSetting, setSetting } from "./sqlite";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
@@ -138,14 +139,14 @@ export function createQuantDataPositioningProvider(input: {
     if (remainingCalls <= 0) return { warnings: ["QuantData call budget exhausted."], usedLive: false };
 
     remainingCalls -= 1;
-    const response = await fetchImpl(quantDataUrl(input.baseUrl, ENDPOINT_PATHS[endpoint]), {
+    const response = await fetchWithRetry(() => fetchImpl(quantDataUrl(input.baseUrl, ENDPOINT_PATHS[endpoint]), {
       method: "POST",
       headers: {
         Authorization: "Bearer " + input.apiKey,
         "Content-Type": "application/json"
       },
       body: JSON.stringify(body)
-    });
+    }));
     const text = await response.text();
     if (response.status === 401 || response.status === 403) {
       return { warnings: [`QuantData ${endpoint} was not authorized; skipped.`], usedLive: true };
@@ -214,7 +215,7 @@ export function normalizeOptionsFlow(netDriftPayload: unknown, orderFlowPayload?
     if ((isPut && askSide) || sentiment.includes("bear")) bearishRowCount += 1;
   }
 
-  const callPremium = netCallPremium + askSideCallPremium;
+  const callPremium = netCallPremium;
   const putPremium = netPutPremium;
   const totalPremium = callPremium + putPremium;
   const flags: string[] = [];

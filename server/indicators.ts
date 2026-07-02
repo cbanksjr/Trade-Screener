@@ -1,11 +1,24 @@
 import type { Candle, IndicatorSnapshot, SqueezeMomentumColor, SqueezeState } from "../shared/types";
 
+export const MIN_CANDLES_REQUIRED = 90;
+
 export function ema(values: number[], period: number): number[] {
   const multiplier = 2 / (period + 1);
   const output: number[] = [];
+  const seedLength = Math.min(period, values.length);
+  let seedSum = 0;
   values.forEach((value, index) => {
-    if (index === 0) output.push(value);
-    else output.push(value * multiplier + output[index - 1] * (1 - multiplier));
+    if (index < seedLength - 1) {
+      seedSum += value;
+      output.push(NaN);
+      return;
+    }
+    if (index === seedLength - 1) {
+      seedSum += value;
+      output.push(seedSum / seedLength);
+      return;
+    }
+    output.push(value * multiplier + output[index - 1] * (1 - multiplier));
   });
   return output;
 }
@@ -40,8 +53,8 @@ export function trueRanges(candles: Candle[]): number[] {
 }
 
 export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
-  if (candles.length < 90) {
-    throw new Error("At least 90 candles are required to calculate the compression setup.");
+  if (candles.length < MIN_CANDLES_REQUIRED) {
+    throw new Error("At least " + MIN_CANDLES_REQUIRED + " candles are required to calculate the compression setup.");
   }
 
   const closes = candles.map((candle) => candle.close);
@@ -120,10 +133,45 @@ export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
   };
 }
 
+export function squeezeStateSeries(candles: Candle[]): SqueezeState[] {
+  const squeezePeriod = 20;
+  const closes = candles.map((candle) => candle.close);
+  const basisSeries = sma(closes, squeezePeriod);
+  const deviationSeries = rollingStandardDeviation(closes, squeezePeriod);
+  const kcRangeSeries = sma(trueRanges(candles), squeezePeriod);
+
+  return candles.map((_candle, index) => {
+    const basis = basisSeries[index];
+    const deviation = deviationSeries[index];
+    const kcRange = kcRangeSeries[index];
+    const bbUpper = basis + deviation * 2;
+    const bbLower = basis - deviation * 2;
+    return squeezeState(
+      bbUpper,
+      bbLower,
+      basis + kcRange * 2,
+      basis - kcRange * 2,
+      basis + kcRange * 1.5,
+      basis - kcRange * 1.5,
+      basis + kcRange,
+      basis - kcRange
+    );
+  });
+}
+
+function rollingStandardDeviation(values: number[], period: number): number[] {
+  return values.map((_, index) => {
+    const start = Math.max(0, index - period + 1);
+    return standardDeviation(values.slice(start, index + 1));
+  });
+}
+
 export function activeSqueezeDotCount(candles: Candle[]): number {
+  if (candles.length < MIN_CANDLES_REQUIRED) return 0;
+  const states = squeezeStateSeries(candles);
   let count = 0;
-  for (let end = candles.length; end >= 90; end -= 1) {
-    if (!isActiveSqueeze(latestIndicators(candles.slice(0, end)).squeezeState)) break;
+  for (let index = candles.length - 1; index >= MIN_CANDLES_REQUIRED - 1; index -= 1) {
+    if (!isActiveSqueeze(states[index])) break;
     count += 1;
   }
   return count;

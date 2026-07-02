@@ -1,5 +1,7 @@
-import { describe, expect, it } from "vitest";
-import { mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { config } from "./config";
+import { fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
+import { initDb, setSetting } from "./sqlite";
 
 describe("Schwab response normalizers", () => {
   it("normalizes batch quote payloads and calculates average dollar volume", () => {
@@ -33,6 +35,44 @@ describe("Schwab response normalizers", () => {
       lastEarningsDate: undefined,
       peRatio: undefined
     }]);
+  });
+
+  it("preserves negative and zero EPS, beta, and P/E instead of treating them as unavailable", () => {
+    const [quote] = normalizeSchwabQuotes({
+      LOSSCO: {
+        symbol: "LOSSCO",
+        quote: { lastPrice: 15, totalVolume: 500000 },
+        reference: { description: "LOSS MAKING CO" },
+        fundamental: {
+          avg10DaysVolume: 1000000,
+          beta: -0.4,
+          marketCap: 5000000000,
+          eps: -2.15,
+          peRatio: -6.98
+        }
+      }
+    });
+
+    expect(quote.beta).toBe(-0.4);
+    expect(quote.eps).toBe(-2.15);
+    expect(quote.peRatio).toBe(-6.98);
+  });
+
+  it("still treats zero or negative market cap and average volume as unavailable", () => {
+    const [quote] = normalizeSchwabQuotes({
+      ZEROVOL: {
+        symbol: "ZEROVOL",
+        quote: { lastPrice: 15, totalVolume: 500000 },
+        reference: { description: "ZERO VOLUME CO" },
+        fundamental: {
+          avg10DaysVolume: 0,
+          marketCap: -1
+        }
+      }
+    });
+
+    expect(quote.averageVolume).toBeUndefined();
+    expect(quote.marketCap).toBeUndefined();
   });
 
   it("normalizes compact fundamental analysis fields", () => {
@@ -343,6 +383,35 @@ describe("Schwab response normalizers", () => {
     expect(contracts[0].score).toBeGreaterThan(0);
   });
 
+  it("computes days-to-expiration against the correct UTC market-close offset across DST", () => {
+    const optionAt = (expirationDate: string) => normalizeSchwabCallOptions({
+      callExpDateMap: {
+        [expirationDate + ":1"]: {
+          "200.0": [{
+            symbol: "TEST",
+            expirationDate,
+            strikePrice: 200,
+            bid: 1,
+            ask: 1.1
+          }]
+        }
+      }
+    }, 200)[0];
+
+    try {
+      // EDT (summer): market close is 20:00 UTC (4pm ET).
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
+      expect(optionAt("2026-07-17").dte).toBe(17);
+
+      // EST (winter): market close is 21:00 UTC (4pm ET).
+      vi.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      expect(optionAt("2026-01-16").dte).toBe(16);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("normalizes put option chains into liquid-put-compatible contracts", () => {
     const contracts = normalizeSchwabPutOptions({
       putExpDateMap: {
@@ -377,4 +446,73 @@ describe("Schwab response normalizers", () => {
     expect(contracts[0].score).toBeGreaterThan(0);
   });
 
+});
+
+describe("Schwab request resilience", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it("deduplicates concurrent token refreshes so only one refresh request is sent", async () => {
+    await initDb();
+    await setSetting("schwabTokens", {
+      accessToken: "expired-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: new Date(Date.now() - 60_000).toISOString()
+    });
+
+    let refreshCalls = 0;
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.startsWith(`${config.schwabAuthBaseUrl}/token`)) {
+        refreshCalls += 1;
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        return new Response(JSON.stringify({ access_token: "fresh-token", refresh_token: "refresh-token", expires_in: 1800 }), { status: 200 });
+      }
+      if (url.startsWith(`${config.schwabMarketDataBaseUrl}/quotes`)) {
+        const symbol = new URL(url).searchParams.get("symbols") ?? "UNKNOWN";
+        return new Response(JSON.stringify({
+          [symbol]: { symbol, quote: { lastPrice: 100 }, reference: {}, fundamental: {} }
+        }), { status: 200 });
+      }
+      throw new Error("Unexpected fetch to " + url);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    await Promise.all(["AAPL", "MSFT", "GOOGL", "TSLA"].map((symbol) => fetchQuote(symbol)));
+
+    expect(refreshCalls).toBe(1);
+  });
+
+  it("retries a transient 429 before succeeding on a quote request", async () => {
+    await initDb();
+    await setSetting("schwabTokens", {
+      accessToken: "valid-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    });
+
+    let quoteAttempts = 0;
+    const fetchImpl = vi.fn(async (input: string | URL) => {
+      const url = String(input);
+      if (url.startsWith(`${config.schwabAuthBaseUrl}/token`)) {
+        return new Response(JSON.stringify({ access_token: "valid-token", refresh_token: "refresh-token", expires_in: 1800 }), { status: 200 });
+      }
+      if (url.startsWith(`${config.schwabMarketDataBaseUrl}/quotes`)) {
+        quoteAttempts += 1;
+        if (quoteAttempts < 2) return new Response("rate limited", { status: 429 });
+        const symbol = new URL(url).searchParams.get("symbols") ?? "UNKNOWN";
+        return new Response(JSON.stringify({
+          [symbol]: { symbol, quote: { lastPrice: 210 }, reference: {}, fundamental: {} }
+        }), { status: 200 });
+      }
+      throw new Error("Unexpected fetch to " + url);
+    });
+    vi.stubGlobal("fetch", fetchImpl);
+
+    const quote = await fetchQuote("RETRY");
+
+    expect(quote?.price).toBe(210);
+    expect(quoteAttempts).toBe(2);
+  });
 });

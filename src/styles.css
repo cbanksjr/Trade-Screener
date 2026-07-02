@@ -410,6 +410,12 @@ small,
   transform: translateY(-0.18em);
 }
 
+.demo-badge {
+  background: color-mix(in srgb, var(--warning) 16%, var(--panel));
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+  color: var(--warning);
+}
+
 .candidate-card-top b {
   color: var(--accent-strong);
   font-size: 0.86rem;

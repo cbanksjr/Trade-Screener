@@ -257,8 +257,6 @@ export type ScanResult = {
   darkPoolSignal?: DarkPoolSignal;
   institutionalPositioningStatus?: InstitutionalPositioningStatus;
   institutionalPositioningReason?: string;
-  gradeBeforeQuantData?: Grade;
-  finalGrade?: Grade;
   strongLongCallCandidate?: boolean;
   flags?: string[];
   gradeCapReasons?: string[];

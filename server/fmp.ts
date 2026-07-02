@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { fetchWithRetry } from "./httpRetry";
 import { getSetting, setSetting } from "./sqlite";
 
 export type FmpFundamentals = {
@@ -311,7 +312,7 @@ async function fetchEarningsCalendar(input: { apiKey: string; baseUrl: string },
 
 async function fmpJson(baseUrl: string, path: string, params: Record<string, string>, fetchImpl: FetchLike): Promise<unknown> {
   const url = fmpUrl(baseUrl, path, params);
-  const response = await fetchImpl(url);
+  const response = await fetchWithRetry(() => fetchImpl(url));
   const text = await response.text();
   if (response.status === 429) throw new Error(`FMP ${path} request was rate limited.`);
   if (!response.ok) throw new Error(`FMP request failed: ${response.status} ${response.statusText}`);

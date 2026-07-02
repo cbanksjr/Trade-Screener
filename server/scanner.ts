@@ -4,7 +4,7 @@ import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
-import { activeSqueezeDotCount, latestIndicators } from "./indicators";
+import { activeSqueezeDotCount, latestIndicators, MIN_CANDLES_REQUIRED } from "./indicators";
 import { createQuantDataPositioningScanProvider } from "./quantData";
 import {
   A_SETUP_SCORE_THRESHOLD,
@@ -19,6 +19,7 @@ import {
   applyInstitutionalEdge,
   applyInstitutionalPositioning,
   defaultSettings,
+  gradeFromSetupScore,
   gradeSetup,
   isSqueezeActive,
   resolveDailyEntryQualificationMode,
@@ -143,6 +144,14 @@ export async function readScanMetadata(): Promise<ScanMetadata> {
     nextRefreshAt: stored.nextRefreshAt,
     isRefreshing: Boolean(activeScan)
   };
+}
+
+export async function recordUniverseWarning(message: string): Promise<void> {
+  const metadata = await getScanMetadata();
+  await setScanMetadata({
+    ...metadata,
+    lastScanWarnings: [...new Set([...(metadata.lastScanWarnings ?? []), message])]
+  });
 }
 
 export async function shouldAutoRefresh(): Promise<boolean> {
@@ -372,17 +381,17 @@ async function scanSymbol(input: {
     }
 
     let candles = canUseLiveSchwab ? await fetchHistory(symbol) : [];
-    if (candles.length >= 50) {
+    if (candles.length >= MIN_CANDLES_REQUIRED) {
       candlesSource = "schwab";
       usedLive = true;
     }
-    if (candles.length < 50 && allowDemoFallback) {
-      if (canUseLiveSchwab) warnings.push(symbol + ": Schwab returned fewer than 50 historical candles; demo candles were used.");
+    if (candles.length < MIN_CANDLES_REQUIRED && allowDemoFallback) {
+      if (canUseLiveSchwab) warnings.push(symbol + ": Schwab returned fewer than " + MIN_CANDLES_REQUIRED + " historical candles; demo candles were used.");
       candles = demoCandles(symbol);
       candlesSource = "demo";
       usedDemo = true;
     }
-    if (candles.length < 50) throw new Error("Not enough candle history.");
+    if (candles.length < MIN_CANDLES_REQUIRED) throw new Error("Not enough candle history.");
 
     const price = quote?.price ?? candles[candles.length - 1].close;
     fundamentals = withCandleLiquidityFallback(fundamentals, candles);
@@ -494,7 +503,7 @@ async function scanSymbol(input: {
     if (canUseLiveSchwab) {
       warnings.push(symbol + ": " + (error instanceof Error ? error.message : "Scan failed."));
       const message = error instanceof Error ? error.message : "";
-      return { warnings, usedLive, usedDemo, skipReason: message.includes("Not enough candle history") ? "candleHistory" : "other" };
+      return { warnings, usedLive, usedDemo, skipReason: message.includes("Not enough candle history") || message.includes("candles are required") ? "candleHistory" : "other" };
     }
     if (!allowDemoFallback || !demoFundamental(symbol)) return { warnings, usedLive, usedDemo, skipReason: "other" };
     const candles = demoCandles(symbol);
@@ -603,7 +612,11 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
   const bearishMacro = hasBearishMacro(result);
   const missingDailyEmaStack = hasMissingCachedDailyEmaStack(result);
-  const scoreGrade = gradeFromSetupScore(setupScore);
+  const capA = (result.institutionalFactors ?? []).some(
+    (item) => (item.name === "Sector Strength" || item.name === "Catalyst Safety") && item.status === "Insufficient Data"
+  );
+  let scoreGrade = gradeFromSetupScore(setupScore);
+  if (capA && scoreGrade === "A") scoreGrade = "B";
   const grade = scoreGrade;
   const gradeCapReasons = mergeCachedGradeCapReasons(result, setupScore, dailyEntryQualificationMode, squeezeMaturityMode, missingDailyEmaStack);
   const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore, bearishMacro);
@@ -630,7 +643,6 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     tradeMark,
     tradeMarkReasons,
     gradeCapReasons,
-    finalGrade: grade,
     strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
     flags: result.flags ?? [],
     alertMessage: normalizeAlertMessage(result, dotCount),
@@ -672,12 +684,6 @@ function resolveCachedDailyEntryQualificationMode(result: ScanResult): NonNullab
     const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
     return daily?.withinEmaPocket ? "strict" : "none";
   }
-}
-
-function gradeFromSetupScore(setupScore: number): ScanResult["grade"] {
-  if (setupScore >= A_SETUP_SCORE_THRESHOLD) return "A";
-  if (setupScore >= B_SETUP_SCORE_THRESHOLD) return "B";
-  return "C";
 }
 
 function cachedGradeCapReasons(result: ScanResult, setupScore: number): string[] {
@@ -952,9 +958,6 @@ async function throttleIfLive() {
 
 function shouldShowWarning(warning: string): boolean {
   const internalMessages = [
-    "database is locked",
-    "screener.sqlite",
-    "Command failed: sqlite3",
     "SELECT value FROM settings",
     "schwabTokens"
   ];

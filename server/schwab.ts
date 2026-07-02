@@ -1,6 +1,7 @@
 import { Buffer } from "node:buffer";
 import { config } from "./config";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
+import { fetchWithRetry } from "./httpRetry";
 import { getSetting, setSetting } from "./sqlite";
 import type { BrokerStatus, Candle, FundamentalAnalysis, FundamentalFieldSources, OptionContract, ScanResult } from "../shared/types";
 
@@ -178,10 +179,6 @@ export async function fetchHistory(symbol: string): Promise<Candle[]> {
   return fetchDailyHistory(symbol, 5 * 366);
 }
 
-export async function fetchChartHistory(symbol: string): Promise<Candle[]> {
-  return fetchDailyHistory(symbol, 5 * 366);
-}
-
 async function fetchDailyHistory(symbol: string, lookbackDays: number): Promise<Candle[]> {
   const endDate = Date.now();
   const startDate = endDate - lookbackDays * 24 * 60 * 60 * 1000;
@@ -210,14 +207,6 @@ export async function fetchIntradayHistory(symbol: string, frequency = 15): Prom
     needPreviousClose: "false"
   });
   return normalizeSchwabHistory(data, { includeTime: true });
-}
-
-export async function fetchOptions(symbol: string, price: number): Promise<OptionContract[]> {
-  const [calls, puts] = await Promise.all([
-    fetchDirectionalOptions(symbol, price, "CALL"),
-    fetchDirectionalOptions(symbol, price, "PUT")
-  ]);
-  return [...calls, ...puts];
 }
 
 export async function fetchCallOptions(symbol: string, price: number): Promise<OptionContract[]> {
@@ -266,10 +255,10 @@ export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
       averageVolume,
       rootSymbols: stringValue(reference.optionRoot)?.split(",").map((item) => item.trim()).filter(Boolean),
       avgDollarVolume: averageVolume ? averageVolume * price : undefined,
-      beta: firstNumber(fundamental.beta, fundamental.betaCoefficient),
+      beta: firstFiniteNumber(fundamental.beta, fundamental.betaCoefficient),
       marketCap: firstNumber(fundamental.marketCap, fundamental.marketCapitalization, fundamental.marketCapFloat),
-      eps: firstNumber(fundamental.eps, fundamental.epsTTM, fundamental.epsTrailingTwelveMonths),
-      peRatio: firstNumber(fundamental.peRatio, fundamental.peRatioTTM, fundamental.pERatio),
+      eps: firstFiniteNumber(fundamental.eps, fundamental.epsTTM, fundamental.epsTrailingTwelveMonths),
+      peRatio: firstFiniteNumber(fundamental.peRatio, fundamental.peRatioTTM, fundamental.pERatio),
       dividendAmount: firstNonNegativeNumber(fundamental.dividendAmount, fundamental.divAmount, fundamental.annualDividend),
       dividendYield: firstNonNegativeNumber(fundamental.dividendYield, fundamental.divYield),
       dividendFrequency: stringValue(fundamental.dividendFrequency, fundamental.divFreq),
@@ -458,14 +447,14 @@ async function refreshAccessToken(tokens: SchwabTokens): Promise<SchwabTokens> {
 
 async function tokenRequest(params: Record<string, string>): Promise<SchwabTokenResponse> {
   const body = new URLSearchParams(params);
-  const response = await fetch(`${config.schwabAuthBaseUrl}/token`, {
+  const response = await fetchWithRetry(() => fetch(`${config.schwabAuthBaseUrl}/token`, {
     method: "POST",
     headers: {
       Authorization: `Basic ${Buffer.from(`${config.schwabAppKey}:${config.schwabAppSecret}`).toString("base64")}`,
       "Content-Type": "application/x-www-form-urlencoded"
     },
     body
-  });
+  }));
   if (!response.ok) {
     const text = await response.text();
     throw new Error(`Schwab token request failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 180)}` : ""}`);
@@ -477,12 +466,12 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
   const token = await getAccessToken();
   const url = new URL(`${config.schwabMarketDataBaseUrl}${path}`);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-  const response = await fetch(url, {
+  const response = await fetchWithRetry(() => fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json"
     }
-  });
+  }));
   if (!response.ok) {
     const body = await response.text();
     throw new Error(`Schwab request failed: ${response.status} ${response.statusText}${body ? ` - ${body.slice(0, 180)}` : ""}`);
@@ -490,11 +479,18 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
   return response.json() as Promise<T>;
 }
 
+let refreshPromise: Promise<SchwabTokens> | null = null;
+
 async function getAccessToken(): Promise<string> {
   const tokens = await readTokens();
   if (!tokens) throw new Error("Schwab is not connected. Use Connect Schwab first.");
   if (new Date(tokens.accessTokenExpiresAt).getTime() > Date.now() + 60_000) return tokens.accessToken;
-  return (await refreshAccessToken(tokens)).accessToken;
+  if (!refreshPromise) {
+    refreshPromise = refreshAccessToken(tokens).finally(() => {
+      refreshPromise = null;
+    });
+  }
+  return (await refreshPromise).accessToken;
 }
 
 async function readTokens(): Promise<SchwabTokens | undefined> {
@@ -538,10 +534,21 @@ function dateOffset(days: number): string {
 function daysToExpiration(value: string): number | undefined {
   const prefix = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
   if (!prefix) return undefined;
-  const expiration = new Date(prefix + "T21:00:00.000Z").getTime();
+  const marketCloseUtcHour = isEasternDaylightTime(prefix) ? 20 : 21;
+  const expiration = new Date(`${prefix}T${String(marketCloseUtcHour).padStart(2, "0")}:00:00.000Z`).getTime();
   const now = Date.now();
   if (!Number.isFinite(expiration)) return undefined;
   return Math.max(0, Math.ceil((expiration - now) / (24 * 60 * 60 * 1000)));
+}
+
+function isEasternDaylightTime(dateOnly: string): boolean {
+  const noonUtc = new Date(`${dateOnly}T12:00:00.000Z`);
+  if (!Number.isFinite(noonUtc.getTime())) return false;
+  const offsetLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    timeZoneName: "shortOffset"
+  }).formatToParts(noonUtc).find((part) => part.type === "timeZoneName")?.value ?? "";
+  return offsetLabel.includes("-4");
 }
 
 function objectValue(value: unknown): Record<string, unknown> {
@@ -557,6 +564,14 @@ function firstNumber(...values: unknown[]): number | undefined {
   for (const value of values) {
     const parsed = Number(value);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function firstFiniteNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
 }

@@ -3,8 +3,10 @@ import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeSt
 import { demoOptions } from "./demoData";
 import {
   activeSqueezeDotCount,
+  ema,
   latestIndicators,
   linearRegressionLast,
+  MIN_CANDLES_REQUIRED,
   squeezeMomentumColor,
   squeezeMomentumSeries,
   squeezeState
@@ -26,6 +28,25 @@ import {
 import { buildLowerTimeframeConfluence } from "./timeframes";
 
 describe("indicator calculations", () => {
+  it("seeds the EMA with a simple moving average instead of the first raw value", () => {
+    const values = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    const series = ema(values, 3);
+
+    expect(series[0]).toBeNaN();
+    expect(series[1]).toBeNaN();
+    expect(series[2]).toBeCloseTo(2);
+    expect(series[3]).toBeCloseTo(3);
+    expect(series[4]).toBeCloseTo(4);
+    expect(series[9]).toBeCloseTo(9);
+  });
+
+  it("falls back to an SMA of the whole series when it is shorter than the period", () => {
+    const series = ema([2, 4, 6], 5);
+
+    expect(series).toEqual([NaN, NaN, 4]);
+  });
+
   it("calculates five-EMA compression indicators from candle history", () => {
     const indicators = latestIndicators(bullishCompressionCandles());
 
@@ -38,6 +59,47 @@ describe("indicator calculations", () => {
     expect(typeof indicators.bbContracting).toBe("boolean");
     expect(typeof indicators.momentumImproving).toBe("boolean");
     expect(["cyan", "blue", "red", "yellow"]).toContain(indicators.momentumColor);
+  });
+
+  it("requires MIN_CANDLES_REQUIRED candles and matches indicators.ts's real threshold", () => {
+    expect(MIN_CANDLES_REQUIRED).toBe(90);
+    const makeCandles = (length: number) => Array.from({ length }, (_, index) => ({
+      date: "2026-01-" + String(index + 1).padStart(2, "0"),
+      open: index,
+      high: index + 1,
+      low: index - 1,
+      close: index,
+      volume: 1_000_000
+    }));
+
+    expect(() => latestIndicators(makeCandles(MIN_CANDLES_REQUIRED - 1))).toThrow(
+      "At least " + MIN_CANDLES_REQUIRED + " candles are required to calculate the compression setup."
+    );
+    expect(() => latestIndicators(makeCandles(MIN_CANDLES_REQUIRED))).not.toThrow();
+  });
+
+  it("matches the naive per-window recomputation of active squeeze dot counts", () => {
+    const referenceActiveSqueezeDotCount = (candles: Candle[]): number => {
+      let count = 0;
+      for (let end = candles.length; end >= MIN_CANDLES_REQUIRED; end -= 1) {
+        const state = latestIndicators(candles.slice(0, end)).squeezeState;
+        if (!(state === "low" || state === "mid" || state === "high")) break;
+        count += 1;
+      }
+      return count;
+    };
+
+    const fixtures = [bullishCompressionCandles(), activeDailySqueezeCandles(), bearishMarketCandles()];
+    const sampleEndOffsets = [0, -1, -20, -40];
+
+    for (const candles of fixtures) {
+      for (const offset of sampleEndOffsets) {
+        const end = candles.length + offset;
+        if (end < MIN_CANDLES_REQUIRED) continue;
+        const truncated = candles.slice(0, end);
+        expect(activeSqueezeDotCount(truncated)).toBe(referenceActiveSqueezeDotCount(truncated));
+      }
+    }
   });
 
   it("uses the least-squares regression endpoint for the Squeeze histogram", () => {
@@ -342,7 +404,8 @@ describe("layer decision engine", () => {
         symbol: "HIGHCAP",
         beta: 1.2,
         marketCap: 20_000_000_000,
-        avgDollarVolume20d: 900_000_000
+        avgDollarVolume20d: 900_000_000,
+        nextEarningsDate: "2027-12-31"
       },
       optionable: true,
       options: demoOptions("HIGHCAP", price),
@@ -356,6 +419,36 @@ describe("layer decision engine", () => {
     expect(result.setupScore).toBeGreaterThanOrEqual(90);
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
+  });
+
+  it("caps the grade at B when the setup score reaches the A band but Catalyst Safety data is missing", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "NOCATALYST",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        symbol: "NOCATALYST",
+        beta: 1.2,
+        marketCap: 20_000_000_000,
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("NOCATALYST", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      sector: "Information Technology",
+      sectorCandles: activeDailySqueezeCandles(),
+      spyCandles: activeDailySqueezeCandles(),
+      qqqCandles: activeDailySqueezeCandles()
+    });
+
+    expect(result.setupScore).toBeGreaterThanOrEqual(90);
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Insufficient Data");
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain("Catalyst Safety unavailable.");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
   });
 
   it("allows neutral weekly structure without capping the setup", () => {
@@ -953,6 +1046,29 @@ describe("layer decision engine", () => {
     expect(qualifiedBeta.passesUniverse).toBe(true);
     expect(qualifiedBeta.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
     expect(qualifiedBeta.longCallDecision).toBe("Strong Long Call Candidate");
+  });
+
+  it("fails the institutional beta filter on a genuinely negative beta instead of treating it as unavailable", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "NEGBETA",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        ...strongFundamentals("NEGBETA"),
+        beta: -0.5
+      },
+      optionable: true,
+      options: demoOptions("NEGBETA", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      strictFundamentals: false,
+      ...institutionalSetupContext()
+    });
+
+    expect(result.passesUniverse).toBe(false);
+    expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
   });
 
   it("passes stock liquidity with either 1.5M shares or $300M average dollar volume", () => {

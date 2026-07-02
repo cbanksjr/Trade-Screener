@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { Activity, BarChart3, CheckCircle2, Moon, Play, Sun, XCircle } from "lucide-react";
-import type { BrokerStatus, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
 
 const api = {
@@ -68,6 +68,8 @@ function App() {
           message: "Unable to check Schwab status."
         });
       });
+    }).catch((error) => {
+      setMessage(error instanceof Error ? error.message : "Failed to load scan results.");
     });
 
   }, []);
@@ -113,9 +115,10 @@ function App() {
     setMessage("");
     try {
       await startRefresh(true);
-    } finally {
-      // Polling owns the final loading state while a refresh is running.
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Failed to start scan.");
     }
+    // Polling owns the final loading state while a refresh is running.
   }
 
   async function connectSchwab() {
@@ -196,6 +199,18 @@ function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; va
   );
 }
 
+function DemoFundamentalsBadge({ sources }: { sources?: FundamentalFieldSources }) {
+  const demoFields = Object.entries(sources ?? {})
+    .filter(([, source]) => source === "demo")
+    .map(([field]) => field);
+  if (!demoFields.length) return null;
+  return (
+    <span className="asset-badge demo-badge" title={"Mock data used for: " + demoFields.join(", ")}>
+      Mock Data
+    </span>
+  );
+}
+
 function BrokerBadge({ brokerStatus, settings, onConnect }: {
   brokerStatus: BrokerStatus | null;
   settings: Settings | null;
@@ -239,7 +254,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
       <section className="panel hero-panel">
         <div>
           <span className={"grade large grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
-          <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null}</h2>
+          <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null} <DemoFundamentalsBadge sources={result.fundamentalSources} /></h2>
           <p>{setupTradeLabel(result)} · {money(result.price)} · {result.entryRecommendationType}</p>
         </div>
         <div className="indicator-grid">
@@ -284,7 +299,7 @@ function TickerDetail({ result }: { result: ScanResult }) {
               <Metric label="Options Flow" value={signalLabel(result.optionsFlowSignal)} />
               <Metric label="Options Exposure" value={signalLabel(result.optionsExposureSignal)} />
               <Metric label="Dark Pool" value={signalLabel(result.darkPoolSignal)} />
-              <Metric label="Final Grade" value={(result.gradeBeforeQuantData ? result.gradeBeforeQuantData + " to " : "") + (result.finalGrade ?? result.grade)} />
+              <Metric label="Grade" value={result.grade} />
             </div>
             {result.flags?.length ? (
               <div className="flag-list">
