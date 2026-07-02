@@ -246,7 +246,8 @@ export function normalizeEtfSectorWeightings(payload: unknown): InstitutionalEdg
     .filter((item): item is { sector: string; weight: number } => Boolean(item.sector) && item.weight !== undefined)
     .sort((left, right) => right.weight - left.weight)[0];
   if (!top) return undefined;
-  return edgeFactor("ETF Exposure", "Neutral", `Largest ETF sector exposure is ${top.sector} at ${formatPercent(top.weight)}.`);
+  const status: LayerStatus = top.weight >= 40 ? "Bearish" : top.weight >= 25 ? "Neutral" : "Bullish";
+  return edgeFactor("ETF Exposure", status, `Largest ETF sector exposure is ${top.sector} at ${formatPercent(top.weight)}.`);
 }
 
 function normalizeGradesConsensus(payload: unknown): { status: LayerStatus; detail: string } | undefined {
@@ -361,8 +362,7 @@ function stringValue(...values: unknown[]): string | undefined {
 }
 
 function normalizeExpenseRatio(value: number | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  return value > 1 ? value / 100 : value;
+  return value;
 }
 
 function formatValue(value: number | undefined): string {

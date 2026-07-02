@@ -534,10 +534,21 @@ function dateOffset(days: number): string {
 function daysToExpiration(value: string): number | undefined {
   const prefix = value.match(/^\d{4}-\d{2}-\d{2}/)?.[0];
   if (!prefix) return undefined;
-  const expiration = new Date(prefix + "T21:00:00.000Z").getTime();
+  const marketCloseUtcHour = isEasternDaylightTime(prefix) ? 20 : 21;
+  const expiration = new Date(`${prefix}T${String(marketCloseUtcHour).padStart(2, "0")}:00:00.000Z`).getTime();
   const now = Date.now();
   if (!Number.isFinite(expiration)) return undefined;
   return Math.max(0, Math.ceil((expiration - now) / (24 * 60 * 60 * 1000)));
+}
+
+function isEasternDaylightTime(dateOnly: string): boolean {
+  const noonUtc = new Date(`${dateOnly}T12:00:00.000Z`);
+  if (!Number.isFinite(noonUtc.getTime())) return false;
+  const offsetLabel = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    timeZoneName: "shortOffset"
+  }).formatToParts(noonUtc).find((part) => part.type === "timeZoneName")?.value ?? "";
+  return offsetLabel.includes("-4");
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

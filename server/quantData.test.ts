@@ -30,6 +30,22 @@ describe("QuantData Institutional Positioning", () => {
     expect(flow.flags).toContain("Unusual Call Volume");
   });
 
+  it("does not let ask-side call premium inflate the call/put premium total", () => {
+    const flow = normalizeOptionsFlow({
+      data: {
+        "1778679000000": { netCallPremium: 30_000, netPutPremium: 20_000 }
+      }
+    }, {
+      data: [
+        { contractType: "CALL", sentiment: "ASK", premium: 500_000, isSweep: true, openClose: "OPEN" }
+      ]
+    });
+
+    expect(flow.flags).toContain("Ask-Side Call Buying");
+    expect(flow.signal).not.toBe("bullish");
+    expect(flow.detail).toContain("Call premium $30K");
+  });
+
   it("detects bearish put-heavy flow as a veto-grade signal", () => {
     const flow = normalizeOptionsFlow({
       data: {

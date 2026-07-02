@@ -215,7 +215,7 @@ export function normalizeOptionsFlow(netDriftPayload: unknown, orderFlowPayload?
     if ((isPut && askSide) || sentiment.includes("bear")) bearishRowCount += 1;
   }
 
-  const callPremium = netCallPremium + askSideCallPremium;
+  const callPremium = netCallPremium;
   const putPremium = netPutPremium;
   const totalPremium = callPremium + putPremium;
   const flags: string[] = [];

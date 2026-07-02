@@ -383,6 +383,35 @@ describe("Schwab response normalizers", () => {
     expect(contracts[0].score).toBeGreaterThan(0);
   });
 
+  it("computes days-to-expiration against the correct UTC market-close offset across DST", () => {
+    const optionAt = (expirationDate: string) => normalizeSchwabCallOptions({
+      callExpDateMap: {
+        [expirationDate + ":1"]: {
+          "200.0": [{
+            symbol: "TEST",
+            expirationDate,
+            strikePrice: 200,
+            bid: 1,
+            ask: 1.1
+          }]
+        }
+      }
+    }, 200)[0];
+
+    try {
+      // EDT (summer): market close is 20:00 UTC (4pm ET).
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-07-01T12:00:00.000Z"));
+      expect(optionAt("2026-07-17").dte).toBe(17);
+
+      // EST (winter): market close is 21:00 UTC (4pm ET).
+      vi.setSystemTime(new Date("2026-01-01T12:00:00.000Z"));
+      expect(optionAt("2026-01-16").dte).toBe(16);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("normalizes put option chains into liquid-put-compatible contracts", () => {
     const contracts = normalizeSchwabPutOptions({
       putExpDateMap: {

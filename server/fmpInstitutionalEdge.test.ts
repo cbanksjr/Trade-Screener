@@ -64,6 +64,26 @@ describe("FMP Institutional Edge", () => {
     });
   });
 
+  it("flags concentrated ETF sector exposure as Bearish and diversified exposure as Bullish", () => {
+    expect(normalizeEtfSectorWeightings([{ sector: "Technology", weightPercentage: 45 }])).toMatchObject({
+      name: "ETF Exposure",
+      status: "Bearish"
+    });
+    expect(normalizeEtfSectorWeightings([{ sector: "Technology", weightPercentage: 15 }])).toMatchObject({
+      name: "ETF Exposure",
+      status: "Bullish"
+    });
+  });
+
+  it("treats a raw percent-point expense ratio as its literal fraction value", () => {
+    expect(normalizeEtfInfo([{ assetsUnderManagement: 12_000_000_000, expenseRatio: 0.0009 }])).toMatchObject({
+      status: "Bullish"
+    });
+    expect(normalizeEtfInfo([{ assetsUnderManagement: 12_000_000_000, expenseRatio: 0.09 }])).toMatchObject({
+      status: "Bearish"
+    });
+  });
+
   it("marks plan-restricted endpoints unavailable and avoids repeated probes during the TTL", async () => {
     let calls = 0;
     const requests: string[] = [];
