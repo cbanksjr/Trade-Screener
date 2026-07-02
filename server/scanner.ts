@@ -952,9 +952,6 @@ async function throttleIfLive() {
 
 function shouldShowWarning(warning: string): boolean {
   const internalMessages = [
-    "database is locked",
-    "screener.sqlite",
-    "Command failed: sqlite3",
     "SELECT value FROM settings",
     "schwabTokens"
   ];

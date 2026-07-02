@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import pg from "pg";
@@ -18,9 +18,15 @@ const pool = usePostgres
   })
   : undefined;
 
-function runSql(sql: string): string {
+let db: Database.Database | undefined;
+
+function getDb(): Database.Database {
+  if (db) return db;
   mkdirSync(dirname(dbPath), { recursive: true });
-  return execFileSync("sqlite3", ["-json", "-cmd", ".timeout 5000", dbPath, sql], { encoding: "utf8", maxBuffer: 50 * 1024 * 1024 });
+  db = new Database(dbPath);
+  db.pragma("journal_mode = WAL");
+  db.pragma("busy_timeout = 5000");
+  return db;
 }
 
 export async function initDb() {
@@ -46,7 +52,7 @@ export async function initDb() {
     return;
   }
 
-  await sqliteRun(`
+  getDb().exec(`
       CREATE TABLE IF NOT EXISTS settings (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -68,11 +74,14 @@ export async function initDb() {
 }
 
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {
-  const rows = usePostgres
-    ? (await pgQuery<{ value: string }>("SELECT value FROM settings WHERE key = $1;", [key])).rows
-    : JSON.parse(await sqliteRun(`SELECT value FROM settings WHERE key = ${quote(key)};`) || "[]") as { value: string }[];
-  if (!rows[0]) return fallback;
-  return JSON.parse(rows[0].value) as T;
+  if (usePostgres) {
+    const rows = (await pgQuery<{ value: string }>("SELECT value FROM settings WHERE key = $1;", [key])).rows;
+    if (!rows[0]) return fallback;
+    return JSON.parse(rows[0].value) as T;
+  }
+  const row = getDb().prepare("SELECT value FROM settings WHERE key = ?;").get(key) as { value: string } | undefined;
+  if (!row) return fallback;
+  return JSON.parse(row.value) as T;
 }
 
 export async function setSetting(key: string, value: unknown): Promise<void> {
@@ -85,11 +94,11 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
     `, [key, payload]);
     return;
   }
-  await sqliteRun(`
+  getDb().prepare(`
       INSERT INTO settings (key, value)
-      VALUES (${quote(key)}, ${quote(payload)})
+      VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value;
-    `);
+    `).run(key, payload);
 }
 
 export async function saveScanResult(symbol: string, payload: unknown): Promise<void> {
@@ -104,11 +113,11 @@ export async function saveScanResult(symbol: string, payload: unknown): Promise<
     `, [upperSymbol, serialized, updatedAt]);
     return;
   }
-  await sqliteRun(`
+  getDb().prepare(`
       INSERT INTO scan_results (symbol, payload, updated_at)
-      VALUES (${quote(upperSymbol)}, ${quote(serialized)}, ${quote(updatedAt)})
+      VALUES (?, ?, ?)
       ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
-    `);
+    `).run(upperSymbol, serialized, updatedAt);
 }
 
 export async function replaceScanResults(results: Array<{ symbol: string }>): Promise<void> {
@@ -134,16 +143,27 @@ export async function replaceScanResults(results: Array<{ symbol: string }>): Pr
     return;
   }
 
-  await sqliteRun("DELETE FROM scan_results;");
-  for (const result of results) {
-    await saveScanResult(result.symbol, result);
-  }
+  const updatedAt = new Date().toISOString();
+  const upsert = getDb().prepare(`
+      INSERT INTO scan_results (symbol, payload, updated_at)
+      VALUES (?, ?, ?)
+      ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
+    `);
+  const replaceAll = getDb().transaction((rows: Array<{ symbol: string }>) => {
+    getDb().prepare("DELETE FROM scan_results;").run();
+    for (const result of rows) {
+      upsert.run(result.symbol.toUpperCase(), JSON.stringify(result), updatedAt);
+    }
+  });
+  replaceAll(results);
 }
 
 export async function getCachedResults(): Promise<unknown[]> {
-  const rows = usePostgres
-    ? (await pgQuery<{ payload: string }>("SELECT payload FROM scan_results ORDER BY updated_at DESC;")).rows
-    : JSON.parse(await sqliteRun("SELECT payload FROM scan_results ORDER BY updated_at DESC;") || "[]") as { payload: string }[];
+  if (usePostgres) {
+    const rows = (await pgQuery<{ payload: string }>("SELECT payload FROM scan_results ORDER BY updated_at DESC;")).rows;
+    return rows.map((row) => JSON.parse(row.payload));
+  }
+  const rows = getDb().prepare("SELECT payload FROM scan_results ORDER BY updated_at DESC;").all() as { payload: string }[];
   return rows.map((row) => JSON.parse(row.payload));
 }
 
@@ -155,19 +175,13 @@ export async function setScanMetadata(value: ScanMetadata): Promise<void> {
   await setSetting("scanMetadata", value);
 }
 
-
-function quote(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-
 async function migrateNullableFundamentals() {
-  const rows = JSON.parse(await sqliteRun("PRAGMA table_info(fundamentals);") || "[]") as Array<{ name: string; notnull: number }>;
+  const rows = getDb().prepare("PRAGMA table_info(fundamentals);").all() as Array<{ name: string; notnull: number }>;
   const betaRequired = rows.some((row) => row.name === "beta" && row.notnull === 1);
   const marketCapRequired = rows.some((row) => row.name === "market_cap" && row.notnull === 1);
   if (!betaRequired && !marketCapRequired) return;
 
-  await sqliteRun(`
+  getDb().exec(`
     ALTER TABLE fundamentals RENAME TO fundamentals_old;
     CREATE TABLE fundamentals (
       symbol TEXT PRIMARY KEY,
@@ -180,10 +194,6 @@ async function migrateNullableFundamentals() {
     SELECT symbol, beta, market_cap, avg_dollar_volume_20d, updated_at FROM fundamentals_old;
     DROP TABLE fundamentals_old;
   `);
-}
-
-async function sqliteRun(sql: string): Promise<string> {
-  return runSql(sql);
 }
 
 async function pgQuery<T extends pg.QueryResultRow = pg.QueryResultRow>(sql: string, values?: unknown[]): Promise<pg.QueryResult<T>> {
