@@ -94,7 +94,6 @@ describe("QuantData Institutional Positioning", () => {
     const capped = applyInstitutionalPositioning(baseResult(95, "A"), positioning("capped"));
     const vetoed = applyInstitutionalPositioning(baseResult(95, "A"), positioning("vetoed", ["Bearish Flow Veto"]));
 
-    expect(capped.gradeBeforeQuantData).toBe("A");
     expect(capped.grade).toBe("A");
     expect(capped.tradeMark).toBe("Avoid");
     expect(capped.longCallDecision).toBe("Avoid");
@@ -106,7 +105,6 @@ describe("QuantData Institutional Positioning", () => {
   it("can confirm a clean high-B setup without changing setup grade", () => {
     const result = applyInstitutionalPositioning(baseResult(88, "B"), positioning("confirmed", ["Bullish Flow Confirmation"]));
 
-    expect(result.gradeBeforeQuantData).toBe("B");
     expect(result.grade).toBe("B");
     expect(result.tradeMark).toBe("Take");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");

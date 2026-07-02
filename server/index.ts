@@ -7,7 +7,7 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { readCachedScanResponse, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
+import { readCachedScanResponse, recordUniverseWarning, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
 import { initDb } from "./sqlite";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -129,7 +129,9 @@ app.use((error: unknown, _req: express.Request, res: express.Response, _next: ex
 async function refreshUniverseIfNeeded() {
   if (await hasCachedDefaultUniverse()) return;
   void refreshDefaultUniverse().catch((error) => {
-    console.warn("Default universe startup refresh failed:", error instanceof Error ? error.message : error);
+    const message = "Default universe startup refresh failed: " + (error instanceof Error ? error.message : String(error));
+    console.warn(message);
+    void recordUniverseWarning(message);
   });
 }
 
@@ -140,7 +142,9 @@ cron.schedule("35 8 * * 1-5", () => {
 cron.schedule("10 18 28-31 * *", () => {
   if (!isLastDayOfMonth()) return;
   void refreshDefaultUniverse().catch((error) => {
-    console.warn("Default universe refresh failed:", error instanceof Error ? error.message : error);
+    const message = "Default universe refresh failed: " + (error instanceof Error ? error.message : String(error));
+    console.warn(message);
+    void recordUniverseWarning(message);
   });
 }, { timezone: "America/Chicago" });
 

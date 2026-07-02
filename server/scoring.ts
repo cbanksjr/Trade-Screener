@@ -257,7 +257,6 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
 
 export function applyInstitutionalPositioning(result: ScanResult, positioning: InstitutionalPositioningSummary): ScanResult {
   const flags = unique([...(result.flags ?? []), ...positioning.flags]);
-  const gradeBeforeQuantData = result.gradeBeforeQuantData ?? result.grade;
   const gradeCapReasons = removeWeeklyGradeReasons(result.gradeCapReasons ?? []);
   const tradeMarkReasons = [...(result.tradeMarkReasons ?? [])];
 
@@ -287,8 +286,6 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
     darkPoolSignal: positioning.darkPoolSignal,
     institutionalPositioningStatus: positioning.status,
     institutionalPositioningReason: positioning.reason,
-    gradeBeforeQuantData,
-    finalGrade: result.grade,
     strongLongCallCandidate,
     flags,
     gradeCapReasons,

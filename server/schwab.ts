@@ -179,10 +179,6 @@ export async function fetchHistory(symbol: string): Promise<Candle[]> {
   return fetchDailyHistory(symbol, 5 * 366);
 }
 
-export async function fetchChartHistory(symbol: string): Promise<Candle[]> {
-  return fetchDailyHistory(symbol, 5 * 366);
-}
-
 async function fetchDailyHistory(symbol: string, lookbackDays: number): Promise<Candle[]> {
   const endDate = Date.now();
   const startDate = endDate - lookbackDays * 24 * 60 * 60 * 1000;
@@ -211,14 +207,6 @@ export async function fetchIntradayHistory(symbol: string, frequency = 15): Prom
     needPreviousClose: "false"
   });
   return normalizeSchwabHistory(data, { includeTime: true });
-}
-
-export async function fetchOptions(symbol: string, price: number): Promise<OptionContract[]> {
-  const [calls, puts] = await Promise.all([
-    fetchDirectionalOptions(symbol, price, "CALL"),
-    fetchDirectionalOptions(symbol, price, "PUT")
-  ]);
-  return [...calls, ...puts];
 }
 
 export async function fetchCallOptions(symbol: string, price: number): Promise<OptionContract[]> {

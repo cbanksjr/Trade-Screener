@@ -146,6 +146,14 @@ export async function readScanMetadata(): Promise<ScanMetadata> {
   };
 }
 
+export async function recordUniverseWarning(message: string): Promise<void> {
+  const metadata = await getScanMetadata();
+  await setScanMetadata({
+    ...metadata,
+    lastScanWarnings: [...new Set([...(metadata.lastScanWarnings ?? []), message])]
+  });
+}
+
 export async function shouldAutoRefresh(): Promise<boolean> {
   const cached = await readDisplayResults();
   const metadata = await readScanMetadata();
@@ -635,7 +643,6 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     tradeMark,
     tradeMarkReasons,
     gradeCapReasons,
-    finalGrade: grade,
     strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
     flags: result.flags ?? [],
     alertMessage: normalizeAlertMessage(result, dotCount),

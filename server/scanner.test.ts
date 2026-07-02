@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, initDb, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
+import { __resetScanStateForTest, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, recordUniverseWarning, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
   BROAD_ENTRY_GRADE_CAP_REASON,
@@ -291,6 +291,17 @@ describe("background scan refresh", () => {
 
     expect(response.results.map((result) => result.symbol)).toEqual(["CACHE"]);
     expect(response.isRefreshing).toBe(false);
+  }));
+
+  it("appends a universe-refresh warning without clobbering existing scan metadata", async () => withDbRestore(async () => {
+    await setScanMetadata({ scanStatus: "complete", lastScanMode: "demo", lastScanWarnings: ["Existing warning."] });
+
+    await recordUniverseWarning("Default universe refresh failed: network error.");
+
+    const metadata = await getScanMetadata();
+    expect(metadata.scanStatus).toBe("complete");
+    expect(metadata.lastScanMode).toBe("demo");
+    expect(metadata.lastScanWarnings).toEqual(["Existing warning.", "Default universe refresh failed: network error."]);
   }));
 
   it("filters cached results when the Daily squeeze is inactive", async () => withDbRestore(async () => {
