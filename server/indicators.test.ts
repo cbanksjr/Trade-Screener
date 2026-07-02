@@ -58,6 +58,30 @@ describe("indicator calculations", () => {
     expect(() => latestIndicators(makeCandles(MIN_CANDLES_REQUIRED))).not.toThrow();
   });
 
+  it("matches the naive per-window recomputation of active squeeze dot counts", () => {
+    const referenceActiveSqueezeDotCount = (candles: Candle[]): number => {
+      let count = 0;
+      for (let end = candles.length; end >= MIN_CANDLES_REQUIRED; end -= 1) {
+        const state = latestIndicators(candles.slice(0, end)).squeezeState;
+        if (!(state === "low" || state === "mid" || state === "high")) break;
+        count += 1;
+      }
+      return count;
+    };
+
+    const fixtures = [bullishCompressionCandles(), activeDailySqueezeCandles(), bearishMarketCandles()];
+    const sampleEndOffsets = [0, -1, -20, -40];
+
+    for (const candles of fixtures) {
+      for (const offset of sampleEndOffsets) {
+        const end = candles.length + offset;
+        if (end < MIN_CANDLES_REQUIRED) continue;
+        const truncated = candles.slice(0, end);
+        expect(activeSqueezeDotCount(truncated)).toBe(referenceActiveSqueezeDotCount(truncated));
+      }
+    }
+  });
+
   it("uses the least-squares regression endpoint for the Squeeze histogram", () => {
     expect(linearRegressionLast([1, 2, 3])).toBeCloseTo(3);
     expect(linearRegressionLast([1, 2, 4])).toBeCloseTo(23 / 6);
