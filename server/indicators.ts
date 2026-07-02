@@ -1,5 +1,7 @@
 import type { Candle, IndicatorSnapshot, SqueezeMomentumColor, SqueezeState } from "../shared/types";
 
+export const MIN_CANDLES_REQUIRED = 90;
+
 export function ema(values: number[], period: number): number[] {
   const multiplier = 2 / (period + 1);
   const output: number[] = [];
@@ -40,8 +42,8 @@ export function trueRanges(candles: Candle[]): number[] {
 }
 
 export function latestIndicators(candles: Candle[]): IndicatorSnapshot {
-  if (candles.length < 90) {
-    throw new Error("At least 90 candles are required to calculate the compression setup.");
+  if (candles.length < MIN_CANDLES_REQUIRED) {
+    throw new Error("At least " + MIN_CANDLES_REQUIRED + " candles are required to calculate the compression setup.");
   }
 
   const closes = candles.map((candle) => candle.close);

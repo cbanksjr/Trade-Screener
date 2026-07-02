@@ -23,6 +23,7 @@ import type {
   TradeMark,
   WeeklyQualificationMode
 } from "../shared/types";
+import { dailyEntryDetail, resolveDailyEntryQualificationMode } from "./entryZone";
 import { activeSqueezeDotCount, latestIndicators, round } from "./indicators";
 import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
 
@@ -151,7 +152,8 @@ export function gradeSetup(input: {
     scanRanAt
   });
   const weeklyQualificationMode = weeklyContext.weeklyQualificationMode ?? "none";
-  const scoreGrade = gradeFromSetupScore(setupScore.score);
+  let scoreGrade = gradeFromSetupScore(setupScore.score);
+  if (setupScore.capA && scoreGrade === "A") scoreGrade = "B";
   const grade = scoreGrade;
   const gradeCapReasons = gradeCapReasonsFor(layerEvaluations, dailyContext, dailyEntryQualificationMode, squeezeMaturityMode, setupScore);
   const tradeMarkReasons = tradeMarkReasonsFor({
@@ -408,7 +410,7 @@ function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqC
   return "20-period relative strength: " + spyText + " and " + qqqText + ".";
 }
 
-function gradeFromSetupScore(score: number): Grade {
+export function gradeFromSetupScore(score: number): Grade {
   if (score >= A_SETUP_SCORE_THRESHOLD) return "A";
   if (score >= B_SETUP_SCORE_THRESHOLD) return "B";
   return "C";
@@ -947,29 +949,12 @@ function formatShares(value: number | undefined): string {
   return Math.round(value) + " shares";
 }
 
-export function resolveDailyEntryQualificationMode(
-  indicators: Pick<IndicatorSnapshot, "ema8" | "ema21" | "ema34" | "atr14">,
-  price: number
-): DailyEntryQualificationMode {
-  if (price < indicators.ema34) return "none";
-  const withinEmaPocket = price >= indicators.ema34 && price <= indicators.ema8;
-  const withinOneAtrOfEma21 = indicators.atr14 > 0 && price >= indicators.ema21 && price <= indicators.ema21 + indicators.atr14;
-  if (withinEmaPocket || withinOneAtrOfEma21) return "strict";
-  if (indicators.atr14 > 0 && price <= indicators.ema21 + indicators.atr14 * 1.5) return "extended";
-  return "none";
-}
+export { resolveDailyEntryQualificationMode };
 
 export function resolveSqueezeMaturityMode(dailySqueezeDotCount: number): SqueezeMaturityMode {
   if (dailySqueezeDotCount >= 5) return "mature";
   if (dailySqueezeDotCount >= 2) return "developing";
   return "insufficient";
-}
-
-function dailyEntryDetail(mode: DailyEntryQualificationMode): string {
-  if (mode === "strict") return "inside the preferred A-entry zone";
-  if (mode === "broad") return "inside the broader valid entry range";
-  if (mode === "extended") return "inside the controlled B-entry extension up to 1.5 ATR above the 21 EMA";
-  return "below the 34 EMA or more than 1.5 ATR above the 21 EMA";
 }
 
 function hasPositiveFastTrend(context: Pick<LowerTimeframeContext, "ema8" | "ema21" | "ema34" | "price">): boolean {

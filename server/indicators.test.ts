@@ -5,6 +5,7 @@ import {
   activeSqueezeDotCount,
   latestIndicators,
   linearRegressionLast,
+  MIN_CANDLES_REQUIRED,
   squeezeMomentumColor,
   squeezeMomentumSeries,
   squeezeState
@@ -38,6 +39,23 @@ describe("indicator calculations", () => {
     expect(typeof indicators.bbContracting).toBe("boolean");
     expect(typeof indicators.momentumImproving).toBe("boolean");
     expect(["cyan", "blue", "red", "yellow"]).toContain(indicators.momentumColor);
+  });
+
+  it("requires MIN_CANDLES_REQUIRED candles and matches indicators.ts's real threshold", () => {
+    expect(MIN_CANDLES_REQUIRED).toBe(90);
+    const makeCandles = (length: number) => Array.from({ length }, (_, index) => ({
+      date: "2026-01-" + String(index + 1).padStart(2, "0"),
+      open: index,
+      high: index + 1,
+      low: index - 1,
+      close: index,
+      volume: 1_000_000
+    }));
+
+    expect(() => latestIndicators(makeCandles(MIN_CANDLES_REQUIRED - 1))).toThrow(
+      "At least " + MIN_CANDLES_REQUIRED + " candles are required to calculate the compression setup."
+    );
+    expect(() => latestIndicators(makeCandles(MIN_CANDLES_REQUIRED))).not.toThrow();
   });
 
   it("uses the least-squares regression endpoint for the Squeeze histogram", () => {
@@ -342,7 +360,8 @@ describe("layer decision engine", () => {
         symbol: "HIGHCAP",
         beta: 1.2,
         marketCap: 20_000_000_000,
-        avgDollarVolume20d: 900_000_000
+        avgDollarVolume20d: 900_000_000,
+        nextEarningsDate: "2027-12-31"
       },
       optionable: true,
       options: demoOptions("HIGHCAP", price),
@@ -356,6 +375,36 @@ describe("layer decision engine", () => {
     expect(result.setupScore).toBeGreaterThanOrEqual(90);
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.grade).toBe("A");
+  });
+
+  it("caps the grade at B when the setup score reaches the A band but Catalyst Safety data is missing", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "NOCATALYST",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        symbol: "NOCATALYST",
+        beta: 1.2,
+        marketCap: 20_000_000_000,
+        avgDollarVolume20d: 900_000_000
+      },
+      optionable: true,
+      options: demoOptions("NOCATALYST", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      sector: "Information Technology",
+      sectorCandles: activeDailySqueezeCandles(),
+      spyCandles: activeDailySqueezeCandles(),
+      qqqCandles: activeDailySqueezeCandles()
+    });
+
+    expect(result.setupScore).toBeGreaterThanOrEqual(90);
+    expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Insufficient Data");
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain("Catalyst Safety unavailable.");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
   });
 
   it("allows neutral weekly structure without capping the setup", () => {

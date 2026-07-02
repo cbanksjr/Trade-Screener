@@ -301,6 +301,22 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual([]);
   }));
 
+  it("caps a cached A-band setup score to grade B when Sector Strength data is missing", async () => withDbRestore(async () => {
+    const missingSector: ScanResult = {
+      ...qualifyingResult("NOSECTORCACHE"),
+      setupScore: 92,
+      institutionalFactors: [
+        { name: "Sector Strength", status: "Insufficient Data", contribution: 5, detail: "Sector unavailable; A grade capped." }
+      ]
+    };
+    await replaceScanResults([missingSector]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.grade).toBe("B");
+    expect(result.gradeCapReasons).toContain("Sector Strength unavailable.");
+  }));
+
   it("filters old cached short results from display", async () => withDbRestore(async () => {
     const oldShort: ScanResult = { ...qualifyingResult("OLDPUT"), setupDirection: "short" };
     await replaceScanResults([
