@@ -1048,6 +1048,29 @@ describe("layer decision engine", () => {
     expect(qualifiedBeta.longCallDecision).toBe("Strong Long Call Candidate");
   });
 
+  it("fails the institutional beta filter on a genuinely negative beta instead of treating it as unavailable", () => {
+    const candles = activeDailySqueezeCandles();
+    const indicators = latestIndicators(candles);
+    const price = preferredEntryPrice(indicators);
+    const result = gradeSetup({
+      symbol: "NEGBETA",
+      candles,
+      currentPrice: price,
+      fundamentals: {
+        ...strongFundamentals("NEGBETA"),
+        beta: -0.5
+      },
+      optionable: true,
+      options: demoOptions("NEGBETA", price),
+      weeklyIndicators: weeklyIndicator("bullish"),
+      strictFundamentals: false,
+      ...institutionalSetupContext()
+    });
+
+    expect(result.passesUniverse).toBe(false);
+    expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
+  });
+
   it("passes stock liquidity with either 1.5M shares or $300M average dollar volume", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);

@@ -35,6 +35,44 @@ describe("Schwab response normalizers", () => {
     }]);
   });
 
+  it("preserves negative and zero EPS, beta, and P/E instead of treating them as unavailable", () => {
+    const [quote] = normalizeSchwabQuotes({
+      LOSSCO: {
+        symbol: "LOSSCO",
+        quote: { lastPrice: 15, totalVolume: 500000 },
+        reference: { description: "LOSS MAKING CO" },
+        fundamental: {
+          avg10DaysVolume: 1000000,
+          beta: -0.4,
+          marketCap: 5000000000,
+          eps: -2.15,
+          peRatio: -6.98
+        }
+      }
+    });
+
+    expect(quote.beta).toBe(-0.4);
+    expect(quote.eps).toBe(-2.15);
+    expect(quote.peRatio).toBe(-6.98);
+  });
+
+  it("still treats zero or negative market cap and average volume as unavailable", () => {
+    const [quote] = normalizeSchwabQuotes({
+      ZEROVOL: {
+        symbol: "ZEROVOL",
+        quote: { lastPrice: 15, totalVolume: 500000 },
+        reference: { description: "ZERO VOLUME CO" },
+        fundamental: {
+          avg10DaysVolume: 0,
+          marketCap: -1
+        }
+      }
+    });
+
+    expect(quote.averageVolume).toBeUndefined();
+    expect(quote.marketCap).toBeUndefined();
+  });
+
   it("normalizes compact fundamental analysis fields", () => {
     const [quote] = normalizeSchwabQuotes({
       MSFT: {

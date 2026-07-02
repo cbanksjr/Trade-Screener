@@ -266,10 +266,10 @@ export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
       averageVolume,
       rootSymbols: stringValue(reference.optionRoot)?.split(",").map((item) => item.trim()).filter(Boolean),
       avgDollarVolume: averageVolume ? averageVolume * price : undefined,
-      beta: firstNumber(fundamental.beta, fundamental.betaCoefficient),
+      beta: firstFiniteNumber(fundamental.beta, fundamental.betaCoefficient),
       marketCap: firstNumber(fundamental.marketCap, fundamental.marketCapitalization, fundamental.marketCapFloat),
-      eps: firstNumber(fundamental.eps, fundamental.epsTTM, fundamental.epsTrailingTwelveMonths),
-      peRatio: firstNumber(fundamental.peRatio, fundamental.peRatioTTM, fundamental.pERatio),
+      eps: firstFiniteNumber(fundamental.eps, fundamental.epsTTM, fundamental.epsTrailingTwelveMonths),
+      peRatio: firstFiniteNumber(fundamental.peRatio, fundamental.peRatioTTM, fundamental.pERatio),
       dividendAmount: firstNonNegativeNumber(fundamental.dividendAmount, fundamental.divAmount, fundamental.annualDividend),
       dividendYield: firstNonNegativeNumber(fundamental.dividendYield, fundamental.divYield),
       dividendFrequency: stringValue(fundamental.dividendFrequency, fundamental.divFreq),
@@ -557,6 +557,14 @@ function firstNumber(...values: unknown[]): number | undefined {
   for (const value of values) {
     const parsed = Number(value);
     if (Number.isFinite(parsed) && parsed > 0) return parsed;
+  }
+  return undefined;
+}
+
+function firstFiniteNumber(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
   }
   return undefined;
 }

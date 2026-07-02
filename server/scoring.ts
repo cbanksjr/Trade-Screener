@@ -302,14 +302,6 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
   };
 }
 
-function canQuantDataPromote(result: ScanResult): boolean {
-  return result.tradeMark !== "Avoid"
-    && result.setupScore >= B_SETUP_SCORE_THRESHOLD
-    && result.passesUniverse
-    && result.optionable
-    && result.grade === "B";
-}
-
 function evaluateMarketStructure(dailyContext: LowerTimeframeContext, indicators: IndicatorSnapshot): LayerEvaluation {
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
