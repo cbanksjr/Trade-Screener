@@ -299,8 +299,17 @@ function TickerDetail({ result }: { result: ScanResult }) {
               <Metric label="Options Flow" value={signalLabel(result.optionsFlowSignal)} />
               <Metric label="Options Exposure" value={signalLabel(result.optionsExposureSignal)} />
               <Metric label="Dark Pool" value={signalLabel(result.darkPoolSignal)} />
+              <Metric label="Max Pain" value={signalLabel(result.maxPainSignal)} />
+              <Metric label="OI Change" value={signalLabel(result.openInterestChangeSignal)} />
+              <Metric label="IV Rank" value={signalLabel(result.ivRankSignal)} />
               <Metric label="Grade" value={result.grade} />
             </div>
+            {result.institutionalPromotionApplied ? (
+              <div className="grade-cap take-mark">
+                <strong>Grade Promoted</strong>
+                <span>QuantData confluence promoted this setup from {result.gradeBeforeQuantData} to {result.finalGrade}.</span>
+              </div>
+            ) : null}
             {result.flags?.length ? (
               <div className="flag-list">
                 {result.flags.map((flag) => <span key={flag}>{flag}</span>)}
