@@ -2,6 +2,9 @@ import type {
   DarkPoolSignal,
   InstitutionalPositioningStatus,
   InstitutionalPositioningSummary,
+  IvRankSignal,
+  MaxPainSignal,
+  OpenInterestChangeSignal,
   OptionsExposureSignal,
   OptionsFlowSignal
 } from "../shared/types";
@@ -10,7 +13,16 @@ import { fetchWithRetry } from "./httpRetry";
 import { getSetting, setSetting } from "./sqlite";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
-type EndpointId = "net-drift" | "order-flow-consolidated" | "exposure-by-strike" | "dark-pool-levels";
+type EndpointId =
+  | "net-drift"
+  | "order-flow-consolidated"
+  | "exposure-by-strike"
+  | "dark-pool-levels"
+  | "max-pain"
+  | "open-interest-change"
+  | "iv-rank"
+  | "net-flow"
+  | "gainers-losers";
 
 type EndpointCacheEntry = {
   updatedAt: string;
@@ -18,7 +30,13 @@ type EndpointCacheEntry = {
 };
 
 export type QuantDataCache = {
-  responses: Record<string, Partial<Record<EndpointId, EndpointCacheEntry>>>;
+  responses: Record<string, Partial<Record<string, EndpointCacheEntry>>>;
+};
+
+export type QuantDataEnrichContext = {
+  compressionActive?: boolean;
+  nearestExpirationDate?: string;
+  daysToNearestExpiration?: number;
 };
 
 export type QuantDataPositioningResult = {
@@ -49,22 +67,57 @@ type DarkPoolEvaluation = {
   flags: string[];
 };
 
+type MaxPainEvaluation = {
+  signal: MaxPainSignal;
+  score: number;
+  detail: string;
+  flags: string[];
+};
+
+type OpenInterestChangeEvaluation = {
+  signal: OpenInterestChangeSignal;
+  score: number;
+  detail: string;
+  flags: string[];
+};
+
+type IvRankEvaluation = {
+  signal: IvRankSignal;
+  score: number;
+  detail: string;
+  flags: string[];
+};
+
 const CACHE_KEY = "quantDataCache";
 const ENDPOINT_PATHS: Record<EndpointId, string> = {
   "net-drift": "/v1/options/tool/net-drift",
   "order-flow-consolidated": "/v1/options/tool/order-flow-consolidated",
   "exposure-by-strike": "/v1/options/tool/exposure-by-strike",
-  "dark-pool-levels": "/v1/equities/tool/dark-pool-levels"
+  "dark-pool-levels": "/v1/equities/tool/dark-pool-levels",
+  "max-pain": "/v1/options/tool/max-pain",
+  "open-interest-change": "/v1/options/tool/open-interest-change",
+  "iv-rank": "/v1/options/tool/iv-rank",
+  "net-flow": "/v1/options/tool/net-flow",
+  "gainers-losers": "/v1/options/tool/gainers-losers"
 };
+const UNIVERSE_CACHE_SYMBOL = "__UNIVERSE__";
+const MIN_DAYS_FOR_PIN_RISK = 3;
+const MIN_OI_BUILD_CONTRACTS = 500;
+const MIN_OI_BUILD_PERCENT = 5;
 const DEFAULT_POSITIONING: InstitutionalPositioningSummary = {
   score: 50,
   optionsFlowSignal: "neutral",
   optionsExposureSignal: "neutral",
   darkPoolSignal: "no_data",
+  maxPainSignal: "no_data",
+  openInterestChangeSignal: "no_data",
+  ivRankSignal: "no_data",
   status: "neutral",
   reason: "QuantData positioning was unavailable; grade unchanged.",
   flags: [],
-  warnings: []
+  warnings: [],
+  confirmingFactorCount: 0,
+  vetoingFactorCount: 0
 };
 
 export async function createQuantDataPositioningScanProvider(): Promise<ReturnType<typeof createQuantDataPositioningProvider> | undefined> {
@@ -101,13 +154,16 @@ export function createQuantDataPositioningProvider(input: {
   const now = input.now ?? (() => new Date());
   const cacheTtlMs = input.cacheTtlMs ?? 15 * 60 * 1000;
 
-  async function enrich(symbol: string, price: number): Promise<QuantDataPositioningResult> {
+  async function enrich(symbol: string, price: number, context: QuantDataEnrichContext = {}): Promise<QuantDataPositioningResult> {
     const upperSymbol = symbol.trim().toUpperCase();
     if (!upperSymbol || !input.apiKey) return { positioning: DEFAULT_POSITIONING, warnings: [], usedLive: false };
     const previousFlowSessionDate = previousTradingSessionDate(now());
     const previousFlowSessionRange = { startDate: previousFlowSessionDate, endDate: previousFlowSessionDate };
+    const maxPainPromise = context.nearestExpirationDate
+      ? loadEndpoint(upperSymbol, "max-pain", { ticker: upperSymbol, expirationDate: context.nearestExpirationDate }, context.nearestExpirationDate)
+      : Promise.resolve({ warnings: [], usedLive: false } as { data?: unknown; warnings: string[]; usedLive: boolean });
 
-    const [netDrift, orderFlow, exposure, darkPool] = await Promise.all([
+    const [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank] = await Promise.all([
       loadEndpoint(upperSymbol, "net-drift", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol } }),
       loadEndpoint(upperSymbol, "order-flow-consolidated", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol }, size: 100 }),
       loadEndpoint(upperSymbol, "exposure-by-strike", {
@@ -118,23 +174,43 @@ export function createQuantDataPositioningProvider(input: {
       loadEndpoint(upperSymbol, "dark-pool-levels", {
         sessionDateRange: { startDate: isoDate(addDays(now(), -14)) },
         filter: { ticker: upperSymbol }
-      })
+      }),
+      maxPainPromise,
+      loadEndpoint(upperSymbol, "open-interest-change", {
+        sessionDateRange: previousFlowSessionRange,
+        filter: { ticker: upperSymbol, contractType: "CALL" }
+      }),
+      loadEndpoint(upperSymbol, "iv-rank", { filter: { ticker: upperSymbol } })
     ]);
 
-    const warnings = [...netDrift.warnings, ...orderFlow.warnings, ...exposure.warnings, ...darkPool.warnings];
+    const warnings = [
+      ...netDrift.warnings, ...orderFlow.warnings, ...exposure.warnings, ...darkPool.warnings,
+      ...maxPain.warnings, ...oiChange.warnings, ...ivRank.warnings
+    ];
     const flowEvaluation = normalizeOptionsFlow(netDrift.data, orderFlow.data);
     const exposureEvaluation = normalizeOptionsExposure(exposure.data, price);
     const darkPoolEvaluation = normalizeDarkPool(darkPool.data, price);
-    const positioning = summarizePositioning(flowEvaluation, exposureEvaluation, darkPoolEvaluation, warnings);
+    const maxPainEvaluation = normalizeMaxPain(maxPain.data, price, context.daysToNearestExpiration);
+    const oiChangeEvaluation = normalizeOpenInterestChange(oiChange.data, price);
+    const ivRankEvaluation = normalizeIvRank(ivRank.data, Boolean(context.compressionActive));
+    const positioning = summarizePositioning(
+      flowEvaluation, exposureEvaluation, darkPoolEvaluation, maxPainEvaluation, oiChangeEvaluation, ivRankEvaluation, warnings
+    );
     return {
       positioning,
       warnings,
-      usedLive: [netDrift, orderFlow, exposure, darkPool].some((item) => item.usedLive)
+      usedLive: [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank].some((item) => item.usedLive)
     };
   }
 
-  async function loadEndpoint(symbol: string, endpoint: EndpointId, body: Record<string, unknown>): Promise<{ data?: unknown; warnings: string[]; usedLive: boolean }> {
-    const cached = cache.responses[symbol]?.[endpoint];
+  async function loadEndpoint(
+    symbol: string,
+    endpoint: EndpointId,
+    body: Record<string, unknown>,
+    cacheKeySuffix?: string
+  ): Promise<{ data?: unknown; warnings: string[]; usedLive: boolean }> {
+    const cacheKey = cacheKeySuffix ? `${endpoint}:${cacheKeySuffix}` : endpoint;
+    const cached = cache.responses[symbol]?.[cacheKey];
     if (cached && isFresh(cached.updatedAt, cacheTtlMs, now())) return { data: cached.data, warnings: [], usedLive: false };
     if (remainingCalls <= 0) return { warnings: ["QuantData call budget exhausted."], usedLive: false };
 
@@ -163,14 +239,28 @@ export function createQuantDataPositioningProvider(input: {
     }
     cache.responses[symbol] = {
       ...(cache.responses[symbol] ?? {}),
-      [endpoint]: { updatedAt: now().toISOString(), data }
+      [cacheKey]: { updatedAt: now().toISOString(), data }
     };
     dirty = true;
     return { data, warnings: [], usedLive: true };
   }
 
+  async function rankSymbols(symbols: string[]): Promise<{ symbols: string[]; warnings: string[]; usedLive: boolean }> {
+    if (!input.apiKey || !symbols.length) return { symbols, warnings: [], usedLive: false };
+    const [netFlow, gainersLosers] = await Promise.all([
+      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "net-flow", {}, "universe"),
+      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "gainers-losers", {}, "universe")
+    ]);
+    const warnings = [...netFlow.warnings, ...gainersLosers.warnings];
+    const ranking = normalizeFlowRanking(netFlow.data, gainersLosers.data);
+    if (!ranking.size) return { symbols, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };
+    const ranked = [...symbols].sort((a, b) => (ranking.get(b) ?? 0) - (ranking.get(a) ?? 0));
+    return { symbols: ranked, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };
+  }
+
   return {
     enrich,
+    rankSymbols,
     cache: () => cache,
     remainingCalls: () => remainingCalls,
     isDirty: () => dirty,
@@ -290,35 +380,146 @@ export function normalizeDarkPool(payload: unknown, currentPrice: number): DarkP
   return { signal, score, detail, flags };
 }
 
+export function normalizeMaxPain(payload: unknown, currentPrice: number, daysToExpiration?: number): MaxPainEvaluation {
+  const root = objectValue(payload);
+  const data = objectValue(root?.data) ?? root;
+  const maxPainStrike = numberValue(data?.maxPainStrikePrice, data?.maxPainStrike, data?.strike, data?.maxPain);
+  if (maxPainStrike === undefined || !(maxPainStrike > 0) || !(currentPrice > 0)) {
+    return { signal: "no_data", score: 10, detail: "Max pain unavailable.", flags: [] };
+  }
+  const distancePct = (currentPrice - maxPainStrike) / currentPrice;
+  const nearExpiration = daysToExpiration !== undefined && daysToExpiration <= MIN_DAYS_FOR_PIN_RISK;
+  if (nearExpiration && distancePct >= 0.02) {
+    return {
+      signal: "pin_risk",
+      score: 0,
+      detail: "Max pain $" + maxPainStrike.toFixed(2) + " sits below price with " + daysToExpiration + " days to expiration.",
+      flags: ["Max Pain Pin Risk"]
+    };
+  }
+  if (maxPainStrike >= currentPrice) {
+    return { signal: "tailwind", score: 15, detail: "Max pain $" + maxPainStrike.toFixed(2) + " is at or above current price.", flags: [] };
+  }
+  return { signal: "neutral", score: 10, detail: "Max pain $" + maxPainStrike.toFixed(2) + " is not a near-term structural concern.", flags: [] };
+}
+
+export function normalizeOpenInterestChange(payload: unknown, currentPrice: number): OpenInterestChangeEvaluation {
+  const rows = payloadRows(payload);
+  if (!rows.length) return { signal: "no_data", score: 10, detail: "Open interest change unavailable.", flags: [] };
+  const nearMoney = rows.filter((row) => {
+    const strike = numberValue(row.strike, row.strikePrice);
+    return strike !== undefined && strike >= currentPrice * 0.95 && strike <= currentPrice * 1.15;
+  });
+  const relevant = nearMoney.length ? nearMoney : rows;
+  const aggregateChange = sumNumbers(relevant, ["changeInOpenInterest", "openInterestChange", "changeOpenInterest"]);
+  const previousOpenInterest = sumNumbers(relevant, ["previousOpenInterest", "priorOpenInterest"]);
+  const percentChange = previousOpenInterest > 0 ? (aggregateChange / previousOpenInterest) * 100 : 0;
+  if (aggregateChange >= MIN_OI_BUILD_CONTRACTS && percentChange >= MIN_OI_BUILD_PERCENT) {
+    return {
+      signal: "confirmed_build",
+      score: 20,
+      detail: "Call open interest built by " + Math.round(aggregateChange) + " contracts (" + percentChange.toFixed(1) + "%) overnight.",
+      flags: ["Confirmed Call OI Build"]
+    };
+  }
+  return {
+    signal: "no_confirmation",
+    score: 5,
+    detail: "Call open interest change of " + Math.round(aggregateChange) + " contracts did not confirm fresh positioning.",
+    flags: []
+  };
+}
+
+export function normalizeIvRank(payload: unknown, compressionActive: boolean): IvRankEvaluation {
+  const root = objectValue(payload);
+  const data = objectValue(root?.data) ?? root;
+  const lastIv = numberValue(data?.lastIv, data?.iv, data?.currentIv);
+  const windowMin = numberValue(data?.windowMin, data?.ivRankLow, data?.low);
+  const windowMax = numberValue(data?.windowMax, data?.ivRankHigh, data?.high);
+  if (lastIv === undefined || windowMin === undefined || windowMax === undefined || windowMax <= windowMin) {
+    return { signal: "no_data", score: 10, detail: "IV Rank unavailable.", flags: [] };
+  }
+  const rank = Math.min(1, Math.max(0, (lastIv - windowMin) / (windowMax - windowMin)));
+  const percentileLabel = rank <= 1 / 3 ? "bottom third" : rank >= 2 / 3 ? "top third" : "middle third";
+  const detail = "IV Rank is in the " + percentileLabel + " of its lookback window (" + Math.round(rank * 100) + "th percentile).";
+  if (compressionActive && rank <= 1 / 3) {
+    return { signal: "confirming", score: 20, detail, flags: ["IV Rank Confirms Compression"] };
+  }
+  if (compressionActive && rank >= 2 / 3) {
+    return { signal: "contradicting", score: 0, detail, flags: ["IV Rank Elevated Despite Compression"] };
+  }
+  return { signal: "neutral", score: 10, detail, flags: [] };
+}
+
+export function normalizeFlowRanking(netFlowPayload: unknown, gainersLosersPayload: unknown): Map<string, number> {
+  const ranking = new Map<string, number>();
+  const rows = [...payloadRows(netFlowPayload), ...payloadRows(gainersLosersPayload)];
+  for (const row of rows) {
+    const ticker = normalizedString(row.ticker, row.symbol).toUpperCase();
+    if (!ticker) continue;
+    const premium = Math.abs(numberValue(row.netPremium, row.totalPremium, row.premium) ?? 0)
+      + Math.abs(numberValue(row.netCallPremium) ?? 0)
+      + Math.abs(numberValue(row.netPutPremium) ?? 0);
+    const percentChange = Math.abs(numberValue(row.percentChange, row.changePercent) ?? 0);
+    const score = premium + percentChange * 1_000_000;
+    ranking.set(ticker, (ranking.get(ticker) ?? 0) + score);
+  }
+  return ranking;
+}
+
 function summarizePositioning(
   flow: OptionsFlowEvaluation,
   exposure: OptionsExposureEvaluation,
   darkPool: DarkPoolEvaluation,
+  maxPain: MaxPainEvaluation,
+  oiChange: OpenInterestChangeEvaluation,
+  ivRank: IvRankEvaluation,
   warnings: string[]
 ): InstitutionalPositioningSummary {
-  const flags = unique([...flow.flags, ...exposure.flags, ...darkPool.flags]);
-  const score = Math.round(flow.score + exposure.score + darkPool.score);
+  const flags = unique([...flow.flags, ...exposure.flags, ...darkPool.flags, ...maxPain.flags, ...oiChange.flags, ...ivRank.flags]);
+  const score = Math.round(flow.score + exposure.score + darkPool.score + maxPain.score + oiChange.score + ivRank.score);
+  const structurallySupportive = exposure.signal === "supportive" || exposure.signal === "squeeze_prone" || darkPool.signal === "accumulation";
+  const flowConfirmedByOi = flow.signal === "bullish" && oiChange.signal === "confirmed_build";
   const status: InstitutionalPositioningStatus = flow.stronglyBearish || (flow.signal === "bearish" && (exposure.signal === "hostile" || darkPool.signal === "distribution"))
     ? "vetoed"
-    : flow.signal === "bearish" || exposure.signal === "hostile" || darkPool.signal === "distribution"
+    : flow.signal === "bearish" || exposure.signal === "hostile" || darkPool.signal === "distribution" || maxPain.signal === "pin_risk"
       ? "capped"
-      : flow.signal === "bullish" && (exposure.signal === "supportive" || exposure.signal === "squeeze_prone" || darkPool.signal === "accumulation")
+      : flowConfirmedByOi && structurallySupportive
         ? "confirmed"
         : "neutral";
+  const confirmingFactorCount = [
+    flow.signal === "bullish",
+    exposure.signal === "supportive" || exposure.signal === "squeeze_prone",
+    darkPool.signal === "accumulation",
+    oiChange.signal === "confirmed_build",
+    ivRank.signal === "confirming"
+  ].filter(Boolean).length;
+  const vetoingFactorCount = [
+    exposure.signal === "hostile",
+    maxPain.signal === "pin_risk"
+  ].filter(Boolean).length;
   const reason = [
     "Flow: " + flow.detail,
     "Exposure: " + exposure.detail,
-    "Dark pool: " + darkPool.detail
+    "Dark pool: " + darkPool.detail,
+    "Max pain: " + maxPain.detail,
+    "OI change: " + oiChange.detail,
+    "IV Rank: " + ivRank.detail
   ].join(" ");
   return {
     score,
     optionsFlowSignal: flow.signal,
     optionsExposureSignal: exposure.signal,
     darkPoolSignal: darkPool.signal,
+    maxPainSignal: maxPain.signal,
+    openInterestChangeSignal: oiChange.signal,
+    ivRankSignal: ivRank.signal,
     status,
     reason,
     flags,
-    warnings
+    warnings,
+    confirmingFactorCount,
+    vetoingFactorCount
   };
 }
 

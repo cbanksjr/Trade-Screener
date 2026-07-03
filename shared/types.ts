@@ -99,6 +99,9 @@ export type InstitutionalEdgeSummary = {
 export type OptionsFlowSignal = "bullish" | "mixed" | "bearish" | "neutral";
 export type OptionsExposureSignal = "supportive" | "neutral" | "hostile" | "squeeze_prone";
 export type DarkPoolSignal = "accumulation" | "neutral" | "distribution" | "no_data";
+export type MaxPainSignal = "tailwind" | "pin_risk" | "neutral" | "no_data";
+export type OpenInterestChangeSignal = "confirmed_build" | "no_confirmation" | "no_data";
+export type IvRankSignal = "confirming" | "contradicting" | "neutral" | "no_data";
 export type InstitutionalPositioningStatus = "confirmed" | "neutral" | "capped" | "vetoed";
 
 export type InstitutionalPositioningSummary = {
@@ -106,10 +109,15 @@ export type InstitutionalPositioningSummary = {
   optionsFlowSignal: OptionsFlowSignal;
   optionsExposureSignal: OptionsExposureSignal;
   darkPoolSignal: DarkPoolSignal;
+  maxPainSignal: MaxPainSignal;
+  openInterestChangeSignal: OpenInterestChangeSignal;
+  ivRankSignal: IvRankSignal;
   status: InstitutionalPositioningStatus;
   reason: string;
   flags: string[];
   warnings: string[];
+  confirmingFactorCount: number;
+  vetoingFactorCount: number;
 };
 
 export type LowerTimeframeContext = {
@@ -255,8 +263,14 @@ export type ScanResult = {
   optionsFlowSignal?: OptionsFlowSignal;
   optionsExposureSignal?: OptionsExposureSignal;
   darkPoolSignal?: DarkPoolSignal;
+  maxPainSignal?: MaxPainSignal;
+  openInterestChangeSignal?: OpenInterestChangeSignal;
+  ivRankSignal?: IvRankSignal;
   institutionalPositioningStatus?: InstitutionalPositioningStatus;
   institutionalPositioningReason?: string;
+  gradeBeforeQuantData?: Grade;
+  finalGrade?: Grade;
+  institutionalPromotionApplied?: boolean;
   strongLongCallCandidate?: boolean;
   flags?: string[];
   gradeCapReasons?: string[];

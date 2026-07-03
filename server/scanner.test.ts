@@ -416,6 +416,37 @@ describe("background scan refresh", () => {
     expect(result.institutionalEdgeStatus).toBe("Bearish");
   }));
 
+  it("preserves a QuantData grade promotion across a cache reload instead of reverting to the technical grade", async () => withDbRestore(async () => {
+    const promoted: ScanResult = {
+      ...qualifyingResult("PROMOTED"),
+      setupScore: 88,
+      gradeBeforeQuantData: "B",
+      finalGrade: "A",
+      institutionalPromotionApplied: true
+    };
+    await replaceScanResults([promoted]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("PROMOTED");
+    expect(result.grade).toBe("A");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+  }));
+
+  it("does not promote a cached result on reload when no QuantData promotion was recorded", async () => withDbRestore(async () => {
+    const notPromoted: ScanResult = {
+      ...qualifyingResult("NOTPROMOTED"),
+      setupScore: 88
+    };
+    await replaceScanResults([notPromoted]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("NOTPROMOTED");
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+  }));
+
   it("displays valid A/B candidates regardless of legacy decision and weekly structure", async () => withDbRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 69, grade: "C" };

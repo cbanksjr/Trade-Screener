@@ -173,7 +173,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   let usedDemo = false;
   const etfSymbols = settings.etfSymbols;
   const etfSymbolSet = new Set(etfSymbols);
-  const symbolsToScan = await resolveScanSymbols(settings);
+  let symbolsToScan = await resolveScanSymbols(settings);
   const stockSymbolsToScan = symbolsToScan.filter((symbol) => !etfSymbolSet.has(symbol));
   const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgShareVolume, settings.minAvgDollarVolume);
   if (symbolsToScan.length < MIN_REFRESHED_SYMBOLS) {
@@ -187,6 +187,14 @@ export async function runFullScan(): Promise<ScanResponse> {
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
   const fmpInstitutionalEdge = canUseLiveSchwab ? await createFmpInstitutionalEdgeScanProvider() : undefined;
   const quantDataPositioning = canUseLiveSchwab ? await createQuantDataPositioningScanProvider() : undefined;
+  if (quantDataPositioning) {
+    // Universe-wide, once-per-scan prioritization (not a scoring factor): order per-symbol
+    // QuantData spend toward names showing real same-day institutional flow first.
+    const ranking = await quantDataPositioning.rankSymbols(symbolsToScan);
+    if (ranking.usedLive) usedLive = true;
+    ranking.warnings.forEach((warning) => scanWarnings.add(warning));
+    symbolsToScan = ranking.symbols;
+  }
   const fmpEarnings = fmp && stockSymbolsToScan.length ? await fmp.earningsCalendar(stockSymbolsToScan) : undefined;
   const earningsBySymbol = fmpEarnings?.earningsBySymbol ?? new Map<string, string>();
   fmpEarnings?.warnings.forEach((warning) => scanWarnings.add(warning));
@@ -227,7 +235,12 @@ export async function runFullScan(): Promise<ScanResponse> {
         result = applyInstitutionalEdge(result, edge.edge);
       }
       if (quantDataPositioning) {
-        const positioning = await quantDataPositioning.enrich(result.symbol, result.price);
+        const compressionActive = result.layerEvaluations.some((item) => item.layer === "Compression Quality" && item.status !== "Bearish");
+        const positioning = await quantDataPositioning.enrich(result.symbol, result.price, {
+          compressionActive,
+          nearestExpirationDate: result.recommendedOptionContract?.expirationDate,
+          daysToNearestExpiration: result.recommendedOptionContract?.dte
+        });
         if (positioning.usedLive) usedLive = true;
         result = applyInstitutionalPositioning(result, positioning.positioning);
       }
@@ -617,7 +630,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   );
   let scoreGrade = gradeFromSetupScore(setupScore);
   if (capA && scoreGrade === "A") scoreGrade = "B";
-  const grade = scoreGrade;
+  const grade = result.institutionalPromotionApplied && result.finalGrade === "A" ? "A" : scoreGrade;
   const gradeCapReasons = mergeCachedGradeCapReasons(result, setupScore, dailyEntryQualificationMode, squeezeMaturityMode, missingDailyEmaStack);
   const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore, bearishMacro);
   const tradeMark = tradeMarkReasons.length ? "Avoid" : "Take";

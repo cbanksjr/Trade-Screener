@@ -4,6 +4,10 @@ import { applyInstitutionalPositioning } from "./scoring";
 import {
   createQuantDataPositioningProvider,
   normalizeDarkPool,
+  normalizeFlowRanking,
+  normalizeIvRank,
+  normalizeMaxPain,
+  normalizeOpenInterestChange,
   normalizeOptionsExposure,
   normalizeOptionsFlow,
   previousTradingSessionDate,
@@ -106,6 +110,50 @@ describe("QuantData Institutional Positioning", () => {
     expect(darkPool.flags).toContain("Dark-Pool Accumulation");
   });
 
+  it("flags max pain pin risk only when price sits materially above max pain near expiration", () => {
+    const pinRisk = normalizeMaxPain({ data: { maxPainStrikePrice: 95 } }, 100, 1);
+    const tooFar = normalizeMaxPain({ data: { maxPainStrikePrice: 95 } }, 100, 10);
+    const tailwind = normalizeMaxPain({ data: { maxPainStrikePrice: 102 } }, 100, 1);
+    const noData = normalizeMaxPain({ data: {} }, 100, 1);
+
+    expect(pinRisk.signal).toBe("pin_risk");
+    expect(pinRisk.flags).toContain("Max Pain Pin Risk");
+    expect(tooFar.signal).toBe("neutral");
+    expect(tailwind.signal).toBe("tailwind");
+    expect(noData.signal).toBe("no_data");
+  });
+
+  it("confirms fresh call open interest builds but not same-day noise", () => {
+    const confirmed = normalizeOpenInterestChange({
+      data: [
+        { strike: 102, previousOpenInterest: 4_000, currentOpenInterest: 4_800, changeInOpenInterest: 800 },
+        { strike: 105, previousOpenInterest: 3_000, currentOpenInterest: 3_100, changeInOpenInterest: 100 }
+      ]
+    }, 100);
+    const noConfirmation = normalizeOpenInterestChange({
+      data: [{ strike: 102, previousOpenInterest: 10_000, currentOpenInterest: 10_050, changeInOpenInterest: 50 }]
+    }, 100);
+    const noData = normalizeOpenInterestChange({ data: [] }, 100);
+
+    expect(confirmed.signal).toBe("confirmed_build");
+    expect(confirmed.flags).toContain("Confirmed Call OI Build");
+    expect(noConfirmation.signal).toBe("no_confirmation");
+    expect(noData.signal).toBe("no_data");
+  });
+
+  it("cross-checks IV Rank against Compression Quality instead of scoring it standalone", () => {
+    const confirming = normalizeIvRank({ data: { lastIv: 0.2, windowMin: 0.15, windowMax: 0.65 } }, true);
+    const contradicting = normalizeIvRank({ data: { lastIv: 0.6, windowMin: 0.15, windowMax: 0.65 } }, true);
+    const neutralWhenNotCompressing = normalizeIvRank({ data: { lastIv: 0.2, windowMin: 0.15, windowMax: 0.65 } }, false);
+    const noData = normalizeIvRank({ data: {} }, true);
+
+    expect(confirming.signal).toBe("confirming");
+    expect(confirming.flags).toContain("IV Rank Confirms Compression");
+    expect(contradicting.signal).toBe("contradicting");
+    expect(neutralWhenNotCompressing.signal).toBe("neutral");
+    expect(noData.signal).toBe("no_data");
+  });
+
   it("keeps setup grade and marks Avoid when positioning is bearish", () => {
     const capped = applyInstitutionalPositioning(baseResult(95, "A"), positioning("capped"));
     const vetoed = applyInstitutionalPositioning(baseResult(95, "A"), positioning("vetoed", ["Bearish Flow Veto"]));
@@ -118,13 +166,58 @@ describe("QuantData Institutional Positioning", () => {
     expect(vetoed.strongLongCallCandidate).toBe(false);
   });
 
-  it("can confirm a clean high-B setup without changing setup grade", () => {
-    const result = applyInstitutionalPositioning(baseResult(88, "B"), positioning("confirmed", ["Bullish Flow Confirmation"]));
+  it("confirms a clean high-B setup without promoting when confluence is thin", () => {
+    const result = applyInstitutionalPositioning(
+      baseResult(88, "B"),
+      positioning("confirmed", ["Bullish Flow Confirmation"], { confirmingFactorCount: 2 })
+    );
 
     expect(result.grade).toBe("B");
     expect(result.tradeMark).toBe("Take");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.strongLongCallCandidate).toBe(false);
+    expect(result.institutionalPromotionApplied).toBe(false);
+  });
+
+  it("promotes a clean high-B setup to A on multi-factor QuantData confluence", () => {
+    const result = applyInstitutionalPositioning(
+      baseResult(88, "B"),
+      positioning("confirmed", ["Bullish Flow Confirmation"], { confirmingFactorCount: 3, vetoingFactorCount: 0 })
+    );
+
+    expect(result.gradeBeforeQuantData).toBe("B");
+    expect(result.grade).toBe("A");
+    expect(result.finalGrade).toBe("A");
+    expect(result.institutionalPromotionApplied).toBe(true);
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.strongLongCallCandidate).toBe(true);
+    expect(result.flags).toContain("QuantData Grade Promotion");
+  });
+
+  it("never promotes an A-grade setup or a setup the technical gate already rejected", () => {
+    const alreadyA = applyInstitutionalPositioning(
+      baseResult(95, "A"),
+      positioning("confirmed", [], { confirmingFactorCount: 4, vetoingFactorCount: 0 })
+    );
+    const avoided = applyInstitutionalPositioning(
+      baseResult(60, "C"),
+      positioning("confirmed", [], { confirmingFactorCount: 4, vetoingFactorCount: 0 })
+    );
+
+    expect(alreadyA.grade).toBe("A");
+    expect(alreadyA.institutionalPromotionApplied).toBe(false);
+    expect(avoided.institutionalPromotionApplied).toBe(false);
+    expect(avoided.grade).toBe("C");
+  });
+
+  it("does not promote when any factor vetoes even with 3+ confirmations", () => {
+    const result = applyInstitutionalPositioning(
+      baseResult(88, "B"),
+      positioning("confirmed", [], { confirmingFactorCount: 4, vetoingFactorCount: 1 })
+    );
+
+    expect(result.grade).toBe("B");
+    expect(result.institutionalPromotionApplied).toBe(false);
   });
 
   it("uses QuantData POST endpoints with bearer auth and reuses fresh cache", async () => {
@@ -158,6 +251,78 @@ describe("QuantData Institutional Positioning", () => {
     expect(provider.remainingCalls()).toBe(0);
   });
 
+  it("only reaches Confirmed status when Net Drift/Order Flow sentiment is corroborated by an OI build", async () => {
+    const bullishFixtures: Record<string, unknown> = {
+      "net-drift": { data: { "1": { netCallPremium: 200_000, netPutPremium: 20_000 } } },
+      "order-flow-consolidated": { data: [] },
+      "exposure-by-strike": {
+        data: { AAPL: { exposureMap: { "2026-07-17": { "97.5": { putExposure: -180_000 } } } } }
+      },
+      "dark-pool-levels": { data: { "99.50": { notionalValue: 12_000_000 } } },
+      "iv-rank": { data: { lastIv: 0.2, windowMin: 0.15, windowMax: 0.65 } }
+    };
+
+    async function runWithOiChange(oiChangeFixture: unknown) {
+      const cache: QuantDataCache = { responses: {} };
+      const provider = createQuantDataPositioningProvider({
+        apiKey: "test-key",
+        baseUrl: "https://api.example.test",
+        maxCalls: 10,
+        cache,
+        now: () => new Date("2026-06-30T15:00:00.000Z"),
+        fetchImpl: async (input) => {
+          const url = input.toString();
+          const match = Object.keys(bullishFixtures).find((endpoint) => url.includes(endpoint));
+          if (url.includes("open-interest-change")) return new Response(JSON.stringify(oiChangeFixture), { status: 200 });
+          return new Response(JSON.stringify(match ? bullishFixtures[match] : { data: {} }), { status: 200 });
+        }
+      });
+      return provider.enrich("AAPL", 100, { compressionActive: true });
+    }
+
+    const withoutOiBuild = await runWithOiChange({ data: [{ strike: 102, previousOpenInterest: 10_000, changeInOpenInterest: 20 }] });
+    const withOiBuild = await runWithOiChange({ data: [{ strike: 102, previousOpenInterest: 4_000, changeInOpenInterest: 800 }] });
+
+    expect(withoutOiBuild.positioning.status).not.toBe("confirmed");
+    expect(withoutOiBuild.positioning.confirmingFactorCount).toBe(4);
+    expect(withOiBuild.positioning.status).toBe("confirmed");
+    expect(withOiBuild.positioning.confirmingFactorCount).toBe(5);
+    expect(withOiBuild.positioning.vetoingFactorCount).toBe(0);
+  });
+
+  it("ranks symbols by universe-wide net flow and gainers/losers without treating it as a scoring factor", () => {
+    const ranking = normalizeFlowRanking(
+      { data: [{ ticker: "AAPL", netCallPremium: 5_000_000, netPutPremium: 500_000 }, { ticker: "MSFT", netPremium: 100_000 }] },
+      { data: [{ symbol: "MSFT", percentChange: 8 }] }
+    );
+
+    expect(ranking.get("AAPL")).toBeGreaterThan(0);
+    expect(ranking.get("MSFT")).toBeGreaterThan(ranking.get("AAPL") ?? 0);
+    expect(ranking.get("GOOG")).toBeUndefined();
+  });
+
+  it("reorders the scan universe by flow ranking while keeping the full symbol set intact", async () => {
+    const cache: QuantDataCache = { responses: {} };
+    const provider = createQuantDataPositioningProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.example.test",
+      maxCalls: 10,
+      cache,
+      now: () => new Date("2026-06-30T15:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = input.toString();
+        if (url.includes("net-flow")) return new Response(JSON.stringify({ data: [{ ticker: "MSFT", netPremium: 9_000_000 }] }), { status: 200 });
+        if (url.includes("gainers-losers")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        return new Response(JSON.stringify({ data: {} }), { status: 200 });
+      }
+    });
+
+    const ranked = await provider.rankSymbols(["AAPL", "MSFT", "GOOG"]);
+
+    expect(ranked.symbols).toEqual(["MSFT", "AAPL", "GOOG"]);
+    expect(ranked.symbols.sort()).toEqual(["AAPL", "GOOG", "MSFT"]);
+  });
+
   it("resolves the previous completed U.S. trading session for options flow", () => {
     expect(previousTradingSessionDate(new Date("2026-06-30T15:00:00.000Z"))).toBe("2026-06-29");
     expect(previousTradingSessionDate(new Date("2026-06-29T15:00:00.000Z"))).toBe("2026-06-26");
@@ -166,16 +331,25 @@ describe("QuantData Institutional Positioning", () => {
   });
 });
 
-function positioning(status: InstitutionalPositioningSummary["status"], flags: string[] = []): InstitutionalPositioningSummary {
+function positioning(
+  status: InstitutionalPositioningSummary["status"],
+  flags: string[] = [],
+  overrides: Partial<Pick<InstitutionalPositioningSummary, "confirmingFactorCount" | "vetoingFactorCount">> = {}
+): InstitutionalPositioningSummary {
   return {
     score: status === "confirmed" ? 92 : status === "neutral" ? 50 : 20,
     optionsFlowSignal: status === "confirmed" ? "bullish" : status === "vetoed" ? "bearish" : "mixed",
     optionsExposureSignal: status === "confirmed" ? "supportive" : status === "capped" ? "hostile" : "neutral",
     darkPoolSignal: status === "confirmed" ? "accumulation" : "neutral",
+    maxPainSignal: status === "confirmed" ? "tailwind" : "neutral",
+    openInterestChangeSignal: status === "confirmed" ? "confirmed_build" : "no_confirmation",
+    ivRankSignal: status === "confirmed" ? "confirming" : "neutral",
     status,
     reason: "QuantData test positioning.",
     flags,
-    warnings: []
+    warnings: [],
+    confirmingFactorCount: overrides.confirmingFactorCount ?? (status === "confirmed" ? 4 : 0),
+    vetoingFactorCount: overrides.vetoingFactorCount ?? (status === "capped" || status === "vetoed" ? 1 : 0)
   };
 }
 

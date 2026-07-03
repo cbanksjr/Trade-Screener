@@ -255,6 +255,8 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   };
 }
 
+const GRADE_PROMOTION_MIN_CONFIRMATIONS = 3;
+
 export function applyInstitutionalPositioning(result: ScanResult, positioning: InstitutionalPositioningSummary): ScanResult {
   const flags = unique([...(result.flags ?? []), ...positioning.flags]);
   const gradeCapReasons = removeWeeklyGradeReasons(result.gradeCapReasons ?? []);
@@ -270,20 +272,36 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
   }
 
   const tradeMark: TradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
-  const longCallDecision = compatibilityDecision(result.grade, tradeMark);
+  const gradeBeforeQuantData = result.grade;
+  // Promotion only ever raises a technical B to an A, on multi-factor QuantData confluence,
+  // and never fires on a setup the technical gate already rejected (tradeMark === "Avoid").
+  const promoted = tradeMark === "Take"
+    && gradeBeforeQuantData === "B"
+    && positioning.vetoingFactorCount === 0
+    && positioning.confirmingFactorCount >= GRADE_PROMOTION_MIN_CONFIRMATIONS;
+  const finalGrade: Grade = promoted ? "A" : gradeBeforeQuantData;
+  if (promoted) addUnique(flags, "QuantData Grade Promotion");
+  const longCallDecision = compatibilityDecision(finalGrade, tradeMark);
   const strongLongCallCandidate = longCallDecision === "Strong Long Call Candidate";
 
   return {
     ...result,
+    grade: finalGrade,
+    gradeBeforeQuantData,
+    finalGrade,
+    institutionalPromotionApplied: promoted,
     tradeMark,
     tradeMarkReasons,
     longCallDecision,
-    setupQuality: result.grade === "A" ? "High" : "Moderate",
+    setupQuality: finalGrade === "A" ? "High" : "Moderate",
     entryRecommendationType: entryType(longCallDecision, result.compressionQualityStatus),
     institutionalPositioningScore: Math.max(0, Math.min(100, round(positioning.score, 0))),
     optionsFlowSignal: positioning.optionsFlowSignal,
     optionsExposureSignal: positioning.optionsExposureSignal,
     darkPoolSignal: positioning.darkPoolSignal,
+    maxPainSignal: positioning.maxPainSignal,
+    openInterestChangeSignal: positioning.openInterestChangeSignal,
+    ivRankSignal: positioning.ivRankSignal,
     institutionalPositioningStatus: positioning.status,
     institutionalPositioningReason: positioning.reason,
     strongLongCallCandidate,
