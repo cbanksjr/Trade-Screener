@@ -1,6 +1,24 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { Activity, BarChart3, CheckCircle2, Moon, Play, Sun, XCircle } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  CalendarClock,
+  CheckCircle2,
+  Database,
+  Gauge,
+  LayoutDashboard,
+  ListFilter,
+  Moon,
+  Play,
+  Search,
+  Settings as SettingsIcon,
+  ShieldCheck,
+  SlidersHorizontal,
+  Sun,
+  WalletCards,
+  XCircle
+} from "lucide-react";
 import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
 
@@ -117,8 +135,8 @@ function App() {
       await startRefresh(true);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "Failed to start scan.");
+      setLoading(false);
     }
-    // Polling owns the final loading state while a refresh is running.
   }
 
   async function connectSchwab() {
@@ -126,13 +144,37 @@ function App() {
     window.location.href = response.loginUrl;
   }
 
+  const passingCount = results.filter((item) => item.passesUniverse).length;
+  const takeCount = results.filter((item) => tradeMark(item) === "Take").length;
+  const gradeACount = results.filter((item) => item.grade.startsWith("A")).length;
+  const avoidCount = results.filter((item) => tradeMark(item) === "Avoid").length;
+
   return (
     <main className="app-shell">
+      <aside className="side-rail" aria-label="Primary navigation">
+        <div className="brand-mark">
+          <BarChart3 size={21} />
+          <span>TS</span>
+        </div>
+        <nav>
+          <button className="nav-item active" title="Scanner"><LayoutDashboard size={18} /></button>
+          <button className="nav-item" title="Watchlists"><WalletCards size={18} /></button>
+          <button className="nav-item" title="Data"><Database size={18} /></button>
+          <button className="nav-item" title="Settings"><SettingsIcon size={18} /></button>
+        </nav>
+      </aside>
+
       <section className="app-content">
         <header className="topbar">
-          <div>
-            <h1>Options Swing Screener</h1>
-            <p>Automatic S&amp;P 500 + Nasdaq 100 + selected ETF screening for long squeeze-style setups.</p>
+          <div className="title-block">
+            <span className="eyebrow">Analyst Workbench</span>
+            <h1>Trade Screener</h1>
+            <p>S&amp;P 500, Nasdaq 100, and ETF compression setups with institutional context.</p>
+          </div>
+          <div className="command-bar" role="search">
+            <Search size={16} />
+            <input value={selected} onChange={(event) => setSelected(event.target.value.toUpperCase())} placeholder="Search symbol" aria-label="Search symbol" />
+            <span>/</span>
           </div>
           <div className="top-actions">
             <button className="icon-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle color mode">
@@ -146,10 +188,19 @@ function App() {
           </div>
         </header>
 
+        <section className="control-strip" aria-label="Scan controls">
+          <ToolbarChip icon={<SlidersHorizontal size={15} />} label="Mode" value="Auto Scan" />
+          <ToolbarChip icon={<ListFilter size={15} />} label="Universe" value={`${results.length || "No"} symbols`} />
+          <ToolbarChip icon={<CalendarClock size={15} />} label="Session" value={loading || scanStatus === "running" ? "Refreshing" : scanStatus} />
+          <ToolbarChip icon={<ShieldCheck size={15} />} label="Broker" value={brokerStatus?.ok ? "Connected" : "Needs setup"} />
+        </section>
+
         <section className="status-strip">
-          <Stat icon={<Activity />} label="Scan" value={loading || scanStatus === "running" ? "REFRESHING" : scanStatus.toUpperCase()} />
-          <Stat icon={<BarChart3 />} label="Symbols" value={String(results.length)} />
-          <Stat icon={<CheckCircle2 />} label="Passing Universe" value={String(results.filter((item) => item.passesUniverse).length)} />
+          <Stat icon={<Activity />} label="Scan Status" value={loading || scanStatus === "running" ? "REFRESHING" : scanStatus.toUpperCase()} tone="blue" />
+          <Stat icon={<Gauge />} label="A Setups" value={String(gradeACount)} tone="good" />
+          <Stat icon={<CheckCircle2 />} label="Actionable" value={String(takeCount)} tone="good" />
+          <Stat icon={<XCircle />} label="Avoid" value={String(avoidCount)} tone="risk" />
+          <Stat icon={<BarChart3 />} label="Passing Universe" value={`${passingCount}/${results.length}`} tone="neutral" />
         </section>
 
         {message && <div className="notice">{message}</div>}
@@ -157,10 +208,21 @@ function App() {
         <section className="workspace">
           <div className="panel list-panel">
             <div className="panel-head">
-              <h2>Qualified Compression Candidates</h2>
+              <div>
+                <h2>Scan Results</h2>
+                <span>Ranked by setup score, grade, and squeeze quality</span>
+              </div>
               <span>{new Date().toLocaleDateString()}</span>
             </div>
-            <div className="table scroll-list">
+            <div className="result-table scroll-list" role="table" aria-label="Scan results">
+              <div className="result-header" role="row">
+                <span>Symbol</span>
+                <span>Grade</span>
+                <span>Score</span>
+                <span>Entry</span>
+                <span>Dots</span>
+                <span>Mark</span>
+              </div>
               {results.map((result) => (
                 <ResultRow result={result} activeSymbol={active?.symbol} onSelect={setSelected} key={result.symbol} />
               ))}
@@ -189,9 +251,19 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   });
 }
 
-function Stat({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+function ToolbarChip({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="stat">
+    <div className="toolbar-chip">
+      {icon}
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function Stat({ icon, label, value, tone = "neutral" }: { icon: React.ReactNode; label: string; value: string; tone?: "good" | "risk" | "blue" | "neutral" }) {
+  return (
+    <div className={"stat stat-" + tone}>
       {icon}
       <span>{label}</span>
       <strong>{value}</strong>
@@ -231,19 +303,15 @@ function ResultRow({ result, activeSymbol, onSelect }: {
   onSelect: (symbol: string) => void;
 }) {
   return (
-    <div className={"candidate-card " + (result.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(result.symbol)} onKeyDown={(event) => {
+    <div className={"result-row " + (result.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(result.symbol)} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") onSelect(result.symbol);
     }} role="button" tabIndex={0}>
-      <div className="candidate-card-top">
-        <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
-        <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}</span>
-        <b>{setupScoreLabel(result)}</b>
-      </div>
-      <div className="candidate-card-stats">
-        <span>{money(result.price)}</span>
-        <span>{dailySqueezeDotLabel(result)} dots</span>
-      </div>
-      <small>{setupTradeLabel(result)}</small>
+      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small></span>
+      <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
+      <b>{setupScoreLabel(result)}</b>
+      <span>{result.entryRecommendationType}</span>
+      <span>{dailySqueezeDotLabel(result)}</span>
+      <span className={"decision " + (tradeMark(result) === "Take" ? "take" : "avoid")}>{tradeMark(result)}</span>
     </div>
   );
 }
@@ -252,19 +320,23 @@ function TickerDetail({ result }: { result: ScanResult }) {
   return (
     <>
       <section className="panel hero-panel">
-        <div>
+        <div className="hero-identity">
           <span className={"grade large grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
-          <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null} <DemoFundamentalsBadge sources={result.fundamentalSources} /></h2>
-          <p>{setupTradeLabel(result)} · {money(result.price)} · {result.entryRecommendationType}</p>
+          <div>
+            <span className="eyebrow">Selected Setup</span>
+            <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null} <DemoFundamentalsBadge sources={result.fundamentalSources} /></h2>
+            <p>{setupTradeLabel(result)} · {money(result.price)} · {result.entryRecommendationType}</p>
+          </div>
         </div>
-        <div className="indicator-grid">
+        <div className="summary-grid compact-metrics">
+          <Metric label="Setup Score" value={setupScoreLabel(result)} />
+          <Metric label="Next Earnings" value={nextEarningsLabel(result)} />
+          <Metric label="Entry Zone" value={result.suggestedEntryArea} />
+          <Metric label="Momentum" value={momentumLabel(result)} />
           <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
           <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
-          <Metric label="Setup Score" value={setupScoreLabel(result)} />
-          <Metric label="Next Earnings" value={nextEarningsLabel(result)} />
           <Metric label="Today Vol" value={shareVolumeLabel(result.currentVolume)} />
-          <Metric label="Momentum" value={momentumLabel(result)} />
           <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
           <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
           <Metric label="34 EMA" value={formatNumber(result.indicators.ema34)} />
@@ -276,7 +348,10 @@ function TickerDetail({ result }: { result: ScanResult }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Why This Setup Grade</h2>
+          <div>
+            <h2>Grade Rationale</h2>
+            <span>Technical setup with institutional overlays</span>
+          </div>
           <span>{setupScoreLabel(result)} · {displayStatus(result.setupScoreStatus)}</span>
         </div>
         {result.gradeCapReasons?.length ? (
@@ -292,8 +367,10 @@ function TickerDetail({ result }: { result: ScanResult }) {
         {result.institutionalPositioningStatus ? (
           <div className="edge-section">
             <div className="panel-head compact">
-              <h3>Institutional Positioning</h3>
-              <span>{positioningStatusLabel(result.institutionalPositioningStatus)} · {positioningScoreLabel(result)}</span>
+              <div>
+                <h3>Institutional Positioning</h3>
+                <span>{positioningStatusLabel(result.institutionalPositioningStatus)} · {positioningScoreLabel(result)}</span>
+              </div>
             </div>
             <div className="summary-grid">
               <Metric label="Options Flow" value={signalLabel(result.optionsFlowSignal)} />
@@ -335,8 +412,10 @@ function TickerDetail({ result }: { result: ScanResult }) {
         {(result.institutionalEdgeFactors?.length || result.institutionalEdgeWarnings?.length) ? (
           <div className="edge-section">
             <div className="panel-head compact">
-              <h3>Institutional Edge</h3>
-              <span>{displayStatus(result.institutionalEdgeStatus)} · Context only</span>
+              <div>
+                <h3>Institutional Edge</h3>
+                <span>{displayStatus(result.institutionalEdgeStatus)} · Context only</span>
+              </div>
             </div>
             {result.institutionalEdgeFactors?.length ? (
               <div className="factor-grid">
@@ -359,8 +438,10 @@ function TickerDetail({ result }: { result: ScanResult }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Layer Status</h2>
-          <span>Independent evaluation</span>
+          <div>
+            <h2>Layer Status</h2>
+            <span>Independent evaluation</span>
+          </div>
         </div>
         <div className="rules">
           {result.layerEvaluations.map((layer) => (
@@ -378,7 +459,10 @@ function TickerDetail({ result }: { result: ScanResult }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Trade Plan</h2>
+          <div>
+            <h2>Trade Plan</h2>
+            <span>Entry, invalidation, and targets</span>
+          </div>
           <span>{result.entryRecommendationType}</span>
         </div>
         <div className="summary-grid">
@@ -393,8 +477,10 @@ function TickerDetail({ result }: { result: ScanResult }) {
 
       <section className="panel">
         <div className="panel-head">
-          <h2>Recommended Calls</h2>
-          <span>14-180 DTE swing calls</span>
+          <div>
+            <h2>Recommended Contract</h2>
+            <span>14-180 DTE swing calls</span>
+          </div>
         </div>
         <div className="contracts">
           {result.suggestedOptions.map((contract) => (
@@ -437,7 +523,7 @@ function dailySqueezeDotCount(result: ScanResult): number | null {
 
 function dailySqueezeDotLabel(result: ScanResult): string {
   const dots = dailySqueezeDotCount(result);
-  return dots === null ? "Run scan for dot count" : dots + " active";
+  return dots === null ? "Run scan" : dots + " active";
 }
 
 function setupScoreValue(result: ScanResult): number {
@@ -486,11 +572,6 @@ function displayStatus(status: LayerStatus | undefined): "Bullish" | "Neutral" |
 
 function statusClass(status: LayerStatus | undefined): string {
   return displayStatus(status) === "Bullish" ? "status-bullish" : displayStatus(status) === "Neutral" ? "status-neutral" : "status-avoid";
-}
-
-function signedAdjustment(value: number | undefined): string {
-  const rounded = Math.round(value ?? 0);
-  return (rounded > 0 ? "+" : "") + rounded + " pts";
 }
 
 function positioningScoreLabel(result: ScanResult): string {
