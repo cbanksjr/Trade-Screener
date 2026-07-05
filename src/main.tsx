@@ -331,7 +331,6 @@ function TickerDetail({ result }: { result: ScanResult }) {
         <div className="summary-grid compact-metrics">
           <Metric label="Setup Score" value={setupScoreLabel(result)} />
           <Metric label="Next Earnings" value={nextEarningsLabel(result)} />
-          <Metric label="Entry Zone" value={result.suggestedEntryArea} />
           <Metric label="Momentum" value={momentumLabel(result)} />
           <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
