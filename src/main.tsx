@@ -337,11 +337,6 @@ function TickerDetail({ result }: { result: ScanResult }) {
           <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
           <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
           <Metric label="Today Vol" value={shareVolumeLabel(result.currentVolume)} />
-          <Metric label="8 EMA" value={formatNumber(result.indicators.ema8)} />
-          <Metric label="21 EMA" value={formatNumber(result.indicators.ema21)} />
-          <Metric label="34 EMA" value={formatNumber(result.indicators.ema34)} />
-          <Metric label="55 EMA" value={formatNumber(result.indicators.ema55)} />
-          <Metric label="89 EMA" value={formatNumber(result.indicators.ema89)} />
           <Metric label="ATR" value={formatNumber(result.indicators.atr14)} />
         </div>
       </section>

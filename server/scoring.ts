@@ -867,14 +867,13 @@ function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
   const mode = resolveDailyEntryQualificationMode(indicators, price);
   const extensionUpper = indicators.ema21 + indicators.atr14 * 1.5;
   const prefix = mode === "strict"
-    ? "Current price is inside the preferred A-entry zone: "
+    ? "Current price is inside the preferred zone: "
     : mode === "broad"
       ? "Current price is inside the valid entry range: "
       : mode === "extended"
         ? "Current price is inside the controlled extension: "
         : "Qualifying entry range: ";
   return prefix + "$" + round(preferredLower, 2).toFixed(2) + " to $" + round(preferredUpper, 2).toFixed(2)
-    + "; preferred zone includes the 34-8 EMA pocket or within 1 ATR above the 21 EMA"
     + "; maximum B extension $" + round(extensionUpper, 2).toFixed(2) + ".";
 }
 
