@@ -123,6 +123,14 @@ describe("QuantData Institutional Positioning", () => {
     expect(noData.signal).toBe("no_data");
   });
 
+  it("reads max pain from a ticker-keyed response envelope", () => {
+    const pinRisk = normalizeMaxPain({ data: { AAPL: { maxPainStrikePrice: 95 } } }, 100, 1);
+    const tailwind = normalizeMaxPain({ data: { AAPL: { maxPainStrikePrice: 102 } } }, 100, 1);
+
+    expect(pinRisk.signal).toBe("pin_risk");
+    expect(tailwind.signal).toBe("tailwind");
+  });
+
   it("confirms fresh call open interest builds but not same-day noise", () => {
     const confirmed = normalizeOpenInterestChange({
       data: [
@@ -141,6 +149,20 @@ describe("QuantData Institutional Positioning", () => {
     expect(noData.signal).toBe("no_data");
   });
 
+  it("confirms call OI builds from a ticker-keyed, strike-mapped response envelope", () => {
+    const confirmed = normalizeOpenInterestChange({
+      data: {
+        AAPL: {
+          "102": { strike: 102, previousOpenInterest: 4_000, currentOpenInterest: 4_800, changeInOpenInterest: 800 },
+          "105": { strike: 105, previousOpenInterest: 3_000, currentOpenInterest: 3_100, changeInOpenInterest: 100 }
+        }
+      }
+    }, 100);
+
+    expect(confirmed.signal).toBe("confirmed_build");
+    expect(confirmed.flags).toContain("Confirmed Call OI Build");
+  });
+
   it("cross-checks IV Rank against Compression Quality instead of scoring it standalone", () => {
     const confirming = normalizeIvRank({ data: { lastIv: 0.2, windowMin: 0.15, windowMax: 0.65 } }, true);
     const contradicting = normalizeIvRank({ data: { lastIv: 0.6, windowMin: 0.15, windowMax: 0.65 } }, true);
@@ -152,6 +174,14 @@ describe("QuantData Institutional Positioning", () => {
     expect(contradicting.signal).toBe("contradicting");
     expect(neutralWhenNotCompressing.signal).toBe("neutral");
     expect(noData.signal).toBe("no_data");
+  });
+
+  it("reads IV Rank from a ticker-keyed response envelope", () => {
+    const confirming = normalizeIvRank({ data: { AAPL: { lastIv: 0.2, windowMin: 0.15, windowMax: 0.65 } } }, true);
+    const contradicting = normalizeIvRank({ data: { AAPL: { lastIv: 0.6, windowMin: 0.15, windowMax: 0.65 } } }, true);
+
+    expect(confirming.signal).toBe("confirming");
+    expect(contradicting.signal).toBe("contradicting");
   });
 
   it("keeps setup grade and marks Avoid when positioning is bearish", () => {
