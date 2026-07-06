@@ -102,6 +102,8 @@ const ENDPOINT_PATHS: Record<EndpointId, string> = {
 };
 const UNIVERSE_CACHE_SYMBOL = "__UNIVERSE__";
 const MIN_DAYS_FOR_PIN_RISK = 3;
+const IV_RANK_LOOKBACK_DAYS = 365; // Days of history for the IV Rank window (QuantData default).
+const IV_RANK_MATURITY_DAYS = 30; // Constant-maturity DTE the IV Rank curve targets.
 const MIN_OI_BUILD_CONTRACTS = 500;
 const MIN_OI_BUILD_PERCENT = 5;
 const DEFAULT_POSITIONING: InstitutionalPositioningSummary = {
@@ -160,11 +162,11 @@ export function createQuantDataPositioningProvider(input: {
     if (!upperSymbol || !input.apiKey) return { positioning: DEFAULT_POSITIONING, warnings: [], usedLive: false };
     const previousFlowSessionDate = previousTradingSessionDate(now());
     const previousFlowSessionRange = { startDate: previousFlowSessionDate, endDate: previousFlowSessionDate };
-    // QuantData expects a date-only expiration (YYYY-MM-DD); the recommended
-    // contract carries a full ISO timestamp, which the API rejects with 400.
+    // QuantData requires expirationDate inside `filter` and date-only
+    // (YYYY-MM-DD); the recommended contract carries a full ISO timestamp.
     const maxPainExpiration = context.nearestExpirationDate?.slice(0, 10);
     const maxPainPromise = maxPainExpiration
-      ? loadEndpoint(upperSymbol, "max-pain", { filter: { ticker: upperSymbol }, expirationDate: maxPainExpiration }, maxPainExpiration)
+      ? loadEndpoint(upperSymbol, "max-pain", { filter: { ticker: upperSymbol, expirationDate: maxPainExpiration } }, maxPainExpiration)
       : Promise.resolve({ warnings: [], usedLive: false } as { data?: unknown; warnings: string[]; usedLive: boolean });
 
     const [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank] = await Promise.all([
@@ -184,7 +186,11 @@ export function createQuantDataPositioningProvider(input: {
         sessionDateRange: previousFlowSessionRange,
         filter: { ticker: upperSymbol, contractType: "CALL" }
       }),
-      loadEndpoint(upperSymbol, "iv-rank", { filter: { ticker: upperSymbol } })
+      loadEndpoint(upperSymbol, "iv-rank", {
+        filter: { ticker: upperSymbol },
+        lookBackPeriod: IV_RANK_LOOKBACK_DAYS,
+        maturity: IV_RANK_MATURITY_DAYS
+      })
     ]);
 
     const warnings = [
