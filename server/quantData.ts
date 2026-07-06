@@ -193,6 +193,12 @@ export function createQuantDataPositioningProvider(input: {
     const maxPainEvaluation = normalizeMaxPain(maxPain.data, price, context.daysToNearestExpiration);
     const oiChangeEvaluation = normalizeOpenInterestChange(oiChange.data, price);
     const ivRankEvaluation = normalizeIvRank(ivRank.data, Boolean(context.compressionActive));
+    // If an endpoint returned a live body we still couldn't parse, surface the
+    // actual response keys so the mismatch is diagnosable instead of silent.
+    if (maxPain.data !== undefined && maxPainEvaluation.signal === "no_data") warnings.push(`QuantData max-pain shape unrecognized: ${describeBodyKeys(maxPain.data)}`);
+    if (ivRank.data !== undefined && ivRankEvaluation.signal === "no_data") warnings.push(`QuantData iv-rank shape unrecognized: ${describeBodyKeys(ivRank.data)}`);
+    if (oiChange.data !== undefined && oiChangeEvaluation.signal === "no_data") warnings.push(`QuantData open-interest-change shape unrecognized: ${describeBodyKeys(oiChange.data)}`);
+    if (exposure.data !== undefined && exposureEvaluation.detail === "Options exposure unavailable.") warnings.push(`QuantData exposure-by-strike shape unrecognized: ${describeBodyKeys(exposure.data)}`);
     const positioning = summarizePositioning(
       flowEvaluation, exposureEvaluation, darkPoolEvaluation, maxPainEvaluation, oiChangeEvaluation, ivRankEvaluation, warnings
     );
@@ -381,8 +387,13 @@ export function normalizeDarkPool(payload: unknown, currentPrice: number): DarkP
 }
 
 export function normalizeMaxPain(payload: unknown, currentPrice: number, daysToExpiration?: number): MaxPainEvaluation {
-  const data = recordWithFields(payload, ["maxPainStrikePrice", "maxPainStrike", "strike", "maxPain"]);
-  const maxPainStrike = numberValue(data?.maxPainStrikePrice, data?.maxPainStrike, data?.strike, data?.maxPain);
+  const data = recordWithFields(payload, [
+    "maxPainStrikePrice", "maxPainStrike", "strike", "maxPain",
+    "strikePriceInCentsWithMaxPain", "maxPainStrikePriceInCents"
+  ]);
+  const dollarStrike = numberValue(data?.maxPainStrikePrice, data?.maxPainStrike, data?.strike, data?.maxPain);
+  const centsStrike = numberValue(data?.strikePriceInCentsWithMaxPain, data?.maxPainStrikePriceInCents);
+  const maxPainStrike = dollarStrike ?? (centsStrike !== undefined ? centsStrike / 100 : undefined);
   if (maxPainStrike === undefined || !(maxPainStrike > 0) || !(currentPrice > 0)) {
     return { signal: "no_data", score: 10, detail: "Max pain unavailable.", flags: [] };
   }
@@ -405,11 +416,11 @@ export function normalizeMaxPain(payload: unknown, currentPrice: number, daysToE
 export function normalizeOpenInterestChange(payload: unknown, currentPrice: number): OpenInterestChangeEvaluation {
   const rows = tickerScopedRows(payload, [
     "changeInOpenInterest", "openInterestChange", "changeOpenInterest",
-    "previousOpenInterest", "priorOpenInterest", "strike", "strikePrice"
+    "previousOpenInterest", "priorOpenInterest", "strike", "strikePrice", "strikePriceInCents"
   ]);
   if (!rows.length) return { signal: "no_data", score: 10, detail: "Open interest change unavailable.", flags: [] };
   const nearMoney = rows.filter((row) => {
-    const strike = numberValue(row.strike, row.strikePrice);
+    const strike = openInterestStrike(row);
     return strike !== undefined && strike >= currentPrice * 0.95 && strike <= currentPrice * 1.15;
   });
   const relevant = nearMoney.length ? nearMoney : rows;
@@ -433,15 +444,11 @@ export function normalizeOpenInterestChange(payload: unknown, currentPrice: numb
 }
 
 export function normalizeIvRank(payload: unknown, compressionActive: boolean): IvRankEvaluation {
-  const data = recordWithFields(payload, [
-    "lastIv", "iv", "currentIv", "windowMin", "ivRankLow", "low", "windowMax", "ivRankHigh", "high"
-  ]);
-  const lastIv = numberValue(data?.lastIv, data?.iv, data?.currentIv);
-  const windowMin = numberValue(data?.windowMin, data?.ivRankLow, data?.low);
-  const windowMax = numberValue(data?.windowMax, data?.ivRankHigh, data?.high);
-  if (lastIv === undefined || windowMin === undefined || windowMax === undefined || windowMax <= windowMin) {
+  const window = ivRankWindow(payload);
+  if (!window) {
     return { signal: "no_data", score: 10, detail: "IV Rank unavailable.", flags: [] };
   }
+  const { lastIv, windowMin, windowMax } = window;
   const rank = Math.min(1, Math.max(0, (lastIv - windowMin) / (windowMax - windowMin)));
   const percentileLabel = rank <= 1 / 3 ? "bottom third" : rank >= 2 / 3 ? "top third" : "middle third";
   const detail = "IV Rank is in the " + percentileLabel + " of its lookback window (" + Math.round(rank * 100) + "th percentile).";
@@ -526,14 +533,19 @@ function summarizePositioning(
   };
 }
 
-// QuantData tool endpoints nest each symbol's payload under its ticker key
-// (e.g. { data: { AAPL: { maxPainStrikePrice: ... } } }), the same convention
-// exposure-by-strike already relies on. These helpers unwrap that one ticker
-// level while still accepting a flat { data: { ...fields } } shape, so a
-// ticker-keyed response no longer reads as empty.
-function recordWithFields(payload: unknown, fields: string[]): Record<string, unknown> | undefined {
+// QuantData wraps each tool response in an envelope — the public REST API uses
+// `data`, the underlying platform API uses `response` — and often nests a
+// symbol's payload one level under its ticker key. endpointBody unwraps the
+// envelope; recordWithFields/tickerScopedRows additionally dig one ticker level
+// when the fields aren't present at the top, while still accepting a flat shape.
+function endpointBody(payload: unknown): Record<string, unknown> | undefined {
   const root = objectValue(payload);
-  const data = objectValue(root?.data) ?? root;
+  if (!root) return undefined;
+  return objectValue(root.response) ?? objectValue(root.data) ?? root;
+}
+
+function recordWithFields(payload: unknown, fields: string[]): Record<string, unknown> | undefined {
+  const data = endpointBody(payload);
   if (!data) return undefined;
   if (hasAnyField(data, fields)) return data;
   for (const value of Object.values(data)) {
@@ -544,10 +556,13 @@ function recordWithFields(payload: unknown, fields: string[]): Record<string, un
 }
 
 function tickerScopedRows(payload: unknown, fields: string[]): Record<string, unknown>[] {
-  const direct = payloadRows(payload);
-  if (direct.some((row) => hasAnyField(row, fields))) return direct;
+  // The platform API returns some endpoints (e.g. open-interest change) as a
+  // bare list under `response`; unwrap that before falling back to payloadRows.
   const root = objectValue(payload);
-  const data = objectValue(root?.data) ?? root;
+  const envelope = root?.response ?? root?.data ?? payload;
+  const direct = payloadRows(Array.isArray(envelope) ? envelope : payload);
+  if (direct.some((row) => hasAnyField(row, fields))) return direct;
+  const data = endpointBody(payload);
   if (!data) return direct;
   const nested = Object.values(data).flatMap((value) => payloadRows(value));
   const matching = nested.filter((row) => hasAnyField(row, fields));
@@ -556,6 +571,60 @@ function tickerScopedRows(payload: unknown, fields: string[]): Record<string, un
 
 function hasAnyField(obj: Record<string, unknown>, fields: string[]): boolean {
   return fields.some((field) => obj[field] !== undefined);
+}
+
+// IV Rank's real shape is sessionDateToIVRankData -> <date> -> contractTypeToIVData
+// -> CALL|PUT -> { lastIV, windowMinIV, windowMaxIV }. We take the most recent
+// session and prefer CALL. A flat { lastIv, windowMin, windowMax } shape is also
+// accepted so simpler payloads keep working.
+function ivRankWindow(payload: unknown): { lastIv: number; windowMin: number; windowMax: number } | undefined {
+  const body = endpointBody(payload);
+  const sessionMap = objectValue(body?.sessionDateToIVRankData);
+  if (sessionMap) {
+    const dates = Object.keys(sessionMap).sort();
+    const latest = objectValue(sessionMap[dates[dates.length - 1]]);
+    const byType = objectValue(latest?.contractTypeToIVData) ?? latest;
+    const cell = objectValue(byType?.CALL) ?? objectValue(byType?.PUT) ?? firstObject(Object.values(byType ?? {}));
+    const nested = ivRankFromCell(cell);
+    if (nested) return nested;
+  }
+  const flat = recordWithFields(payload, [
+    "lastIv", "iv", "currentIv", "lastIV", "windowMin", "ivRankLow", "low", "windowMinIV",
+    "windowMax", "ivRankHigh", "high", "windowMaxIV"
+  ]);
+  return ivRankFromCell(flat);
+}
+
+// Strikes arrive either as dollars (`strike`/`strikePrice`) or cents
+// (`strikePriceInCents`). Normalize to dollars.
+function openInterestStrike(row: Record<string, unknown>): number | undefined {
+  const dollars = numberValue(row.strike, row.strikePrice);
+  if (dollars !== undefined) return dollars;
+  const cents = numberValue(row.strikePriceInCents);
+  return cents !== undefined ? cents / 100 : undefined;
+}
+
+function ivRankFromCell(cell: Record<string, unknown> | undefined): { lastIv: number; windowMin: number; windowMax: number } | undefined {
+  if (!cell) return undefined;
+  const lastIv = numberValue(cell.lastIV, cell.lastIv, cell.iv, cell.currentIv);
+  const windowMin = numberValue(cell.windowMinIV, cell.windowMin, cell.ivRankLow, cell.low);
+  const windowMax = numberValue(cell.windowMaxIV, cell.windowMax, cell.ivRankHigh, cell.high);
+  if (lastIv === undefined || windowMin === undefined || windowMax === undefined || windowMax <= windowMin) return undefined;
+  return { lastIv, windowMin, windowMax };
+}
+
+// Reports the top-level keys of a response body so a still-unrecognized shape
+// surfaces as an actionable scan warning instead of a silent "No Data".
+function describeBodyKeys(payload: unknown): string {
+  const root = objectValue(payload);
+  const envelope = root?.response ?? root?.data ?? payload;
+  if (Array.isArray(envelope)) {
+    const first = envelope.find(isObject);
+    return first ? `list[{${Object.keys(first).slice(0, 8).join(", ")}}]` : "list[]";
+  }
+  const body = objectValue(envelope);
+  if (!body) return typeof payload;
+  return `{${Object.keys(body).slice(0, 10).join(", ")}}`;
 }
 
 function payloadRows(payload: unknown): Record<string, unknown>[] {
@@ -571,10 +640,30 @@ function payloadRows(payload: unknown): Record<string, unknown>[] {
 }
 
 function exposureCells(payload: unknown, fallbackPrice: number): { strike: number; callExposure: number; putExposure: number }[] {
-  const root = objectValue(payload);
-  const data = objectValue(root?.data);
-  const tickerEntry = firstObject(Object.values(data ?? {})) ?? root;
-  const exposureMap = objectValue(tickerEntry?.exposureMap ?? root?.exposureMap);
+  const body = endpointBody(payload);
+  // Real QuantData shape: expirationDateToStrikePriceInCentsToContractExposureMap
+  // -> <exp> -> <strikeInCents> -> { CALL, PUT }. Strikes are in cents.
+  const centsMap = objectValue(body?.expirationDateToStrikePriceInCentsToContractExposureMap)
+    ?? objectValue(firstObject(Object.values(body ?? {}))?.expirationDateToStrikePriceInCentsToContractExposureMap);
+  const centsCells: { strike: number; callExposure: number; putExposure: number }[] = [];
+  for (const expiration of Object.values(centsMap ?? {})) {
+    const strikes = objectValue(expiration);
+    for (const [strikeText, cellValue] of Object.entries(strikes ?? {})) {
+      const cell = objectValue(cellValue);
+      const strike = Number(strikeText) / 100;
+      if (!Number.isFinite(strike) || !cell) continue;
+      centsCells.push({
+        strike,
+        callExposure: numberValue(cell.CALL, cell.call, cell.callExposure) ?? 0,
+        putExposure: numberValue(cell.PUT, cell.put, cell.putExposure) ?? 0
+      });
+    }
+  }
+  if (centsCells.length) return centsCells;
+
+  // Legacy/simple shape: <ticker>.exposureMap -> <exp> -> <strike(dollars)> -> { callExposure, putExposure }.
+  const tickerEntry = firstObject(Object.values(body ?? {})) ?? body;
+  const exposureMap = objectValue(tickerEntry?.exposureMap ?? body?.exposureMap);
   const cells: { strike: number; callExposure: number; putExposure: number }[] = [];
   for (const expiration of Object.values(exposureMap ?? {})) {
     const strikes = objectValue(expiration);
@@ -584,16 +673,16 @@ function exposureCells(payload: unknown, fallbackPrice: number): { strike: numbe
       if (!Number.isFinite(strike) || !cell) continue;
       cells.push({
         strike,
-        callExposure: numberValue(cell.callExposure, cell.callGammaExposure, cell.gammaCallExposure) ?? 0,
-        putExposure: numberValue(cell.putExposure, cell.putGammaExposure, cell.gammaPutExposure) ?? 0
+        callExposure: numberValue(cell.callExposure, cell.callGammaExposure, cell.gammaCallExposure, cell.CALL) ?? 0,
+        putExposure: numberValue(cell.putExposure, cell.putGammaExposure, cell.gammaPutExposure, cell.PUT) ?? 0
       });
     }
   }
   if (cells.length) return cells;
   return payloadRows(payload).map((row) => ({
-    strike: numberValue(row.strike, row.strikePrice) ?? fallbackPrice,
-    callExposure: numberValue(row.callExposure, row.callGammaExposure) ?? 0,
-    putExposure: numberValue(row.putExposure, row.putGammaExposure) ?? 0
+    strike: numberValue(row.strike, row.strikePrice) ?? (numberValue(row.strikePriceInCents) ?? fallbackPrice * 100) / 100,
+    callExposure: numberValue(row.callExposure, row.callGammaExposure, row.CALL) ?? 0,
+    putExposure: numberValue(row.putExposure, row.putGammaExposure, row.PUT) ?? 0
   })).filter((cell) => Number.isFinite(cell.strike));
 }
 
