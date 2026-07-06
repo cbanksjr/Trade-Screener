@@ -131,6 +131,35 @@ describe("QuantData Institutional Positioning", () => {
     expect(tailwind.signal).toBe("tailwind");
   });
 
+  it("computes max pain from the real QuantData intrinsic-value curve (min total intrinsic)", () => {
+    // Shape observed live: data -> "<strike>" -> { callIntrinsicValue, putIntrinsicValue }.
+    const payload = {
+      data: {
+        "95.0": { callIntrinsicValue: 5_000, putIntrinsicValue: 60_000 },
+        "100.0": { callIntrinsicValue: 20_000, putIntrinsicValue: 20_000 },
+        "105.0": { callIntrinsicValue: 70_000, putIntrinsicValue: 5_000 }
+      }
+    };
+    const tailwind = normalizeMaxPain(payload, 99, 1);
+    const pinRisk = normalizeMaxPain(payload, 110, 1);
+
+    // Min total intrinsic is at 100 (45k) -> max pain strike 100.
+    expect(tailwind.detail).toContain("$100.00");
+    expect(tailwind.signal).toBe("tailwind");
+    expect(pinRisk.signal).toBe("pin_risk");
+  });
+
+  it("reads max pain from the real QuantData cents-denominated response", () => {
+    const pinRisk = normalizeMaxPain({ response: { strikePriceInCentsWithMaxPain: 9500, stockPriceInCents: 10000 } }, 100, 1);
+    const tailwind = normalizeMaxPain({ response: { strikePriceInCentsWithMaxPain: 10200, stockPriceInCents: 10000 } }, 100, 1);
+    const noData = normalizeMaxPain({ response: { strikePriceInCentsWithMaxPain: 0 } }, 100, 1);
+
+    expect(pinRisk.signal).toBe("pin_risk");
+    expect(pinRisk.detail).toContain("$95.00");
+    expect(tailwind.signal).toBe("tailwind");
+    expect(noData.signal).toBe("no_data");
+  });
+
   it("confirms fresh call open interest builds but not same-day noise", () => {
     const confirmed = normalizeOpenInterestChange({
       data: [
@@ -147,6 +176,18 @@ describe("QuantData Institutional Positioning", () => {
     expect(confirmed.flags).toContain("Confirmed Call OI Build");
     expect(noConfirmation.signal).toBe("no_confirmation");
     expect(noData.signal).toBe("no_data");
+  });
+
+  it("confirms call OI builds from the real QuantData response list with cents strikes", () => {
+    const confirmed = normalizeOpenInterestChange({
+      response: [
+        { strikePriceInCents: 10200, contractType: "CALL", previousOpenInterest: 4_000, currentOpenInterest: 4_800, changeInOpenInterest: 800 },
+        { strikePriceInCents: 10500, contractType: "CALL", previousOpenInterest: 3_000, currentOpenInterest: 3_100, changeInOpenInterest: 100 }
+      ]
+    }, 100);
+
+    expect(confirmed.signal).toBe("confirmed_build");
+    expect(confirmed.flags).toContain("Confirmed Call OI Build");
   });
 
   it("confirms call OI builds from a ticker-keyed, strike-mapped response envelope", () => {
@@ -182,6 +223,63 @@ describe("QuantData Institutional Positioning", () => {
 
     expect(confirming.signal).toBe("confirming");
     expect(contradicting.signal).toBe("contradicting");
+  });
+
+  it("reads IV Rank from the real QuantData sessionDateToIVRankData shape, using the latest session and CALL", () => {
+    const build = (lastIV: number) => ({
+      response: {
+        sessionDateToIVRankData: {
+          "2026-06-26": { contractTypeToIVData: { CALL: { lastIV: 0.9, windowMinIV: 0.15, windowMaxIV: 0.65 } } },
+          "2026-06-29": { contractTypeToIVData: { CALL: { lastIV, windowMinIV: 0.15, windowMaxIV: 0.65 }, PUT: { lastIV: 0.5, windowMinIV: 0.1, windowMaxIV: 0.9 } } }
+        }
+      }
+    });
+
+    expect(normalizeIvRank(build(0.2), true).signal).toBe("confirming");
+    expect(normalizeIvRank(build(0.6), true).signal).toBe("contradicting");
+    expect(normalizeIvRank({ response: { sessionDateToIVRankData: {} } }, true).signal).toBe("no_data");
+  });
+
+  it("reads IV Rank from the real QuantData date-keyed response (lastIv/windowMinIv/windowMaxIv)", () => {
+    // Shape observed live: data -> "<date>" -> { contractTypeToIVData: { CALL: {...} }, ... }.
+    const payload = {
+      data: {
+        "2026-03-30": { contractTypeToIVData: { CALL: { lastIv: 59.7, windowMinIv: 24.3, windowMaxIv: 69.6 } }, expirationDate: "2026-05-01", stockPrice: 1254.05 },
+        "2026-04-07": { contractTypeToIVData: { CALL: { lastIv: 30.0, windowMinIv: 24.3, windowMaxIv: 69.6 }, PUT: { lastIv: 40, windowMinIv: 26, windowMaxIv: 75 } }, expirationDate: "2026-05-08", stockPrice: 1300 }
+      }
+    };
+    // Latest session (2026-04-07) CALL: (30-24.3)/(69.6-24.3) = 0.126 -> bottom third.
+    expect(normalizeIvRank(payload, true).signal).toBe("confirming");
+    expect(normalizeIvRank(payload, false).signal).toBe("neutral");
+  });
+
+  it("reads options exposure from the real QuantData cents-strike contract exposure map", () => {
+    const supportive = normalizeOptionsExposure({
+      response: {
+        stockPriceInCents: 10000,
+        expirationDateToStrikePriceInCentsToContractExposureMap: {
+          "2026-07-17": {
+            "9750": { PUT: -180_000 },
+            "10500": { CALL: 60_000 }
+          }
+        }
+      }
+    }, 100);
+    const hostile = normalizeOptionsExposure({
+      response: {
+        stockPriceInCents: 10000,
+        expirationDateToStrikePriceInCentsToContractExposureMap: {
+          "2026-07-17": {
+            "10100": { CALL: 250_000 },
+            "9750": { PUT: -40_000 }
+          }
+        }
+      }
+    }, 100);
+
+    expect(supportive.signal).toBe("squeeze_prone");
+    expect(supportive.flags).toContain("Put Support Below Price");
+    expect(hostile.signal).toBe("hostile");
   });
 
   it("keeps setup grade and marks Avoid when positioning is bearish", () => {

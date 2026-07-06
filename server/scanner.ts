@@ -242,6 +242,7 @@ export async function runFullScan(): Promise<ScanResponse> {
           daysToNearestExpiration: result.recommendedOptionContract?.dte
         });
         if (positioning.usedLive) usedLive = true;
+        positioning.warnings.forEach((warning) => scanWarnings.add(warning));
         result = applyInstitutionalPositioning(result, positioning.positioning);
       }
       if (shouldIncludeResult(result)) results.push(result);
