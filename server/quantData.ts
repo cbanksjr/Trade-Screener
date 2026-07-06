@@ -160,8 +160,11 @@ export function createQuantDataPositioningProvider(input: {
     if (!upperSymbol || !input.apiKey) return { positioning: DEFAULT_POSITIONING, warnings: [], usedLive: false };
     const previousFlowSessionDate = previousTradingSessionDate(now());
     const previousFlowSessionRange = { startDate: previousFlowSessionDate, endDate: previousFlowSessionDate };
-    const maxPainPromise = context.nearestExpirationDate
-      ? loadEndpoint(upperSymbol, "max-pain", { filter: { ticker: upperSymbol }, expirationDate: context.nearestExpirationDate }, context.nearestExpirationDate)
+    // QuantData expects a date-only expiration (YYYY-MM-DD); the recommended
+    // contract carries a full ISO timestamp, which the API rejects with 400.
+    const maxPainExpiration = context.nearestExpirationDate?.slice(0, 10);
+    const maxPainPromise = maxPainExpiration
+      ? loadEndpoint(upperSymbol, "max-pain", { filter: { ticker: upperSymbol }, expirationDate: maxPainExpiration }, maxPainExpiration)
       : Promise.resolve({ warnings: [], usedLive: false } as { data?: unknown; warnings: string[]; usedLive: boolean });
 
     const [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank] = await Promise.all([
@@ -242,9 +245,9 @@ export function createQuantDataPositioningProvider(input: {
     if (response.status === 401 || response.status === 403) {
       return { warnings: [`QuantData ${endpoint} was not authorized; skipped.`], usedLive: true };
     }
-    if (response.status === 422) return { warnings: [`QuantData ${endpoint} rejected the request parameters (422); no data returned.`], usedLive: true };
+    if (response.status === 422) return { warnings: [`QuantData ${endpoint} rejected the request parameters (422); no data returned. ${text.trim().slice(0, 300)}`], usedLive: true };
     if (response.status === 429) return { warnings: [`QuantData ${endpoint} was rate limited; skipped.`], usedLive: true };
-    if (!response.ok) return { warnings: [`QuantData ${endpoint} request failed: ${response.status} ${response.statusText}`], usedLive: true };
+    if (!response.ok) return { warnings: [`QuantData ${endpoint} request failed: ${response.status} ${response.statusText} ${text.trim().slice(0, 300)}`], usedLive: true };
 
     let data: unknown;
     try {
