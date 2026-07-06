@@ -19,7 +19,7 @@ import {
   WalletCards,
   XCircle
 } from "lucide-react";
-import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { BrokerStatus, Candle, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
 import "./styles.css";
 
 const api = {
@@ -197,9 +197,9 @@ function App() {
 
         <section className="status-strip">
           <Stat icon={<Activity />} label="Scan Status" value={loading || scanStatus === "running" ? "REFRESHING" : scanStatus.toUpperCase()} tone="blue" />
-          <Stat icon={<Gauge />} label="A Setups" value={String(gradeACount)} tone="good" />
-          <Stat icon={<CheckCircle2 />} label="Actionable" value={String(takeCount)} tone="good" />
-          <Stat icon={<XCircle />} label="Avoid" value={String(avoidCount)} tone="risk" />
+          <Stat icon={<Gauge />} label="A Setups" value={String(gradeACount)} count={gradeACount} tone="good" />
+          <Stat icon={<CheckCircle2 />} label="Actionable" value={String(takeCount)} count={takeCount} tone="good" />
+          <Stat icon={<XCircle />} label="Avoid" value={String(avoidCount)} count={avoidCount} tone="risk" />
           <Stat icon={<BarChart3 />} label="Passing Universe" value={`${passingCount}/${results.length}`} tone="neutral" />
         </section>
 
@@ -223,9 +223,11 @@ function App() {
                 <span>Dots</span>
                 <span>Mark</span>
               </div>
-              {results.map((result) => (
-                <ResultRow result={result} activeSymbol={active?.symbol} onSelect={setSelected} key={result.symbol} />
-              ))}
+              {loading && results.length === 0
+                ? <ResultSkeleton />
+                : results.map((result) => (
+                    <ResultRow result={result} activeSymbol={active?.symbol} onSelect={setSelected} key={result.symbol} />
+                  ))}
             </div>
           </div>
 
@@ -261,12 +263,13 @@ function ToolbarChip({ icon, label, value }: { icon: React.ReactNode; label: str
   );
 }
 
-function Stat({ icon, label, value, tone = "neutral" }: { icon: React.ReactNode; label: string; value: string; tone?: "good" | "risk" | "blue" | "neutral" }) {
+function Stat({ icon, label, value, count, tone = "neutral" }: { icon: React.ReactNode; label: string; value: string; count?: number; tone?: "good" | "risk" | "blue" | "neutral" }) {
+  const animated = useAnimatedNumber(count ?? 0);
   return (
     <div className={"stat stat-" + tone}>
       {icon}
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong>{count === undefined ? value : String(Math.round(animated))}</strong>
     </div>
   );
 }
@@ -306,11 +309,11 @@ function ResultRow({ result, activeSymbol, onSelect }: {
     <div className={"result-row " + (result.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(result.symbol)} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") onSelect(result.symbol);
     }} role="button" tabIndex={0}>
-      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small></span>
+      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small><Sparkline candles={result.candles} width={60} height={22} /></span>
       <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
       <b>{setupScoreLabel(result)}</b>
       <span>{result.entryRecommendationType}</span>
-      <span>{dailySqueezeDotLabel(result)}</span>
+      <span><SqueezeDotStrip count={dailySqueezeDotCount(result)} /></span>
       <span className={"decision " + (tradeMark(result) === "Take" ? "take" : "avoid")}>{tradeMark(result)}</span>
     </div>
   );
@@ -328,6 +331,18 @@ function TickerDetail({ result }: { result: ScanResult }) {
             <p>{setupTradeLabel(result)} · {money(result.price)} · {result.entryRecommendationType}</p>
           </div>
         </div>
+        {(typeof result.setupScore === "number" || result.candles?.length) ? (
+          <div className="hero-viz">
+            {typeof result.setupScore === "number" ? <RadialGauge value={result.setupScore} label="Setup Score" /> : null}
+            {result.candles?.length ? (
+              <div className="hero-spark">
+                <span className="eyebrow">Price Trend</span>
+                <Sparkline candles={result.candles} width={340} height={72} />
+                <small>{result.candles.length}-bar close</small>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
         <div className="summary-grid compact-metrics">
           <Metric label="Setup Score" value={setupScoreLabel(result)} />
           <Metric label="Next Earnings" value={nextEarningsLabel(result)} />
@@ -396,7 +411,10 @@ function TickerDetail({ result }: { result: ScanResult }) {
                 <span className={"status-pill " + statusClass(factor.status)}>{displayStatus(factor.status)}</span>
                 <strong>{factor.name}</strong>
                 <small>{factor.detail}</small>
-                <b>{formatNumber(factor.contribution, { maximumFractionDigits: 1 })} pts</b>
+                <div className="factor-foot">
+                  <BarMeter value={Math.max(0, factor.contribution)} max={maxFactorContribution(result.institutionalFactors)} />
+                  <b>{formatNumber(factor.contribution, { maximumFractionDigits: 1 })} pts</b>
+                </div>
               </div>
             ))}
           </div>
@@ -493,6 +511,129 @@ function TickerDetail({ result }: { result: ScanResult }) {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function useAnimatedNumber(target: number, duration = 700): number {
+  const [display, setDisplay] = React.useState(target);
+  const fromRef = React.useRef(target);
+  React.useEffect(() => {
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const from = fromRef.current;
+    if (reduce || from === target || !Number.isFinite(target)) {
+      setDisplay(target);
+      fromRef.current = target;
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(from + (target - from) * eased);
+      if (t < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        fromRef.current = target;
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return display;
+}
+
+function Sparkline({ candles, width = 96, height = 28 }: { candles?: Candle[]; width?: number; height?: number }) {
+  const gradientId = React.useId();
+  const series = (candles ?? []).map((candle) => candle.close).filter((value) => Number.isFinite(value)).slice(-48);
+  if (series.length < 2) return <span className="spark-empty" aria-hidden="true" />;
+  const min = Math.min(...series);
+  const max = Math.max(...series);
+  const span = max - min || 1;
+  const stepX = width / (series.length - 1);
+  const points = series.map((value, index) => [index * stepX, height - ((value - min) / span) * height] as const);
+  const line = points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
+  const area = `M0,${height} ${points.map(([x, y]) => `L${x.toFixed(2)},${y.toFixed(2)}`).join(" ")} L${width},${height} Z`;
+  const up = series[series.length - 1] >= series[0];
+  const stroke = up ? "var(--spark-up)" : "var(--spark-down)";
+  return (
+    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" role="img" aria-label={up ? "price trend up" : "price trend down"}>
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity="0.24" />
+          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gradientId})`} stroke="none" />
+      <polyline points={line} fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function RadialGauge({ value, label, size = 118 }: { value: number; label?: string; size?: number }) {
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+  const animated = useAnimatedNumber(clamped, 900);
+  const stroke = 9;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const dash = (Math.max(0, Math.min(100, animated)) / 100) * circumference;
+  const color = clamped >= 67 ? "var(--accent)" : clamped >= 34 ? "var(--warning)" : "var(--danger)";
+  const center = size / 2;
+  return (
+    <div className="gauge" style={{ width: size, height: size }}>
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label={`${label ?? "Score"} ${Math.round(clamped)} of 100`}>
+        <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--gauge-track)" strokeWidth={stroke} />
+        <circle cx={center} cy={center} r={radius} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${dash.toFixed(2)} ${circumference.toFixed(2)}`} transform={`rotate(-90 ${center} ${center})`} />
+      </svg>
+      <div className="gauge-center">
+        <strong>{Math.round(animated)}</strong>
+        {label ? <span>{label}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function SqueezeDotStrip({ count, max = 5 }: { count: number | null; max?: number }) {
+  if (count === null) return <span className="dot-empty">Run scan</span>;
+  const filled = Math.max(0, Math.min(max, count));
+  return (
+    <span className="dot-strip" role="img" aria-label={`${count} active squeeze dots`}>
+      {Array.from({ length: max }).map((_, index) => (
+        <i key={index} className={"sq-dot" + (index < filled ? " on" : "")} />
+      ))}
+      <small>{count}</small>
+    </span>
+  );
+}
+
+function BarMeter({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  const tone = pct >= 66 ? "good" : pct >= 33 ? "warn" : "low";
+  return (
+    <span className={"bar-meter bar-" + tone} role="img" aria-label={`${value} of ${max}`}>
+      <i style={{ width: pct.toFixed(1) + "%" }} />
+    </span>
+  );
+}
+
+function maxFactorContribution(factors: ScanResult["institutionalFactors"]): number {
+  return Math.max(1, ...factors.map((factor) => Math.max(0, factor.contribution)));
+}
+
+function ResultSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 7 }).map((_, index) => (
+        <div className="result-row skeleton-row" key={index} aria-hidden="true">
+          <span className="skeleton-bar" style={{ width: "70%" }} />
+          <span className="skeleton-bar" style={{ width: "60%" }} />
+          <span className="skeleton-bar" style={{ width: "50%" }} />
+          <span className="skeleton-bar" style={{ width: "80%" }} />
+          <span className="skeleton-bar" style={{ width: "55%" }} />
+          <span className="skeleton-bar" style={{ width: "45%" }} />
+        </div>
+      ))}
+    </>
+  );
 }
 
 function EmptyState({ runScan }: { runScan: () => void }) {
