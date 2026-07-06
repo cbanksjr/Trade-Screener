@@ -160,7 +160,7 @@ export function createQuantDataPositioningProvider(input: {
     const previousFlowSessionDate = previousTradingSessionDate(now());
     const previousFlowSessionRange = { startDate: previousFlowSessionDate, endDate: previousFlowSessionDate };
     const maxPainPromise = context.nearestExpirationDate
-      ? loadEndpoint(upperSymbol, "max-pain", { ticker: upperSymbol, expirationDate: context.nearestExpirationDate }, context.nearestExpirationDate)
+      ? loadEndpoint(upperSymbol, "max-pain", { filter: { ticker: upperSymbol }, expirationDate: context.nearestExpirationDate }, context.nearestExpirationDate)
       : Promise.resolve({ warnings: [], usedLive: false } as { data?: unknown; warnings: string[]; usedLive: boolean });
 
     const [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank] = await Promise.all([
@@ -227,7 +227,7 @@ export function createQuantDataPositioningProvider(input: {
     if (response.status === 401 || response.status === 403) {
       return { warnings: [`QuantData ${endpoint} was not authorized; skipped.`], usedLive: true };
     }
-    if (response.status === 422) return { warnings: [], usedLive: true };
+    if (response.status === 422) return { warnings: [`QuantData ${endpoint} rejected the request parameters (422); no data returned.`], usedLive: true };
     if (response.status === 429) return { warnings: [`QuantData ${endpoint} was rate limited; skipped.`], usedLive: true };
     if (!response.ok) return { warnings: [`QuantData ${endpoint} request failed: ${response.status} ${response.statusText}`], usedLive: true };
 
@@ -381,8 +381,7 @@ export function normalizeDarkPool(payload: unknown, currentPrice: number): DarkP
 }
 
 export function normalizeMaxPain(payload: unknown, currentPrice: number, daysToExpiration?: number): MaxPainEvaluation {
-  const root = objectValue(payload);
-  const data = objectValue(root?.data) ?? root;
+  const data = recordWithFields(payload, ["maxPainStrikePrice", "maxPainStrike", "strike", "maxPain"]);
   const maxPainStrike = numberValue(data?.maxPainStrikePrice, data?.maxPainStrike, data?.strike, data?.maxPain);
   if (maxPainStrike === undefined || !(maxPainStrike > 0) || !(currentPrice > 0)) {
     return { signal: "no_data", score: 10, detail: "Max pain unavailable.", flags: [] };
@@ -404,7 +403,10 @@ export function normalizeMaxPain(payload: unknown, currentPrice: number, daysToE
 }
 
 export function normalizeOpenInterestChange(payload: unknown, currentPrice: number): OpenInterestChangeEvaluation {
-  const rows = payloadRows(payload);
+  const rows = tickerScopedRows(payload, [
+    "changeInOpenInterest", "openInterestChange", "changeOpenInterest",
+    "previousOpenInterest", "priorOpenInterest", "strike", "strikePrice"
+  ]);
   if (!rows.length) return { signal: "no_data", score: 10, detail: "Open interest change unavailable.", flags: [] };
   const nearMoney = rows.filter((row) => {
     const strike = numberValue(row.strike, row.strikePrice);
@@ -431,8 +433,9 @@ export function normalizeOpenInterestChange(payload: unknown, currentPrice: numb
 }
 
 export function normalizeIvRank(payload: unknown, compressionActive: boolean): IvRankEvaluation {
-  const root = objectValue(payload);
-  const data = objectValue(root?.data) ?? root;
+  const data = recordWithFields(payload, [
+    "lastIv", "iv", "currentIv", "windowMin", "ivRankLow", "low", "windowMax", "ivRankHigh", "high"
+  ]);
   const lastIv = numberValue(data?.lastIv, data?.iv, data?.currentIv);
   const windowMin = numberValue(data?.windowMin, data?.ivRankLow, data?.low);
   const windowMax = numberValue(data?.windowMax, data?.ivRankHigh, data?.high);
@@ -521,6 +524,38 @@ function summarizePositioning(
     confirmingFactorCount,
     vetoingFactorCount
   };
+}
+
+// QuantData tool endpoints nest each symbol's payload under its ticker key
+// (e.g. { data: { AAPL: { maxPainStrikePrice: ... } } }), the same convention
+// exposure-by-strike already relies on. These helpers unwrap that one ticker
+// level while still accepting a flat { data: { ...fields } } shape, so a
+// ticker-keyed response no longer reads as empty.
+function recordWithFields(payload: unknown, fields: string[]): Record<string, unknown> | undefined {
+  const root = objectValue(payload);
+  const data = objectValue(root?.data) ?? root;
+  if (!data) return undefined;
+  if (hasAnyField(data, fields)) return data;
+  for (const value of Object.values(data)) {
+    const nested = objectValue(value);
+    if (nested && hasAnyField(nested, fields)) return nested;
+  }
+  return undefined;
+}
+
+function tickerScopedRows(payload: unknown, fields: string[]): Record<string, unknown>[] {
+  const direct = payloadRows(payload);
+  if (direct.some((row) => hasAnyField(row, fields))) return direct;
+  const root = objectValue(payload);
+  const data = objectValue(root?.data) ?? root;
+  if (!data) return direct;
+  const nested = Object.values(data).flatMap((value) => payloadRows(value));
+  const matching = nested.filter((row) => hasAnyField(row, fields));
+  return matching.length ? matching : direct;
+}
+
+function hasAnyField(obj: Record<string, unknown>, fields: string[]): boolean {
+  return fields.some((field) => obj[field] !== undefined);
 }
 
 function payloadRows(payload: unknown): Record<string, unknown>[] {
