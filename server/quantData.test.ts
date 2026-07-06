@@ -131,6 +131,24 @@ describe("QuantData Institutional Positioning", () => {
     expect(tailwind.signal).toBe("tailwind");
   });
 
+  it("computes max pain from the real QuantData intrinsic-value curve (min total intrinsic)", () => {
+    // Shape observed live: data -> "<strike>" -> { callIntrinsicValue, putIntrinsicValue }.
+    const payload = {
+      data: {
+        "95.0": { callIntrinsicValue: 5_000, putIntrinsicValue: 60_000 },
+        "100.0": { callIntrinsicValue: 20_000, putIntrinsicValue: 20_000 },
+        "105.0": { callIntrinsicValue: 70_000, putIntrinsicValue: 5_000 }
+      }
+    };
+    const tailwind = normalizeMaxPain(payload, 99, 1);
+    const pinRisk = normalizeMaxPain(payload, 110, 1);
+
+    // Min total intrinsic is at 100 (45k) -> max pain strike 100.
+    expect(tailwind.detail).toContain("$100.00");
+    expect(tailwind.signal).toBe("tailwind");
+    expect(pinRisk.signal).toBe("pin_risk");
+  });
+
   it("reads max pain from the real QuantData cents-denominated response", () => {
     const pinRisk = normalizeMaxPain({ response: { strikePriceInCentsWithMaxPain: 9500, stockPriceInCents: 10000 } }, 100, 1);
     const tailwind = normalizeMaxPain({ response: { strikePriceInCentsWithMaxPain: 10200, stockPriceInCents: 10000 } }, 100, 1);
@@ -220,6 +238,19 @@ describe("QuantData Institutional Positioning", () => {
     expect(normalizeIvRank(build(0.2), true).signal).toBe("confirming");
     expect(normalizeIvRank(build(0.6), true).signal).toBe("contradicting");
     expect(normalizeIvRank({ response: { sessionDateToIVRankData: {} } }, true).signal).toBe("no_data");
+  });
+
+  it("reads IV Rank from the real QuantData date-keyed response (lastIv/windowMinIv/windowMaxIv)", () => {
+    // Shape observed live: data -> "<date>" -> { contractTypeToIVData: { CALL: {...} }, ... }.
+    const payload = {
+      data: {
+        "2026-03-30": { contractTypeToIVData: { CALL: { lastIv: 59.7, windowMinIv: 24.3, windowMaxIv: 69.6 } }, expirationDate: "2026-05-01", stockPrice: 1254.05 },
+        "2026-04-07": { contractTypeToIVData: { CALL: { lastIv: 30.0, windowMinIv: 24.3, windowMaxIv: 69.6 }, PUT: { lastIv: 40, windowMinIv: 26, windowMaxIv: 75 } }, expirationDate: "2026-05-08", stockPrice: 1300 }
+      }
+    };
+    // Latest session (2026-04-07) CALL: (30-24.3)/(69.6-24.3) = 0.126 -> bottom third.
+    expect(normalizeIvRank(payload, true).signal).toBe("confirming");
+    expect(normalizeIvRank(payload, false).signal).toBe("neutral");
   });
 
   it("reads options exposure from the real QuantData cents-strike contract exposure map", () => {

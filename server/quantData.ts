@@ -150,7 +150,6 @@ export function createQuantDataPositioningProvider(input: {
   now?: () => Date;
 }) {
   let remainingCalls = input.maxCalls;
-  let debugLogsRemaining = 3; // TEMP: raw max-pain/iv-rank shape capture for Render logs.
   let dirty = false;
   const cache: QuantDataCache = { responses: { ...(input.cache?.responses ?? {}) } };
   const fetchImpl = input.fetchImpl ?? fetch;
@@ -209,14 +208,6 @@ export function createQuantDataPositioningProvider(input: {
     if (ivRank.data !== undefined && ivRankEvaluation.signal === "no_data") warnings.push(`QuantData iv-rank shape unrecognized: ${describeBodyKeys(ivRank.data)}`);
     if (oiChange.data !== undefined && oiChangeEvaluation.signal === "no_data") warnings.push(`QuantData open-interest-change shape unrecognized: ${describeBodyKeys(oiChange.data)}`);
     if (exposure.data !== undefined && exposureEvaluation.detail === "Options exposure unavailable.") warnings.push(`QuantData exposure-by-strike shape unrecognized: ${describeBodyKeys(exposure.data)}`);
-    // TEMP diagnostic: print raw Max Pain / IV Rank bodies to Render logs so we can
-    // pin the exact response shape. Capped per scan; remove once the shape is known.
-    if (debugLogsRemaining > 0) {
-      debugLogsRemaining -= 1;
-      const trunc = (value: unknown) => JSON.stringify(value ?? null).slice(0, 1500);
-      console.log(`[QD_DEBUG ${upperSymbol}] max-pain called=${Boolean(context.nearestExpirationDate)} exp=${context.nearestExpirationDate ?? "none"} warnings=${JSON.stringify(maxPain.warnings)} body=${trunc(maxPain.data)}`);
-      console.log(`[QD_DEBUG ${upperSymbol}] iv-rank warnings=${JSON.stringify(ivRank.warnings)} body=${trunc(ivRank.data)}`);
-    }
     const positioning = summarizePositioning(
       flowEvaluation, exposureEvaluation, darkPoolEvaluation, maxPainEvaluation, oiChangeEvaluation, ivRankEvaluation, warnings
     );
@@ -411,7 +402,9 @@ export function normalizeMaxPain(payload: unknown, currentPrice: number, daysToE
   ]);
   const dollarStrike = numberValue(data?.maxPainStrikePrice, data?.maxPainStrike, data?.strike, data?.maxPain);
   const centsStrike = numberValue(data?.strikePriceInCentsWithMaxPain, data?.maxPainStrikePriceInCents);
-  const maxPainStrike = dollarStrike ?? (centsStrike !== undefined ? centsStrike / 100 : undefined);
+  const maxPainStrike = dollarStrike
+    ?? (centsStrike !== undefined ? centsStrike / 100 : undefined)
+    ?? maxPainFromIntrinsicCurve(payload);
   if (maxPainStrike === undefined || !(maxPainStrike > 0) || !(currentPrice > 0)) {
     return { signal: "no_data", score: 10, detail: "Max pain unavailable.", flags: [] };
   }
@@ -591,26 +584,54 @@ function hasAnyField(obj: Record<string, unknown>, fields: string[]): boolean {
   return fields.some((field) => obj[field] !== undefined);
 }
 
-// IV Rank's real shape is sessionDateToIVRankData -> <date> -> contractTypeToIVData
-// -> CALL|PUT -> { lastIV, windowMinIV, windowMaxIV }. We take the most recent
-// session and prefer CALL. A flat { lastIv, windowMin, windowMax } shape is also
-// accepted so simpler payloads keep working.
+// IV Rank's real shape keys each session date under `data` (or an older
+// sessionDateToIVRankData wrapper) -> <date> -> contractTypeToIVData -> CALL|PUT
+// -> { lastIv, windowMinIv, windowMaxIv }. We take the most recent session and
+// prefer CALL. A flat { lastIv, windowMin, windowMax } shape is also accepted.
 function ivRankWindow(payload: unknown): { lastIv: number; windowMin: number; windowMax: number } | undefined {
   const body = endpointBody(payload);
-  const sessionMap = objectValue(body?.sessionDateToIVRankData);
+  const sessionMap = objectValue(body?.sessionDateToIVRankData) ?? body;
   if (sessionMap) {
-    const dates = Object.keys(sessionMap).sort();
-    const latest = objectValue(sessionMap[dates[dates.length - 1]]);
-    const byType = objectValue(latest?.contractTypeToIVData) ?? latest;
-    const cell = objectValue(byType?.CALL) ?? objectValue(byType?.PUT) ?? firstObject(Object.values(byType ?? {}));
-    const nested = ivRankFromCell(cell);
-    if (nested) return nested;
+    const dated = Object.entries(sessionMap)
+      .filter(([, value]) => objectValue(value)?.contractTypeToIVData !== undefined)
+      .sort(([a], [b]) => (a < b ? -1 : 1));
+    if (dated.length) {
+      const latest = objectValue(dated[dated.length - 1][1]);
+      const byType = objectValue(latest?.contractTypeToIVData) ?? latest;
+      const cell = objectValue(byType?.CALL) ?? objectValue(byType?.PUT) ?? firstObject(Object.values(byType ?? {}));
+      const nested = ivRankFromCell(cell);
+      if (nested) return nested;
+    }
   }
   const flat = recordWithFields(payload, [
-    "lastIv", "iv", "currentIv", "lastIV", "windowMin", "ivRankLow", "low", "windowMinIV",
-    "windowMax", "ivRankHigh", "high", "windowMaxIV"
+    "lastIv", "iv", "currentIv", "lastIV", "windowMin", "windowMinIv", "ivRankLow", "low", "windowMinIV",
+    "windowMax", "windowMaxIv", "ivRankHigh", "high", "windowMaxIV"
   ]);
   return ivRankFromCell(flat);
+}
+
+// The max-pain endpoint returns no precomputed strike — just an intrinsic-value
+// curve keyed by strike (dollars): { "<strike>": { callIntrinsicValue, putIntrinsicValue } }.
+// Max pain is the strike minimizing total (call + put) intrinsic value.
+function maxPainFromIntrinsicCurve(payload: unknown): number | undefined {
+  const body = endpointBody(payload);
+  if (!body) return undefined;
+  let bestStrike: number | undefined;
+  let bestTotal = Infinity;
+  for (const [key, value] of Object.entries(body)) {
+    const strike = Number(key);
+    const cell = objectValue(value);
+    if (!Number.isFinite(strike) || strike <= 0 || !cell) continue;
+    const call = numberValue(cell.callIntrinsicValue, cell.callIntrinsic, cell.CALL);
+    const put = numberValue(cell.putIntrinsicValue, cell.putIntrinsic, cell.PUT);
+    if (call === undefined && put === undefined) continue;
+    const total = (call ?? 0) + (put ?? 0);
+    if (total < bestTotal) {
+      bestTotal = total;
+      bestStrike = strike;
+    }
+  }
+  return bestStrike;
 }
 
 // Strikes arrive either as dollars (`strike`/`strikePrice`) or cents
@@ -624,9 +645,9 @@ function openInterestStrike(row: Record<string, unknown>): number | undefined {
 
 function ivRankFromCell(cell: Record<string, unknown> | undefined): { lastIv: number; windowMin: number; windowMax: number } | undefined {
   if (!cell) return undefined;
-  const lastIv = numberValue(cell.lastIV, cell.lastIv, cell.iv, cell.currentIv);
-  const windowMin = numberValue(cell.windowMinIV, cell.windowMin, cell.ivRankLow, cell.low);
-  const windowMax = numberValue(cell.windowMaxIV, cell.windowMax, cell.ivRankHigh, cell.high);
+  const lastIv = numberValue(cell.lastIv, cell.lastIV, cell.iv, cell.currentIv);
+  const windowMin = numberValue(cell.windowMinIv, cell.windowMinIV, cell.windowMin, cell.ivRankLow, cell.low);
+  const windowMax = numberValue(cell.windowMaxIv, cell.windowMaxIV, cell.windowMax, cell.ivRankHigh, cell.high);
   if (lastIv === undefined || windowMin === undefined || windowMax === undefined || windowMax <= windowMin) return undefined;
   return { lastIv, windowMin, windowMax };
 }
