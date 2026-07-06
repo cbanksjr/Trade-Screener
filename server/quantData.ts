@@ -148,6 +148,7 @@ export function createQuantDataPositioningProvider(input: {
   now?: () => Date;
 }) {
   let remainingCalls = input.maxCalls;
+  let debugLogsRemaining = 3; // TEMP: raw max-pain/iv-rank shape capture for Render logs.
   let dirty = false;
   const cache: QuantDataCache = { responses: { ...(input.cache?.responses ?? {}) } };
   const fetchImpl = input.fetchImpl ?? fetch;
@@ -199,6 +200,14 @@ export function createQuantDataPositioningProvider(input: {
     if (ivRank.data !== undefined && ivRankEvaluation.signal === "no_data") warnings.push(`QuantData iv-rank shape unrecognized: ${describeBodyKeys(ivRank.data)}`);
     if (oiChange.data !== undefined && oiChangeEvaluation.signal === "no_data") warnings.push(`QuantData open-interest-change shape unrecognized: ${describeBodyKeys(oiChange.data)}`);
     if (exposure.data !== undefined && exposureEvaluation.detail === "Options exposure unavailable.") warnings.push(`QuantData exposure-by-strike shape unrecognized: ${describeBodyKeys(exposure.data)}`);
+    // TEMP diagnostic: print raw Max Pain / IV Rank bodies to Render logs so we can
+    // pin the exact response shape. Capped per scan; remove once the shape is known.
+    if (debugLogsRemaining > 0) {
+      debugLogsRemaining -= 1;
+      const trunc = (value: unknown) => JSON.stringify(value ?? null).slice(0, 1500);
+      console.log(`[QD_DEBUG ${upperSymbol}] max-pain called=${Boolean(context.nearestExpirationDate)} exp=${context.nearestExpirationDate ?? "none"} warnings=${JSON.stringify(maxPain.warnings)} body=${trunc(maxPain.data)}`);
+      console.log(`[QD_DEBUG ${upperSymbol}] iv-rank warnings=${JSON.stringify(ivRank.warnings)} body=${trunc(ivRank.data)}`);
+    }
     const positioning = summarizePositioning(
       flowEvaluation, exposureEvaluation, darkPoolEvaluation, maxPainEvaluation, oiChangeEvaluation, ivRankEvaluation, warnings
     );
