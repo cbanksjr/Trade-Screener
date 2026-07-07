@@ -278,12 +278,10 @@ export function createQuantDataPositioningProvider(input: {
   async function rankSymbols(symbols: string[]): Promise<{ symbols: string[]; warnings: string[]; usedLive: boolean }> {
     if (!input.apiKey || !symbols.length) return { symbols, warnings: [], usedLive: false };
     const [netFlow, gainersLosers] = await Promise.all([
-      // QuantData rejects net-flow with 400 "'dataMode' is required." unless
-      // this is set. "PREMIUM" is an educated guess (Net Flow tracks call/put
-      // premium per QuantData's own docs) pending live confirmation; if wrong,
-      // the resulting 400 body — now surfaced in the scan warnings panel —
-      // should list the accepted values the same way representationMode did.
-      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "net-flow", { dataMode: "PREMIUM" }, "universe"),
+      // QuantData requires dataMode on net-flow; accepted values are
+      // NET_PREMIUM and NET_VOLUME (confirmed via the API's own 400 body).
+      // NET_PREMIUM matches the premium-based fields normalizeFlowRanking reads.
+      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "net-flow", { dataMode: "NET_PREMIUM" }, "universe"),
       loadEndpoint(UNIVERSE_CACHE_SYMBOL, "gainers-losers", {}, "universe")
     ]);
     const warnings = [...netFlow.warnings, ...gainersLosers.warnings];
