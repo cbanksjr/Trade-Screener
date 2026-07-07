@@ -211,8 +211,9 @@ function App() {
             <span>/</span>
           </div>
           <div className="top-actions">
-            <button className="icon-button" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle color mode">
+            <button className="icon-button theme-toggle" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle color mode">
               {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+              <span className="theme-toggle-label">{theme === "light" ? "Dark mode" : "Light mode"}</span>
             </button>
             <BrokerBadge brokerStatus={brokerStatus} settings={settings} onConnect={connectSchwab} />
             <button className="primary" onClick={runScan} disabled={loading}>
@@ -383,7 +384,7 @@ function ResultRow({ result, activeSymbol, onSelect }: {
     <div className={"result-row " + (result.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(result.symbol)} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") onSelect(result.symbol);
     }} role="button" tabIndex={0}>
-      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small><Sparkline candles={result.candles} width={60} height={22} /></span>
+      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small></span>
       <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
       <b>{setupScoreLabel(result)}</b>
       <span>{result.entryRecommendationType}</span>
@@ -404,7 +405,7 @@ function WatchlistRow({ entry, activeSymbol, onSelect, onRemove }: {
     <div className={"result-row " + (entry.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(entry.symbol)} onKeyDown={(event) => {
       if (event.key === "Enter" || event.key === " ") onSelect(entry.symbol);
     }} role="button" tabIndex={0}>
-      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small><Sparkline candles={result.candles} width={60} height={22} /></span>
+      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small></span>
       <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
       <b>{setupScoreLabel(result)}</b>
       <span>{addedAtLabel(entry.addedAt)}</span>
@@ -854,7 +855,7 @@ function money(value: number): string {
   const hasFraction = Math.abs(value - Math.trunc(value)) > 0.000001;
   return "$" + formatNumber(value, {
     minimumFractionDigits: hasFraction ? 2 : 0,
-    maximumFractionDigits: hasFraction ? 6 : 0
+    maximumFractionDigits: hasFraction ? 2 : 0
   });
 }
 
