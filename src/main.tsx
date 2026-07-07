@@ -5,14 +5,12 @@ import {
   BarChart3,
   CalendarClock,
   CheckCircle2,
-  Database,
   Gauge,
   LayoutDashboard,
   ListFilter,
   Moon,
   Play,
   Search,
-  Settings as SettingsIcon,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
@@ -159,8 +157,6 @@ function App() {
         <nav>
           <button className="nav-item active" title="Scanner"><LayoutDashboard size={18} /></button>
           <button className="nav-item" title="Watchlists"><WalletCards size={18} /></button>
-          <button className="nav-item" title="Data"><Database size={18} /></button>
-          <button className="nav-item" title="Settings"><SettingsIcon size={18} /></button>
         </nav>
       </aside>
 
