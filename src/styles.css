@@ -563,6 +563,26 @@ small,
   padding: 11px 14px;
 }
 
+.data-warnings summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.data-warnings ul {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 10px 0 0;
+  max-height: 220px;
+  overflow-y: auto;
+  padding-left: 18px;
+}
+
+.data-warnings li {
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .workspace {
   align-items: stretch;
   display: grid;
