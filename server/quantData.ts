@@ -21,7 +21,6 @@ type EndpointId =
   | "max-pain"
   | "open-interest-change"
   | "iv-rank"
-  | "net-flow"
   | "gainers-losers";
 
 type EndpointCacheEntry = {
@@ -97,7 +96,6 @@ const ENDPOINT_PATHS: Record<EndpointId, string> = {
   "max-pain": "/v1/options/tool/max-pain",
   "open-interest-change": "/v1/options/tool/open-interest-change",
   "iv-rank": "/v1/options/tool/iv-rank",
-  "net-flow": "/v1/options/tool/net-flow",
   "gainers-losers": "/v1/options/tool/gainers-losers"
 };
 const UNIVERSE_CACHE_SYMBOL = "__UNIVERSE__";
@@ -286,26 +284,18 @@ export function createQuantDataPositioningProvider(input: {
 
   async function rankSymbols(symbols: string[]): Promise<{ symbols: string[]; warnings: string[]; usedLive: boolean }> {
     if (!input.apiKey || !symbols.length) return { symbols, warnings: [], usedLive: false };
-    const [netFlow, gainersLosers] = await Promise.all([
-      // QuantData requires dataMode on net-flow; accepted values are
-      // NET_PREMIUM and NET_VOLUME (confirmed via the API's own 400 body).
-      // NET_PREMIUM matches the premium-based fields normalizeFlowRanking reads.
-      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "net-flow", { dataMode: "NET_PREMIUM" }, "universe"),
-      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "gainers-losers", {}, "universe")
-    ]);
-    const warnings = [...netFlow.warnings, ...gainersLosers.warnings];
-    const ranking = normalizeFlowRanking(netFlow.data, gainersLosers.data);
-    // net-flow's real response may aggregate into timestamp buckets with no
-    // per-row ticker (unverified — QuantData's docs weren't reachable to
-    // confirm), which would make it silently contribute zero ranking signal.
-    // Surface that mismatch instead of letting it look like a quiet success.
-    const netFlowRows = payloadRows(netFlow.data);
-    if (netFlow.data !== undefined && netFlowRows.length > 0 && !netFlowRows.some((row) => normalizedString(row.ticker, row.symbol))) {
-      warnings.push(`QuantData net-flow rows have no per-ticker field, contributing no ranking signal: ${describeBodyKeys(netFlow.data)}`);
-    }
-    if (!ranking.size) return { symbols, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };
+    // net-flow was dropped from ranking: confirmed live that an unfiltered
+    // request returns a single time-bucketed series keyed by epoch timestamp
+    // (e.g. {"1783310400000": {...}, ...}), not per-ticker rows — like
+    // net-drift, it's a single-underlying tool, not a cross-sectional
+    // screener, so it can never contribute a per-symbol ranking signal here.
+    // gainers-losers is QuantData's actual cross-sectional endpoint.
+    const gainersLosers = await loadEndpoint(UNIVERSE_CACHE_SYMBOL, "gainers-losers", {}, "universe");
+    const warnings = [...gainersLosers.warnings];
+    const ranking = normalizeFlowRanking(gainersLosers.data);
+    if (!ranking.size) return { symbols, warnings, usedLive: gainersLosers.usedLive };
     const ranked = [...symbols].sort((a, b) => (ranking.get(b) ?? 0) - (ranking.get(a) ?? 0));
-    return { symbols: ranked, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };
+    return { symbols: ranked, warnings, usedLive: gainersLosers.usedLive };
   }
 
   return {
@@ -507,9 +497,9 @@ export function normalizeIvRank(payload: unknown, compressionActive: boolean): I
   return { signal: "neutral", score: 10, detail, flags: [] };
 }
 
-export function normalizeFlowRanking(netFlowPayload: unknown, gainersLosersPayload: unknown): Map<string, number> {
+export function normalizeFlowRanking(gainersLosersPayload: unknown): Map<string, number> {
   const ranking = new Map<string, number>();
-  const rows = [...payloadRows(netFlowPayload), ...payloadRows(gainersLosersPayload)];
+  const rows = payloadRows(gainersLosersPayload);
   for (const row of rows) {
     const ticker = normalizedString(row.ticker, row.symbol).toUpperCase();
     if (!ticker) continue;

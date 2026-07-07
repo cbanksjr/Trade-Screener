@@ -440,10 +440,9 @@ describe("QuantData Institutional Positioning", () => {
     expect(withOiBuild.positioning.vetoingFactorCount).toBe(0);
   });
 
-  it("ranks symbols by universe-wide net flow and gainers/losers without treating it as a scoring factor", () => {
+  it("ranks symbols by universe-wide gainers/losers percent change without treating it as a scoring factor", () => {
     const ranking = normalizeFlowRanking(
-      { data: [{ ticker: "AAPL", netCallPremium: 5_000_000, netPutPremium: 500_000 }, { ticker: "MSFT", netPremium: 100_000 }] },
-      { data: [{ symbol: "MSFT", percentChange: 8 }] }
+      { data: [{ symbol: "AAPL", percentChange: 2 }, { symbol: "MSFT", percentChange: 8 }] }
     );
 
     expect(ranking.get("AAPL")).toBeGreaterThan(0);
@@ -461,8 +460,7 @@ describe("QuantData Institutional Positioning", () => {
       now: () => new Date("2026-06-30T15:00:00.000Z"),
       fetchImpl: async (input) => {
         const url = input.toString();
-        if (url.includes("net-flow")) return new Response(JSON.stringify({ data: [{ ticker: "MSFT", netPremium: 9_000_000 }] }), { status: 200 });
-        if (url.includes("gainers-losers")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        if (url.includes("gainers-losers")) return new Response(JSON.stringify({ data: [{ ticker: "MSFT", percentChange: 9 }] }), { status: 200 });
         return new Response(JSON.stringify({ data: {} }), { status: 200 });
       }
     });
@@ -473,8 +471,9 @@ describe("QuantData Institutional Positioning", () => {
     expect(ranked.symbols.sort()).toEqual(["AAPL", "GOOG", "MSFT"]);
   });
 
-  it("warns when net-flow rows have no per-ticker field instead of silently ranking nothing", async () => {
+  it("does not call the net-flow endpoint for universe ranking (it's a single-underlying time series, not cross-sectional)", async () => {
     const cache: QuantDataCache = { responses: {} };
+    const requestedUrls: string[] = [];
     const provider = createQuantDataPositioningProvider({
       apiKey: "test-key",
       baseUrl: "https://api.example.test",
@@ -482,17 +481,15 @@ describe("QuantData Institutional Positioning", () => {
       cache,
       now: () => new Date("2026-06-30T15:00:00.000Z"),
       fetchImpl: async (input) => {
-        const url = input.toString();
-        if (url.includes("net-flow")) return new Response(JSON.stringify({ data: [{ timestamp: 1, callSum: 5_000, putSum: 2_000 }] }), { status: 200 });
-        if (url.includes("gainers-losers")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
-        return new Response(JSON.stringify({ data: {} }), { status: 200 });
+        requestedUrls.push(input.toString());
+        return new Response(JSON.stringify({ data: [] }), { status: 200 });
       }
     });
 
-    const ranked = await provider.rankSymbols(["AAPL", "MSFT"]);
+    await provider.rankSymbols(["AAPL", "MSFT"]);
 
-    expect(ranked.symbols).toEqual(["AAPL", "MSFT"]);
-    expect(ranked.warnings.some((warning) => warning.includes("net-flow rows have no per-ticker field"))).toBe(true);
+    expect(requestedUrls.some((url) => url.includes("net-flow"))).toBe(false);
+    expect(requestedUrls.some((url) => url.includes("gainers-losers"))).toBe(true);
   });
 
   it("resolves the previous completed U.S. trading session for options flow", () => {
