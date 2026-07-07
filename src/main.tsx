@@ -262,7 +262,7 @@ function App() {
                   <span>Remove</span>
                 </div>
                 {watchlist.length === 0
-                  ? <p className="empty-copy">No symbols on the watchlist yet. Run a scan to populate it.</p>
+                  ? <p className="empty-copy">No stocks available.</p>
                   : watchlist.map((entry) => (
                       <WatchlistRow entry={entry} activeSymbol={activeWatchlistEntry?.symbol} onSelect={setSelected} onRemove={removeWatchlistSymbol} key={entry.symbol} />
                     ))}
@@ -270,7 +270,7 @@ function App() {
             </div>
 
             <div className="detail">
-              {watchlist.length ? <TickerDetail result={activeWatchlistEntry?.result} /> : <EmptyState runScan={runScan} />}
+              {watchlist.length ? <TickerDetail result={activeWatchlistEntry?.result} /> : <p className="empty-copy">No stocks selected.</p>}
             </div>
           </section>
         ) : (
