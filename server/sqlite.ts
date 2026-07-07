@@ -48,6 +48,12 @@ export async function initDb() {
         avg_dollar_volume_20d DOUBLE PRECISION,
         updated_at TIMESTAMPTZ NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS watchlist (
+        symbol TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        added_at TIMESTAMPTZ NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL
+      );
     `);
     return;
   }
@@ -67,6 +73,12 @@ export async function initDb() {
         beta REAL,
         market_cap REAL,
         avg_dollar_volume_20d REAL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS watchlist (
+        symbol TEXT PRIMARY KEY,
+        payload TEXT NOT NULL,
+        added_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
     `);
@@ -165,6 +177,46 @@ export async function getCachedResults(): Promise<unknown[]> {
   }
   const rows = getDb().prepare("SELECT payload FROM scan_results ORDER BY updated_at DESC;").all() as { payload: string }[];
   return rows.map((row) => JSON.parse(row.payload));
+}
+
+export async function upsertWatchlistEntry(symbol: string, payload: unknown): Promise<void> {
+  const upperSymbol = symbol.toUpperCase();
+  const serialized = JSON.stringify(payload);
+  const now = new Date().toISOString();
+  if (usePostgres) {
+    await pgQuery(`
+      INSERT INTO watchlist (symbol, payload, added_at, updated_at)
+      VALUES ($1, $2, $3, $3)
+      ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
+    `, [upperSymbol, serialized, now]);
+    return;
+  }
+  getDb().prepare(`
+      INSERT INTO watchlist (symbol, payload, added_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
+    `).run(upperSymbol, serialized, now, now);
+}
+
+export async function getWatchlistEntries(): Promise<Array<{ symbol: string; addedAt: string; payload: unknown }>> {
+  if (usePostgres) {
+    const rows = (await pgQuery<{ symbol: string; payload: string; added_at: string }>(
+      "SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;"
+    )).rows;
+    return rows.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: JSON.parse(row.payload) }));
+  }
+  const rows = getDb().prepare("SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;")
+    .all() as { symbol: string; payload: string; added_at: string }[];
+  return rows.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: JSON.parse(row.payload) }));
+}
+
+export async function removeWatchlistEntry(symbol: string): Promise<void> {
+  const upperSymbol = symbol.toUpperCase();
+  if (usePostgres) {
+    await pgQuery("DELETE FROM watchlist WHERE symbol = $1;", [upperSymbol]);
+    return;
+  }
+  getDb().prepare("DELETE FROM watchlist WHERE symbol = ?;").run(upperSymbol);
 }
 
 export async function getScanMetadata(): Promise<ScanMetadata> {

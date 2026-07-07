@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Candle, ScanDiagnostics, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
-import { getCachedResults, getScanMetadata, getSetting, initDb, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, recordUniverseWarning, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
+import { __resetScanStateForTest, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
   BROAD_ENTRY_GRADE_CAP_REASON,
@@ -699,11 +699,58 @@ describe("background scan refresh", () => {
   });
 });
 
+describe("watchlist sync", () => {
+  it("adds a scanned symbol to the watchlist when it is marked Take", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("TAKEME"), tradeMark: "Take" as const };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+
+    const watchlist = await readWatchlist();
+    expect(watchlist.map((entry) => entry.symbol)).toContain("TAKEME");
+  }));
+
+  it("does not add a scanned symbol marked Avoid to the watchlist", async () => withDbRestore(async () => {
+    const avoid = { ...qualifyingResult("AVOIDME"), tradeMark: "Avoid" as const, tradeMarkReasons: ["Bearish macro."] };
+
+    await startScanRefresh(() => fakeResponse([avoid]));
+    await settleBackgroundScan();
+
+    const watchlist = await readWatchlist();
+    expect(watchlist.map((entry) => entry.symbol)).not.toContain("AVOIDME");
+  }));
+
+  it("keeps a watchlisted symbol after a later scan no longer returns it", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("STICKY"), tradeMark: "Take" as const };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+    await startScanRefresh(() => fakeResponse([]));
+    await settleBackgroundScan();
+
+    const watchlist = await readWatchlist();
+    expect(watchlist.map((entry) => entry.symbol)).toContain("STICKY");
+  }));
+
+  it("removes a symbol from the watchlist on request", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("DROPME"), tradeMark: "Take" as const };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+    expect((await readWatchlist()).map((entry) => entry.symbol)).toContain("DROPME");
+
+    await removeFromWatchlist("DROPME");
+
+    expect((await readWatchlist()).map((entry) => entry.symbol)).not.toContain("DROPME");
+  }));
+});
+
 async function withDbRestore(run: () => Promise<void>) {
   await initDb();
   const cached = await getCachedResults() as Array<{ symbol: string }>;
   const metadata = await getScanMetadata();
   const settings = await getSetting<Partial<Settings>>("settings", {});
+  const watchlist = await getWatchlistEntries();
   try {
     await __resetScanStateForTest();
     await run();
@@ -712,6 +759,12 @@ async function withDbRestore(run: () => Promise<void>) {
     await replaceScanResults(cached);
     await setScanMetadata(metadata);
     await setSetting("settings", settings);
+    for (const entry of await getWatchlistEntries()) {
+      await removeWatchlistEntry(entry.symbol);
+    }
+    for (const entry of watchlist) {
+      await upsertWatchlistEntry(entry.symbol, entry.payload);
+    }
   }
 }
 

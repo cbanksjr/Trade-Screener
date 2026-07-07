@@ -5,21 +5,19 @@ import {
   BarChart3,
   CalendarClock,
   CheckCircle2,
-  Database,
   Gauge,
   LayoutDashboard,
   ListFilter,
   Moon,
   Play,
   Search,
-  Settings as SettingsIcon,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
   WalletCards,
   XCircle
 } from "lucide-react";
-import type { BrokerStatus, Candle, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { BrokerStatus, Candle, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import "./styles.css";
 
 const api = {
@@ -43,10 +41,19 @@ const api = {
     const response = await fetch("/api/schwab/login");
     return response.json();
   },
+  async watchlist(): Promise<WatchlistEntry[]> {
+    const response = await fetch("/api/watchlist");
+    return response.json();
+  },
+  async removeFromWatchlist(symbol: string): Promise<WatchlistEntry[]> {
+    const response = await fetch("/api/watchlist/" + encodeURIComponent(symbol), { method: "DELETE" });
+    return response.json();
+  },
 };
 
 const GRADE_ORDER = ["A", "B", "C"] as const;
 type ThemeMode = "light" | "dark";
+type ViewMode = "scanner" | "watchlist";
 
 function App() {
   const [results, setResults] = React.useState<ScanResult[]>([]);
@@ -58,6 +65,21 @@ function App() {
   const [scanStatus, setScanStatus] = React.useState<string>("idle");
   const [dataWarnings, setDataWarnings] = React.useState<string[]>([]);
   const [theme, setTheme] = React.useState<ThemeMode>(() => localStorage.getItem("theme") === "dark" ? "dark" : "light");
+  const [view, setView] = React.useState<ViewMode>("scanner");
+  const [watchlist, setWatchlist] = React.useState<WatchlistEntry[]>([]);
+
+  function refreshWatchlist() {
+    api.watchlist().then(setWatchlist).catch(() => undefined);
+  }
+
+  async function removeWatchlistSymbol(symbol: string) {
+    const next = await api.removeFromWatchlist(symbol);
+    setWatchlist(next);
+  }
+
+  React.useEffect(() => {
+    refreshWatchlist();
+  }, []);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -114,6 +136,7 @@ function App() {
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
     setDataWarnings([...new Set(data.warnings ?? [])]);
+    if (!data.isRefreshing) refreshWatchlist();
   }
 
   function shouldRefresh(data: Partial<ScanResponse>) {
@@ -159,10 +182,8 @@ function App() {
           <span>TS</span>
         </div>
         <nav>
-          <button className="nav-item active" title="Scanner"><LayoutDashboard size={18} /></button>
-          <button className="nav-item" title="Watchlists"><WalletCards size={18} /></button>
-          <button className="nav-item" title="Data"><Database size={18} /></button>
-          <button className="nav-item" title="Settings"><SettingsIcon size={18} /></button>
+          <button className={"nav-item " + (view === "scanner" ? "active" : "")} title="Scanner" onClick={() => setView("scanner")}><LayoutDashboard size={18} /></button>
+          <button className={"nav-item " + (view === "watchlist" ? "active" : "")} title="Watchlists" onClick={() => setView("watchlist")}><WalletCards size={18} /></button>
         </nav>
       </aside>
 
@@ -203,6 +224,7 @@ function App() {
           <Stat icon={<CheckCircle2 />} label="Actionable" value={String(takeCount)} count={takeCount} tone="good" />
           <Stat icon={<XCircle />} label="Avoid" value={String(avoidCount)} count={avoidCount} tone="risk" />
           <Stat icon={<BarChart3 />} label="Passing Universe" value={`${passingCount}/${results.length}`} tone="neutral" />
+          <Stat icon={<WalletCards />} label="Watchlist" value={String(watchlist.length)} count={watchlist.length} tone="good" />
         </section>
 
         {message && <div className="notice">{message}</div>}
@@ -215,36 +237,69 @@ function App() {
           </details>
         ) : null}
 
-        <section className="workspace">
-          <div className="panel list-panel">
-            <div className="panel-head">
-              <div>
-                <h2>Scan Results</h2>
-                <span>Ranked by setup score, grade, and squeeze quality</span>
+        {view === "watchlist" ? (
+          <section className="workspace">
+            <div className="panel list-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Watchlist</h2>
+                  <span>Stocks screened with a "Take" trade mark are added automatically</span>
+                </div>
+                <span>{watchlist.length} symbol{watchlist.length === 1 ? "" : "s"}</span>
               </div>
-              <span>{new Date().toLocaleDateString()}</span>
-            </div>
-            <div className="result-table scroll-list" role="table" aria-label="Scan results">
-              <div className="result-header" role="row">
-                <span>Symbol</span>
-                <span>Grade</span>
-                <span>Score</span>
-                <span>Entry</span>
-                <span>Dots</span>
-                <span>Mark</span>
+              <div className="result-table scroll-list" role="table" aria-label="Watchlist">
+                <div className="result-header" role="row">
+                  <span>Symbol</span>
+                  <span>Grade</span>
+                  <span>Score</span>
+                  <span>Added</span>
+                  <span>Dots</span>
+                  <span>Remove</span>
+                </div>
+                {watchlist.length === 0
+                  ? <p className="empty-copy">No symbols on the watchlist yet. Run a scan to populate it.</p>
+                  : watchlist.map((entry) => (
+                      <WatchlistRow entry={entry} activeSymbol={active?.symbol} onSelect={(symbol) => { setSelected(symbol); setView("scanner"); }} onRemove={removeWatchlistSymbol} key={entry.symbol} />
+                    ))}
               </div>
-              {loading && results.length === 0
-                ? <ResultSkeleton />
-                : results.map((result) => (
-                    <ResultRow result={result} activeSymbol={active?.symbol} onSelect={setSelected} key={result.symbol} />
-                  ))}
             </div>
-          </div>
 
-          <div className="detail">
-            {active ? <TickerDetail result={active} /> : <EmptyState runScan={runScan} />}
-          </div>
-        </section>
+            <div className="detail">
+              {watchlist.length ? <TickerDetail result={watchlist.find((entry) => entry.symbol === active?.symbol)?.result ?? watchlist[0].result} /> : <EmptyState runScan={runScan} />}
+            </div>
+          </section>
+        ) : (
+          <section className="workspace">
+            <div className="panel list-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Scan Results</h2>
+                  <span>Ranked by setup score, grade, and squeeze quality</span>
+                </div>
+                <span>{new Date().toLocaleDateString()}</span>
+              </div>
+              <div className="result-table scroll-list" role="table" aria-label="Scan results">
+                <div className="result-header" role="row">
+                  <span>Symbol</span>
+                  <span>Grade</span>
+                  <span>Score</span>
+                  <span>Entry</span>
+                  <span>Dots</span>
+                  <span>Mark</span>
+                </div>
+                {loading && results.length === 0
+                  ? <ResultSkeleton />
+                  : results.map((result) => (
+                      <ResultRow result={result} activeSymbol={active?.symbol} onSelect={setSelected} key={result.symbol} />
+                    ))}
+              </div>
+            </div>
+
+            <div className="detail">
+              {active ? <TickerDetail result={active} /> : <EmptyState runScan={runScan} />}
+            </div>
+          </section>
+        )}
       </section>
     </main>
   );
@@ -327,6 +382,34 @@ function ResultRow({ result, activeSymbol, onSelect }: {
       <span className={"decision " + (tradeMark(result) === "Take" ? "take" : "avoid")}>{tradeMark(result)}</span>
     </div>
   );
+}
+
+function WatchlistRow({ entry, activeSymbol, onSelect, onRemove }: {
+  entry: WatchlistEntry;
+  activeSymbol?: string;
+  onSelect: (symbol: string) => void;
+  onRemove: (symbol: string) => void;
+}) {
+  const result = entry.result;
+  return (
+    <div className={"result-row " + (entry.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(entry.symbol)} onKeyDown={(event) => {
+      if (event.key === "Enter" || event.key === " ") onSelect(entry.symbol);
+    }} role="button" tabIndex={0}>
+      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small><Sparkline candles={result.candles} width={60} height={22} /></span>
+      <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
+      <b>{setupScoreLabel(result)}</b>
+      <span>{addedAtLabel(entry.addedAt)}</span>
+      <span><SqueezeDotStrip count={dailySqueezeDotCount(result)} /></span>
+      <button className="icon-button" title={"Remove " + entry.symbol + " from watchlist"} onClick={(event) => { event.stopPropagation(); onRemove(entry.symbol); }}>
+        <XCircle size={16} />
+      </button>
+    </div>
+  );
+}
+
+function addedAtLabel(value: string): string {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString() : "Unknown";
 }
 
 function TickerDetail({ result }: { result: ScanResult }) {
