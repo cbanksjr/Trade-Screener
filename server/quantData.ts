@@ -91,7 +91,7 @@ type IvRankEvaluation = {
 const CACHE_KEY = "quantDataCache";
 const ENDPOINT_PATHS: Record<EndpointId, string> = {
   "net-drift": "/v1/options/tool/net-drift",
-  "order-flow-consolidated": "/v1/options/tool/order-flow-consolidated",
+  "order-flow-consolidated": "/v1/options/tool/order-flow/consolidated",
   "exposure-by-strike": "/v1/options/tool/exposure-by-strike",
   "dark-pool-levels": "/v1/equities/tool/dark-pool-levels",
   "max-pain": "/v1/options/tool/max-pain",
@@ -172,10 +172,14 @@ export function createQuantDataPositioningProvider(input: {
     const [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank] = await Promise.all([
       loadEndpoint(upperSymbol, "net-drift", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol } }),
       loadEndpoint(upperSymbol, "order-flow-consolidated", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol }, size: 100 }),
+      // QuantData rejects "NOTIONAL" (400: accepted values are
+      // PER_ONE_DOLLAR_MOVE, PER_ONE_PERCENT_MOVE, RAW). PER_ONE_PERCENT_MOVE
+      // is the standard dollar-gamma-per-1%-move scale that matches the
+      // existing call-wall/put-support dollar thresholds below.
       loadEndpoint(upperSymbol, "exposure-by-strike", {
         filter: { ticker: upperSymbol },
         greekMode: "GAMMA",
-        representationMode: "NOTIONAL"
+        representationMode: "PER_ONE_PERCENT_MOVE"
       }),
       loadEndpoint(upperSymbol, "dark-pool-levels", {
         sessionDateRange: { startDate: isoDate(addDays(now(), -14)) },
@@ -274,7 +278,12 @@ export function createQuantDataPositioningProvider(input: {
   async function rankSymbols(symbols: string[]): Promise<{ symbols: string[]; warnings: string[]; usedLive: boolean }> {
     if (!input.apiKey || !symbols.length) return { symbols, warnings: [], usedLive: false };
     const [netFlow, gainersLosers] = await Promise.all([
-      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "net-flow", {}, "universe"),
+      // QuantData rejects net-flow with 400 "'dataMode' is required." unless
+      // this is set. "PREMIUM" is an educated guess (Net Flow tracks call/put
+      // premium per QuantData's own docs) pending live confirmation; if wrong,
+      // the resulting 400 body — now surfaced in the scan warnings panel —
+      // should list the accepted values the same way representationMode did.
+      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "net-flow", { dataMode: "PREMIUM" }, "universe"),
       loadEndpoint(UNIVERSE_CACHE_SYMBOL, "gainers-losers", {}, "universe")
     ]);
     const warnings = [...netFlow.warnings, ...gainersLosers.warnings];
