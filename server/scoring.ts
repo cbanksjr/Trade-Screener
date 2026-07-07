@@ -650,7 +650,11 @@ function normalizeDate(value: Date | string | undefined): Date | undefined {
 }
 
 function dateOnlyUtc(value: string | Date): Date | undefined {
-  if (value instanceof Date) return new Date(Date.UTC(value.getFullYear(), value.getMonth(), value.getDate()));
+  // Both branches must truncate in UTC calendar-date terms — mixing local-time
+  // getters here for Date input with UTC-parsed getters for string input caused
+  // a real off-by-one in daysUntil() for any timezone behind UTC (i.e. all of
+  // the Americas) whenever the local and UTC calendar dates briefly disagree.
+  if (value instanceof Date) return new Date(Date.UTC(value.getUTCFullYear(), value.getUTCMonth(), value.getUTCDate()));
   const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(value);
   if (match) {
     const year = Number(match[1]);
@@ -661,7 +665,7 @@ function dateOnlyUtc(value: string | Date): Date | undefined {
   }
   const parsed = new Date(value);
   if (!Number.isFinite(parsed.getTime())) return undefined;
-  return new Date(Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()));
+  return new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
 }
 
 function dateOnlyLabel(value: string): string | undefined {

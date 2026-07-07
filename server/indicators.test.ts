@@ -700,7 +700,9 @@ describe("layer decision engine", () => {
 
     expect(result.lastUpdated).toBe(scanRanAt.toISOString());
     expect(result.nextEarningsDate).toBe("2026-07-15");
-    expect(result.daysUntilNextEarnings).toBe(14);
+    // scanRanAt is 2026-07-01T23:30:00-05:00, i.e. 2026-07-02T04:30:00Z — already
+    // July 2nd in UTC, so the gap to July 15th is 13 days, not 14.
+    expect(result.daysUntilNextEarnings).toBe(13);
     expect(result.longCallDecision).toBe("Avoid");
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.status).toBe("Bearish");
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("Next earnings 2026-07-15 is within 14 days.");

@@ -440,9 +440,11 @@ describe("QuantData Institutional Positioning", () => {
     expect(withOiBuild.positioning.vetoingFactorCount).toBe(0);
   });
 
-  it("ranks symbols by universe-wide gainers/losers percent change without treating it as a scoring factor", () => {
+  it("ranks symbols by universe-wide gainers/losers premium without treating it as a scoring factor", () => {
+    // Confirmed live: gainers-losers is a ticker-keyed object, not an array of
+    // ticker/symbol-labeled rows, and rows carry premium (not percentChange).
     const ranking = normalizeFlowRanking(
-      { data: [{ symbol: "AAPL", percentChange: 2 }, { symbol: "MSFT", percentChange: 8 }] }
+      { data: { AAPL: { premium: 2_000_000 }, MSFT: { premium: 8_000_000 } } }
     );
 
     expect(ranking.get("AAPL")).toBeGreaterThan(0);
@@ -460,7 +462,7 @@ describe("QuantData Institutional Positioning", () => {
       now: () => new Date("2026-06-30T15:00:00.000Z"),
       fetchImpl: async (input) => {
         const url = input.toString();
-        if (url.includes("gainers-losers")) return new Response(JSON.stringify({ data: [{ ticker: "MSFT", percentChange: 9 }] }), { status: 200 });
+        if (url.includes("gainers-losers")) return new Response(JSON.stringify({ data: { MSFT: { premium: 9_000_000 } } }), { status: 200 });
         return new Response(JSON.stringify({ data: {} }), { status: 200 });
       }
     });
