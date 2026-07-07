@@ -49,6 +49,14 @@ const api = {
     const response = await fetch("/api/watchlist/" + encodeURIComponent(symbol), { method: "DELETE" });
     return response.json();
   },
+  async addToWatchlist(symbol: string): Promise<WatchlistEntry[]> {
+    const response = await fetch("/api/watchlist", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ symbol })
+    });
+    return response.json();
+  },
 };
 
 const GRADE_ORDER = ["A", "B", "C"] as const;
@@ -63,7 +71,6 @@ function App() {
   const [message, setMessage] = React.useState("");
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
   const [scanStatus, setScanStatus] = React.useState<string>("idle");
-  const [dataWarnings, setDataWarnings] = React.useState<string[]>([]);
   const [theme, setTheme] = React.useState<ThemeMode>(() => localStorage.getItem("theme") === "dark" ? "dark" : "light");
   const [view, setView] = React.useState<ViewMode>("scanner");
   const [watchlist, setWatchlist] = React.useState<WatchlistEntry[]>([]);
@@ -74,6 +81,11 @@ function App() {
 
   async function removeWatchlistSymbol(symbol: string) {
     const next = await api.removeFromWatchlist(symbol);
+    setWatchlist(next);
+  }
+
+  async function addWatchlistSymbol(symbol: string) {
+    const next = await api.addToWatchlist(symbol);
     setWatchlist(next);
   }
 
@@ -135,7 +147,6 @@ function App() {
     setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
-    setDataWarnings([...new Set(data.warnings ?? [])]);
     if (!data.isRefreshing) refreshWatchlist();
   }
 
@@ -228,14 +239,6 @@ function App() {
         </section>
 
         {message && <div className="notice">{message}</div>}
-        {dataWarnings.length ? (
-          <details className="notice data-warnings">
-            <summary>{dataWarnings.length} data warning{dataWarnings.length === 1 ? "" : "s"} from the last scan</summary>
-            <ul>
-              {dataWarnings.map((warning) => <li key={warning}>{warning}</li>)}
-            </ul>
-          </details>
-        ) : null}
 
         {view === "watchlist" ? (
           <section className="workspace">
@@ -243,7 +246,7 @@ function App() {
               <div className="panel-head">
                 <div>
                   <h2>Watchlist</h2>
-                  <span>Stocks screened with a "Take" trade mark are added automatically</span>
+                  <span>Symbols you've added from the scanner</span>
                 </div>
                 <span>{watchlist.length} symbol{watchlist.length === 1 ? "" : "s"}</span>
               </div>
@@ -296,7 +299,13 @@ function App() {
             </div>
 
             <div className="detail">
-              {active ? <TickerDetail result={active} /> : <EmptyState runScan={runScan} />}
+              {active ? (
+                <TickerDetail
+                  result={active}
+                  onAddToWatchlist={addWatchlistSymbol}
+                  isWatchlisted={watchlist.some((entry) => entry.symbol === active.symbol)}
+                />
+              ) : <EmptyState runScan={runScan} />}
             </div>
           </section>
         )}
@@ -412,7 +421,11 @@ function addedAtLabel(value: string): string {
   return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString() : "Unknown";
 }
 
-function TickerDetail({ result }: { result: ScanResult }) {
+function TickerDetail({ result, onAddToWatchlist, isWatchlisted }: {
+  result: ScanResult;
+  onAddToWatchlist?: (symbol: string) => void;
+  isWatchlisted?: boolean;
+}) {
   return (
     <>
       <section className="panel hero-panel">
@@ -422,6 +435,12 @@ function TickerDetail({ result }: { result: ScanResult }) {
             <span className="eyebrow">Selected Setup</span>
             <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null} <DemoFundamentalsBadge sources={result.fundamentalSources} /></h2>
             <p>{setupTradeLabel(result)} · {money(result.price)} · {result.entryRecommendationType}</p>
+            {onAddToWatchlist ? (
+              <button className="primary watchlist-button" onClick={() => onAddToWatchlist(result.symbol)} disabled={isWatchlisted}>
+                <WalletCards size={16} />
+                {isWatchlisted ? "On Watchlist" : "Add to Watchlist"}
+              </button>
+            ) : null}
           </div>
         </div>
         {(typeof result.setupScore === "number" || result.candles?.length) ? (

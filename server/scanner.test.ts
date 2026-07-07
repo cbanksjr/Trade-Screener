@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
+import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
   BROAD_ENTRY_GRADE_CAP_REASON,
@@ -699,25 +699,33 @@ describe("background scan refresh", () => {
   });
 });
 
-describe("watchlist sync", () => {
-  it("adds a scanned symbol to the watchlist when it is marked Take", async () => withDbRestore(async () => {
+describe("watchlist manual add", () => {
+  it("does not automatically add a scanned symbol marked Take to the watchlist", async () => withDbRestore(async () => {
     const take = { ...qualifyingResult("TAKEME"), tradeMark: "Take" as const };
 
     await startScanRefresh(() => fakeResponse([take]));
     await settleBackgroundScan();
 
     const watchlist = await readWatchlist();
+    expect(watchlist.map((entry) => entry.symbol)).not.toContain("TAKEME");
+  }));
+
+  it("adds a scanned symbol to the watchlist when requested manually", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("TAKEME"), tradeMark: "Take" as const };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+    await addToWatchlist("TAKEME");
+
+    const watchlist = await readWatchlist();
     expect(watchlist.map((entry) => entry.symbol)).toContain("TAKEME");
   }));
 
-  it("does not add a scanned symbol marked Avoid to the watchlist", async () => withDbRestore(async () => {
-    const avoid = { ...qualifyingResult("AVOIDME"), tradeMark: "Avoid" as const, tradeMarkReasons: ["Bearish macro."] };
-
-    await startScanRefresh(() => fakeResponse([avoid]));
+  it("throws when adding a symbol that is not in the current scan results", async () => withDbRestore(async () => {
+    await startScanRefresh(() => fakeResponse([]));
     await settleBackgroundScan();
 
-    const watchlist = await readWatchlist();
-    expect(watchlist.map((entry) => entry.symbol)).not.toContain("AVOIDME");
+    await expect(addToWatchlist("NOTFOUND")).rejects.toThrow();
   }));
 
   it("keeps a watchlisted symbol after a later scan no longer returns it", async () => withDbRestore(async () => {
@@ -725,6 +733,7 @@ describe("watchlist sync", () => {
 
     await startScanRefresh(() => fakeResponse([take]));
     await settleBackgroundScan();
+    await addToWatchlist("STICKY");
     await startScanRefresh(() => fakeResponse([]));
     await settleBackgroundScan();
 
@@ -737,6 +746,7 @@ describe("watchlist sync", () => {
 
     await startScanRefresh(() => fakeResponse([take]));
     await settleBackgroundScan();
+    await addToWatchlist("DROPME");
     expect((await readWatchlist()).map((entry) => entry.symbol)).toContain("DROPME");
 
     await removeFromWatchlist("DROPME");

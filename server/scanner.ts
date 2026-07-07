@@ -297,11 +297,11 @@ export async function removeFromWatchlist(symbol: string): Promise<void> {
   await removeWatchlistEntry(symbol);
 }
 
-async function syncWatchlist(results: ScanResult[]): Promise<void> {
-  const takeResults = results.filter((result) => result.tradeMark === "Take");
-  for (const result of takeResults) {
-    await upsertWatchlistEntry(result.symbol, result);
-  }
+export async function addToWatchlist(symbol: string): Promise<void> {
+  const results = await readDisplayResults();
+  const match = results.find((result) => result.symbol === symbol);
+  if (!match) throw new Error(`No scan result found for symbol ${symbol}.`);
+  await upsertWatchlistEntry(symbol, match);
 }
 
 export async function __resetScanStateForTest() {
@@ -313,7 +313,6 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
   try {
     const response = await scanRunner();
     await replaceScanResults(response.results);
-    await syncWatchlist(response.results);
     const finishedAt = new Date().toISOString();
     await setScanMetadata({
       scanStatus: "complete",

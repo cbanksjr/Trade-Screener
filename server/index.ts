@@ -7,7 +7,7 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { readCachedScanResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
+import { addToWatchlist, readCachedScanResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
 import { initDb } from "./sqlite";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -99,6 +99,20 @@ app.get("/api/scan/status", async (_req, res, next) => {
 
 app.get("/api/watchlist", async (_req, res, next) => {
   try {
+    res.json(await readWatchlist());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/watchlist", async (req, res, next) => {
+  try {
+    const symbol = String(req.body?.symbol ?? "").trim().toUpperCase();
+    if (!symbol) {
+      res.status(400).json({ error: "Symbol is required." });
+      return;
+    }
+    await addToWatchlist(symbol);
     res.json(await readWatchlist());
   } catch (error) {
     next(error);
