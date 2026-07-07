@@ -150,6 +150,7 @@ export function createQuantDataPositioningProvider(input: {
   now?: () => Date;
 }) {
   let remainingCalls = input.maxCalls;
+  let exposureDebugLogsRemaining = 5; // TEMP: raw exposure-by-strike request/response capture for Render logs.
   let dirty = false;
   const cache: QuantDataCache = { responses: { ...(input.cache?.responses ?? {}) } };
   const fetchImpl = input.fetchImpl ?? fetch;
@@ -208,6 +209,16 @@ export function createQuantDataPositioningProvider(input: {
     if (ivRank.data !== undefined && ivRankEvaluation.signal === "no_data") warnings.push(`QuantData iv-rank shape unrecognized: ${describeBodyKeys(ivRank.data)}`);
     if (oiChange.data !== undefined && oiChangeEvaluation.signal === "no_data") warnings.push(`QuantData open-interest-change shape unrecognized: ${describeBodyKeys(oiChange.data)}`);
     if (exposure.data !== undefined && exposureEvaluation.detail === "Options exposure unavailable.") warnings.push(`QuantData exposure-by-strike shape unrecognized: ${describeBodyKeys(exposure.data)}`);
+    // TEMP diagnostic: exposure-by-strike was never confirmed against a live
+    // response (unlike max-pain/iv-rank, which each went through this same
+    // capture-then-fix cycle). Print the raw request/response so a follow-up
+    // commit can pin the exact shape or required params. Capped per scan;
+    // remove once the shape is known.
+    if (exposureDebugLogsRemaining > 0 && exposureEvaluation.detail === "Options exposure unavailable.") {
+      exposureDebugLogsRemaining -= 1;
+      const trunc = (value: unknown) => JSON.stringify(value ?? null).slice(0, 1500);
+      console.log(`[QD_DEBUG ${upperSymbol}] exposure-by-strike warnings=${JSON.stringify(exposure.warnings)} body=${trunc(exposure.data)}`);
+    }
     const positioning = summarizePositioning(
       flowEvaluation, exposureEvaluation, darkPoolEvaluation, maxPainEvaluation, oiChangeEvaluation, ivRankEvaluation, warnings
     );

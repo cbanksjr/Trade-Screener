@@ -56,6 +56,7 @@ function App() {
   const [message, setMessage] = React.useState("");
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
   const [scanStatus, setScanStatus] = React.useState<string>("idle");
+  const [dataWarnings, setDataWarnings] = React.useState<string[]>([]);
   const [theme, setTheme] = React.useState<ThemeMode>(() => localStorage.getItem("theme") === "dark" ? "dark" : "light");
 
   React.useEffect(() => {
@@ -112,6 +113,7 @@ function App() {
     setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
+    setDataWarnings([...new Set(data.warnings ?? [])]);
   }
 
   function shouldRefresh(data: Partial<ScanResponse>) {
@@ -204,6 +206,14 @@ function App() {
         </section>
 
         {message && <div className="notice">{message}</div>}
+        {dataWarnings.length ? (
+          <details className="notice data-warnings">
+            <summary>{dataWarnings.length} data warning{dataWarnings.length === 1 ? "" : "s"} from the last scan</summary>
+            <ul>
+              {dataWarnings.map((warning) => <li key={warning}>{warning}</li>)}
+            </ul>
+          </details>
+        ) : null}
 
         <section className="workspace">
           <div className="panel list-panel">
