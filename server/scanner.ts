@@ -294,6 +294,26 @@ export async function addToWatchlist(symbol: string): Promise<void> {
   await upsertWatchlistEntry(symbol, match);
 }
 
+async function syncWatchlistWithLatestResults(): Promise<void> {
+  const entries = await getWatchlistEntries();
+  if (!entries.length) return;
+  const results = await readDisplayResults();
+  const resultBySymbol = new Map(results.map((result) => [result.symbol, result]));
+  for (const entry of entries) {
+    const match = resultBySymbol.get(entry.symbol);
+    if (!match || !isTakeResult(match)) {
+      await removeWatchlistEntry(entry.symbol);
+    } else {
+      await upsertWatchlistEntry(entry.symbol, match);
+    }
+  }
+}
+
+function isTakeResult(result: ScanResult): boolean {
+  if (result.tradeMark) return result.tradeMark === "Take";
+  return result.longCallDecision !== "Avoid" && result.longCallDecision !== "Watchlist Candidate";
+}
+
 export async function __resetScanStateForTest() {
   activeScan = null;
   await setScanMetadata({ scanStatus: "idle" });
@@ -303,6 +323,7 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
   try {
     const response = await scanRunner();
     await replaceScanResults(response.results);
+    await syncWatchlistWithLatestResults();
     const finishedAt = new Date().toISOString();
     await setScanMetadata({
       scanStatus: "complete",
