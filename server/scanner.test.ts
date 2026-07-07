@@ -7,7 +7,7 @@ import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
 import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
-  BROAD_ENTRY_GRADE_CAP_REASON,
+  EXTENDED_ENTRY_GRADE_CAP_REASON,
   RELAXED_TREND_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON
 } from "./scoring";
@@ -515,23 +515,23 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("keeps broad-entry cached candidates visible without a weekly-style cap", async () => withDbRestore(async () => {
-    const broadEntry: ScanResult = {
-      ...qualifyingResult("BROADENTRY"),
-      dailyEntryQualificationMode: "broad",
+  it("keeps extended-entry cached candidates visible without a weekly-style cap", async () => withDbRestore(async () => {
+    const extendedEntry: ScanResult = {
+      ...qualifyingResult("EXTENDEDENTRY"),
+      dailyEntryQualificationMode: "extended",
       squeezeMaturityMode: "mature",
       setupScore: 95,
       grade: "A",
       longCallDecision: "Strong Long Call Candidate"
     };
-    await replaceScanResults([broadEntry]);
+    await replaceScanResults([extendedEntry]);
 
     const [result] = await readDisplayResults();
 
-    expect(result.symbol).toBe("BROADENTRY");
+    expect(result.symbol).toBe("EXTENDEDENTRY");
     expect(result.grade).toBe("A");
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(result.gradeCapReasons).toContain(BROAD_ENTRY_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).toContain(EXTENDED_ENTRY_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 

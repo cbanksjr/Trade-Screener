@@ -14,7 +14,6 @@ import {
 import type { MacroRegimeContext } from "./macroRegime";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
-  BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
   RELAXED_TREND_GRADE_CAP_REASON,
@@ -907,7 +906,6 @@ describe("layer decision engine", () => {
       expect(result.dailyEntryQualificationMode).toBe("strict");
       expect(result.longCallDecision).toBe("Strong Long Call Candidate");
       expect(result.grade).toBe("A");
-      expect(result.gradeCapReasons).not.toContain(BROAD_ENTRY_GRADE_CAP_REASON);
       expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
     }
   });

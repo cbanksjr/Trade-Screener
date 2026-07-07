@@ -41,7 +41,6 @@ export const A_SETUP_SCORE_THRESHOLD = 90;
 export const B_SETUP_SCORE_THRESHOLD = 70;
 export const WEEKLY_ATR_GRADE_CAP_REASON = "Weekly chart is context only and no longer caps the setup grade.";
 export const DEVELOPING_SQUEEZE_GRADE_CAP_REASON = "Daily squeeze has 2-4 active dots; developing compression contributes fewer setup points.";
-export const BROAD_ENTRY_GRADE_CAP_REASON = "Daily price is in the broader valid entry zone rather than the preferred A-entry zone.";
 export const EXTENDED_ENTRY_GRADE_CAP_REASON = "Daily price is above the preferred entry zone but remains within 1.5 ATR of the 21 EMA.";
 export const RELAXED_TREND_GRADE_CAP_REASON = "Daily fast trend qualifies, but the full 8/21/34/55/89 EMA stack is not present; Daily Structure contributes fewer setup points.";
 export const RELAXED_WEEKLY_GRADE_CAP_REASON = "Weekly chart is context only and no longer caps the setup grade.";
@@ -504,7 +503,6 @@ function gradeCapReasonsFor(
   const layer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name);
   const factor = (name: InstitutionalFactorName) => setupScore.factors.find((item) => item.name === name);
   if (setupScore.score < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 90.");
-  if (dailyEntryQualificationMode === "broad") reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
   if (dailyEntryQualificationMode === "extended") reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing") reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (layer("Squeeze Market Structure")?.status === "Neutral" && !dailyContext.positiveEmaStack) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
@@ -857,11 +855,9 @@ function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
   const extensionUpper = indicators.ema21 + indicators.atr14 * 1.5;
   const prefix = mode === "strict"
     ? "Current price is inside the preferred zone: "
-    : mode === "broad"
-      ? "Current price is inside the valid entry range: "
-      : mode === "extended"
-        ? "Current price is inside the controlled extension: "
-        : "Qualifying entry range: ";
+    : mode === "extended"
+      ? "Current price is inside the controlled extension: "
+      : "Qualifying entry range: ";
   return prefix + "$" + round(preferredLower, 2).toFixed(2) + " to $" + round(preferredUpper, 2).toFixed(2)
     + "; maximum B extension $" + round(extensionUpper, 2).toFixed(2) + ".";
 }

@@ -11,7 +11,6 @@ import {
   A_SETUP_SCORE_THRESHOLD,
   BEARISH_MACRO_GRADE_CAP_REASON,
   B_SETUP_SCORE_THRESHOLD,
-  BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
   RELAXED_TREND_GRADE_CAP_REASON,
@@ -755,7 +754,6 @@ function mergeCachedGradeCapReasons(
   const reasons = removeWeeklyCachedGradeReasons(result.gradeCapReasons ?? cachedGradeCapReasons(result, setupScore))
     .filter((reason) => reason !== RELAXED_TREND_GRADE_CAP_REASON || missingDailyEmaStack)
     .filter((reason) => reason !== BEARISH_MACRO_GRADE_CAP_REASON && reason !== "Options Market Context is neutral.");
-  if (dailyEntryQualificationMode === "broad" && !reasons.includes(BROAD_ENTRY_GRADE_CAP_REASON)) reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
   if (dailyEntryQualificationMode === "extended" && !reasons.includes(EXTENDED_ENTRY_GRADE_CAP_REASON)) reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing" && !reasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (hasRelaxedMarketStructure(result) && missingDailyEmaStack && !reasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
