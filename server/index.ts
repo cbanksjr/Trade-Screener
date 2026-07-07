@@ -7,7 +7,7 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { readCachedScanResponse, recordUniverseWarning, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
+import { readCachedScanResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
 import { initDb } from "./sqlite";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -92,6 +92,23 @@ app.post("/api/scan", async (_req, res, next) => {
 app.get("/api/scan/status", async (_req, res, next) => {
   try {
     res.json(await readCachedScanResponse());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/watchlist", async (_req, res, next) => {
+  try {
+    res.json(await readWatchlist());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/watchlist/:symbol", async (req, res, next) => {
+  try {
+    await removeFromWatchlist(String(req.params.symbol ?? "").trim().toUpperCase());
+    res.json(await readWatchlist());
   } catch (error) {
     next(error);
   }

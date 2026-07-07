@@ -1,4 +1,4 @@
-import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings } from "../shared/types";
+import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { resolveEtfSymbols } from "./etfUniverse";
@@ -28,7 +28,7 @@ import {
   stockLiquidityPasses
 } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
-import { getCachedResults, getScanMetadata, getSetting, replaceScanResults, setScanMetadata, setSetting } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
 
@@ -284,6 +284,26 @@ export async function readDisplayResults(): Promise<ScanResult[]> {
     .filter((result): result is ScanResult => shouldIncludeResult(result));
 }
 
+export async function readWatchlist(): Promise<WatchlistEntry[]> {
+  const entries = await getWatchlistEntries();
+  return entries.map((entry) => ({
+    symbol: entry.symbol,
+    addedAt: entry.addedAt,
+    result: normalizeCachedResult(entry.payload as ScanResult)
+  }));
+}
+
+export async function removeFromWatchlist(symbol: string): Promise<void> {
+  await removeWatchlistEntry(symbol);
+}
+
+async function syncWatchlist(results: ScanResult[]): Promise<void> {
+  const takeResults = results.filter((result) => result.tradeMark === "Take");
+  for (const result of takeResults) {
+    await upsertWatchlistEntry(result.symbol, result);
+  }
+}
+
 export async function __resetScanStateForTest() {
   activeScan = null;
   await setScanMetadata({ scanStatus: "idle" });
@@ -293,6 +313,7 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
   try {
     const response = await scanRunner();
     await replaceScanResults(response.results);
+    await syncWatchlist(response.results);
     const finishedAt = new Date().toISOString();
     await setScanMetadata({
       scanStatus: "complete",
