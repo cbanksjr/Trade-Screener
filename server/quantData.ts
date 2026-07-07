@@ -21,7 +21,6 @@ type EndpointId =
   | "max-pain"
   | "open-interest-change"
   | "iv-rank"
-  | "net-flow"
   | "gainers-losers";
 
 type EndpointCacheEntry = {
@@ -91,13 +90,12 @@ type IvRankEvaluation = {
 const CACHE_KEY = "quantDataCache";
 const ENDPOINT_PATHS: Record<EndpointId, string> = {
   "net-drift": "/v1/options/tool/net-drift",
-  "order-flow-consolidated": "/v1/options/tool/order-flow-consolidated",
+  "order-flow-consolidated": "/v1/options/tool/order-flow/consolidated",
   "exposure-by-strike": "/v1/options/tool/exposure-by-strike",
   "dark-pool-levels": "/v1/equities/tool/dark-pool-levels",
   "max-pain": "/v1/options/tool/max-pain",
   "open-interest-change": "/v1/options/tool/open-interest-change",
   "iv-rank": "/v1/options/tool/iv-rank",
-  "net-flow": "/v1/options/tool/net-flow",
   "gainers-losers": "/v1/options/tool/gainers-losers"
 };
 const UNIVERSE_CACHE_SYMBOL = "__UNIVERSE__";
@@ -172,10 +170,14 @@ export function createQuantDataPositioningProvider(input: {
     const [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank] = await Promise.all([
       loadEndpoint(upperSymbol, "net-drift", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol } }),
       loadEndpoint(upperSymbol, "order-flow-consolidated", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol }, size: 100 }),
+      // QuantData rejects "NOTIONAL" (400: accepted values are
+      // PER_ONE_DOLLAR_MOVE, PER_ONE_PERCENT_MOVE, RAW). PER_ONE_PERCENT_MOVE
+      // is the standard dollar-gamma-per-1%-move scale that matches the
+      // existing call-wall/put-support dollar thresholds below.
       loadEndpoint(upperSymbol, "exposure-by-strike", {
         filter: { ticker: upperSymbol },
         greekMode: "GAMMA",
-        representationMode: "NOTIONAL"
+        representationMode: "PER_ONE_PERCENT_MOVE"
       }),
       loadEndpoint(upperSymbol, "dark-pool-levels", {
         sessionDateRange: { startDate: isoDate(addDays(now(), -14)) },
@@ -209,6 +211,15 @@ export function createQuantDataPositioningProvider(input: {
     if (ivRank.data !== undefined && ivRankEvaluation.signal === "no_data") warnings.push(`QuantData iv-rank shape unrecognized: ${describeBodyKeys(ivRank.data)}`);
     if (oiChange.data !== undefined && oiChangeEvaluation.signal === "no_data") warnings.push(`QuantData open-interest-change shape unrecognized: ${describeBodyKeys(oiChange.data)}`);
     if (exposure.data !== undefined && exposureEvaluation.detail === "Options exposure unavailable.") warnings.push(`QuantData exposure-by-strike shape unrecognized: ${describeBodyKeys(exposure.data)}`);
+    // The order-flow-consolidated path only just started resolving (previously
+    // 404'd), so its row shape has never been confirmed against a live payload
+    // — normalizeOptionsFlow's field names are still a guess. Surface rows
+    // that come back with none of the recognized fields instead of letting
+    // them silently contribute nothing.
+    const orderFlowRows = payloadRows(orderFlow.data);
+    if (orderFlow.data !== undefined && orderFlowRows.length > 0 && !orderFlowRows.some((row) => normalizedString(row.contractType, row.optionType, row.putCall, row.side))) {
+      warnings.push(`QuantData order-flow-consolidated shape unrecognized: ${describeBodyKeys(orderFlow.data)}`);
+    }
     // TEMP diagnostic: exposure-by-strike was never confirmed against a live
     // response (unlike max-pain/iv-rank, which each went through this same
     // capture-then-fix cycle). Print the raw request/response so a follow-up
@@ -273,15 +284,18 @@ export function createQuantDataPositioningProvider(input: {
 
   async function rankSymbols(symbols: string[]): Promise<{ symbols: string[]; warnings: string[]; usedLive: boolean }> {
     if (!input.apiKey || !symbols.length) return { symbols, warnings: [], usedLive: false };
-    const [netFlow, gainersLosers] = await Promise.all([
-      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "net-flow", {}, "universe"),
-      loadEndpoint(UNIVERSE_CACHE_SYMBOL, "gainers-losers", {}, "universe")
-    ]);
-    const warnings = [...netFlow.warnings, ...gainersLosers.warnings];
-    const ranking = normalizeFlowRanking(netFlow.data, gainersLosers.data);
-    if (!ranking.size) return { symbols, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };
+    // net-flow was dropped from ranking: confirmed live that an unfiltered
+    // request returns a single time-bucketed series keyed by epoch timestamp
+    // (e.g. {"1783310400000": {...}, ...}), not per-ticker rows — like
+    // net-drift, it's a single-underlying tool, not a cross-sectional
+    // screener, so it can never contribute a per-symbol ranking signal here.
+    // gainers-losers is QuantData's actual cross-sectional endpoint.
+    const gainersLosers = await loadEndpoint(UNIVERSE_CACHE_SYMBOL, "gainers-losers", {}, "universe");
+    const warnings = [...gainersLosers.warnings];
+    const ranking = normalizeFlowRanking(gainersLosers.data);
+    if (!ranking.size) return { symbols, warnings, usedLive: gainersLosers.usedLive };
     const ranked = [...symbols].sort((a, b) => (ranking.get(b) ?? 0) - (ranking.get(a) ?? 0));
-    return { symbols: ranked, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };
+    return { symbols: ranked, warnings, usedLive: gainersLosers.usedLive };
   }
 
   return {
@@ -483,9 +497,9 @@ export function normalizeIvRank(payload: unknown, compressionActive: boolean): I
   return { signal: "neutral", score: 10, detail, flags: [] };
 }
 
-export function normalizeFlowRanking(netFlowPayload: unknown, gainersLosersPayload: unknown): Map<string, number> {
+export function normalizeFlowRanking(gainersLosersPayload: unknown): Map<string, number> {
   const ranking = new Map<string, number>();
-  const rows = [...payloadRows(netFlowPayload), ...payloadRows(gainersLosersPayload)];
+  const rows = payloadRows(gainersLosersPayload);
   for (const row of rows) {
     const ticker = normalizedString(row.ticker, row.symbol).toUpperCase();
     if (!ticker) continue;
