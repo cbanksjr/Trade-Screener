@@ -128,6 +128,7 @@ function App() {
   }, []);
 
   const active = results.find((item) => item.symbol === selected) ?? results[0];
+  const activeWatchlistEntry = watchlist.find((entry) => entry.symbol === selected) ?? watchlist[0];
 
   React.useEffect(() => {
     if (!loading && scanStatus !== "running") return;
@@ -263,13 +264,13 @@ function App() {
                 {watchlist.length === 0
                   ? <p className="empty-copy">No symbols on the watchlist yet. Run a scan to populate it.</p>
                   : watchlist.map((entry) => (
-                      <WatchlistRow entry={entry} activeSymbol={active?.symbol} onSelect={(symbol) => { setSelected(symbol); setView("scanner"); }} onRemove={removeWatchlistSymbol} key={entry.symbol} />
+                      <WatchlistRow entry={entry} activeSymbol={activeWatchlistEntry?.symbol} onSelect={setSelected} onRemove={removeWatchlistSymbol} key={entry.symbol} />
                     ))}
               </div>
             </div>
 
             <div className="detail">
-              {watchlist.length ? <TickerDetail result={watchlist.find((entry) => entry.symbol === active?.symbol)?.result ?? watchlist[0].result} /> : <EmptyState runScan={runScan} />}
+              {watchlist.length ? <TickerDetail result={activeWatchlistEntry?.result} /> : <EmptyState runScan={runScan} />}
             </div>
           </section>
         ) : (
