@@ -706,17 +706,59 @@ describe("watchlist manual add", () => {
     await expect(addToWatchlist("NOTFOUND")).rejects.toThrow();
   }));
 
-  it("keeps a watchlisted symbol after a later scan no longer returns it", async () => withDbRestore(async () => {
+  it("removes a watchlisted symbol once a later scan evaluates it and no longer qualifies", async () => withDbRestore(async () => {
     const take = { ...qualifyingResult("STICKY"), tradeMark: "Take" as const };
 
     await startScanRefresh(() => fakeResponse([take]));
     await settleBackgroundScan();
     await addToWatchlist("STICKY");
+    await startScanRefresh(() => fakeResponse([], [], undefined, ["STICKY"]));
+    await settleBackgroundScan();
+
+    const watchlist = await readWatchlist();
+    expect(watchlist.map((entry) => entry.symbol)).not.toContain("STICKY");
+  }));
+
+  it("keeps a watchlisted symbol when a later scan could not evaluate it (data gap)", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("GAPPY"), tradeMark: "Take" as const };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+    await addToWatchlist("GAPPY");
     await startScanRefresh(() => fakeResponse([]));
     await settleBackgroundScan();
 
     const watchlist = await readWatchlist();
-    expect(watchlist.map((entry) => entry.symbol)).toContain("STICKY");
+    expect(watchlist.map((entry) => entry.symbol)).toContain("GAPPY");
+  }));
+
+  it("removes a watchlisted symbol once a later scan marks it Avoid", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("FLIPS"), tradeMark: "Take" as const };
+    const avoid = { ...qualifyingResult("FLIPS"), tradeMark: "Avoid" as const, tradeMarkReasons: ["Bearish macro."] };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+    await addToWatchlist("FLIPS");
+    await startScanRefresh(() => fakeResponse([avoid]));
+    await settleBackgroundScan();
+
+    const watchlist = await readWatchlist();
+    expect(watchlist.map((entry) => entry.symbol)).not.toContain("FLIPS");
+  }));
+
+  it("refreshes a watchlisted symbol's stored result after a later scan", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("REFRESH"), tradeMark: "Take" as const, price: 100 };
+    const updated = { ...qualifyingResult("REFRESH"), tradeMark: "Take" as const, price: 101 };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+    await addToWatchlist("REFRESH");
+    await startScanRefresh(() => fakeResponse([updated]));
+    await settleBackgroundScan();
+
+    const watchlist = await readWatchlist();
+    const entry = watchlist.find((item) => item.symbol === "REFRESH");
+    expect(entry?.result.price).toBe(101);
   }));
 
   it("removes a symbol from the watchlist on request", async () => withDbRestore(async () => {
@@ -760,13 +802,14 @@ async function settleBackgroundScan() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics): Promise<ScanResponse> {
+async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[]): Promise<ScanResponse> {
   return {
     mode: "demo",
     results,
     settings: await readSettings() as Settings,
     warnings,
     scanDiagnostics,
+    evaluatedSymbols,
     scanStatus: "idle"
   };
 }
