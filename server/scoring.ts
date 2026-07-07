@@ -25,6 +25,7 @@ import type {
 } from "../shared/types";
 import { dailyEntryDetail, resolveDailyEntryQualificationMode } from "./entryZone";
 import { activeSqueezeDotCount, latestIndicators, round } from "./indicators";
+import { clampScore, resolveMacroModifier, type MacroRegimeContext } from "./macroRegime";
 import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
 
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
@@ -76,6 +77,7 @@ export function gradeSetup(input: {
   weeklySqueezeWarning?: string;
   spyCandles?: Candle[];
   qqqCandles?: Candle[];
+  macroRegime?: MacroRegimeContext;
   sector?: string;
   sectorCandles?: Candle[];
   strictFundamentals?: boolean;
@@ -118,7 +120,7 @@ export function gradeSetup(input: {
   const marketStructure = evaluateMarketStructure(dailyContext, indicators);
   const optionLayer = evaluateOptions(input.options, options, price);
   const compression = evaluateCompression(dailySqueezeDotCount);
-  const macro = evaluateMacro(input.spyCandles, input.qqqCandles);
+  const macro = evaluateMacro(input.macroRegime);
   const relativeStrengthSummary = evaluateRelativeStrength(input.candles, input.spyCandles, input.qqqCandles);
   const layerEvaluations = [marketStructure, institutional, optionLayer, macro, compression];
   const setupScore = evaluateSetupScore({
@@ -151,8 +153,7 @@ export function gradeSetup(input: {
     layerEvaluations,
     setupScore,
     recommendedOption,
-    institutional,
-    macro
+    institutional
   });
   const tradeMark: TradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const decision = compatibilityDecision(grade, tradeMark);
@@ -307,6 +308,24 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
   };
 }
 
+export function applyMacroRegimeModifier(result: ScanResult, macro: MacroRegimeContext): ScanResult {
+  const { modifier, counterTrend } = resolveMacroModifier(result.setupDirection, macro.effectiveRegime);
+  const finalScore = clampScore(round(result.setupScore * modifier, 0));
+  const flags = counterTrend ? unique([...(result.flags ?? []), "Counter-Trend"]) : (result.flags ?? []);
+
+  return {
+    ...result,
+    macroRegimeQqq: macro.qqq.regime,
+    macroRegimeSpy: macro.spy.regime,
+    effectiveMacroRegime: macro.effectiveRegime,
+    counterTrend,
+    macroModifierApplied: modifier,
+    finalScore,
+    macroRegimeSummary: macro.detail,
+    flags
+  };
+}
+
 function evaluateMarketStructure(dailyContext: LowerTimeframeContext, indicators: IndicatorSnapshot): LayerEvaluation {
   const dailySqueezeActive = isSqueezeActive(dailyContext.squeezeState);
   if (!dailySqueezeActive) return layer("Squeeze Market Structure", "Bearish", "Daily squeeze is required for swing setups; daily squeeze state is " + dailyContext.squeezeState + ".");
@@ -375,17 +394,10 @@ function evaluateCompression(dailySqueezeDotCount: number): LayerEvaluation {
   return layer("Compression Quality", "Bullish", "Daily chart has " + dailySqueezeDotCount + " consecutive active squeeze dots.");
 }
 
-function evaluateMacro(spyCandles?: Candle[], qqqCandles?: Candle[]): LayerEvaluation {
-  if (!spyCandles?.length || !qqqCandles?.length) return layer("Macro Regime", "Neutral", "SPY/QQQ macro context was not available; market regime treated as contextual.");
-  try {
-    const spy = buildTimeframeContext("daily", spyCandles);
-    const qqq = buildTimeframeContext("daily", qqqCandles);
-    if (spy.bias === "bullish" && qqq.bias === "bullish") return layer("Macro Regime", "Bullish", "SPY and QQQ daily EMA structures are bullish.");
-    if (spy.bias === "bearish" || qqq.bias === "bearish") return layer("Macro Regime", "Bearish", "SPY or QQQ daily EMA structure is bearish.");
-    return layer("Macro Regime", "Neutral", "SPY/QQQ daily EMA structures are mixed.");
-  } catch {
-    return layer("Macro Regime", "Neutral", "SPY/QQQ macro context could not be calculated.");
-  }
+function evaluateMacro(macro?: MacroRegimeContext): LayerEvaluation {
+  if (!macro) return layer("Macro Regime", "Neutral", "SPY/QQQ macro context was not available; market regime treated as contextual.");
+  const status: LayerStatus = macro.effectiveRegime === "bullish" ? "Bullish" : macro.effectiveRegime === "bearish" ? "Bearish" : "Neutral";
+  return layer("Macro Regime", status, macro.detail);
 }
 
 function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqCandles?: Candle[]): string {
@@ -507,7 +519,6 @@ function tradeMarkReasonsFor(input: {
   setupScore: SetupScoreResult;
   recommendedOption?: OptionContract;
   institutional: LayerEvaluation;
-  macro: LayerEvaluation;
 }): string[] {
   const reasons: string[] = [];
   const optionLayer = input.layerEvaluations.find((item) => item.layer === "Options Market Context");
@@ -517,7 +528,6 @@ function tradeMarkReasonsFor(input: {
   if (marketStructure?.status === "Bearish") reasons.push(marketStructure.detail);
   if (compression?.status === "Bearish") reasons.push(compression.detail);
   if (input.setupScore.catalystBlock) reasons.push("Earnings are within 14 days.");
-  if (input.macro.status === "Bearish") reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   if (input.institutional.status === "Bearish" || input.institutional.status === "Insufficient Data") reasons.push("Basic universe, liquidity, market-cap, or optionability filters failed.");
   if (optionLayer?.status === "Bearish") reasons.push(optionLayer.detail);
   else if (!input.recommendedOption) reasons.push("No preferred call contract was found.");

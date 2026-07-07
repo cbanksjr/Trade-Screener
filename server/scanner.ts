@@ -5,6 +5,7 @@ import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators, MIN_CANDLES_REQUIRED } from "./indicators";
+import { computeMacroRegimeContext, type MacroRegimeContext } from "./macroRegime";
 import { createQuantDataPositioningScanProvider } from "./quantData";
 import {
   A_SETUP_SCORE_THRESHOLD,
@@ -18,6 +19,7 @@ import {
   WEEKLY_ATR_GRADE_CAP_REASON,
   applyInstitutionalEdge,
   applyInstitutionalPositioning,
+  applyMacroRegimeModifier,
   defaultSettings,
   gradeFromSetupScore,
   gradeSetup,
@@ -171,7 +173,15 @@ export async function runFullScan(): Promise<ScanResponse> {
   }
   const canUseLiveSchwab = hasSchwabCredentials() && await hasSchwabTokens();
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
-  const benchmarks = canUseLiveSchwab ? await loadBenchmarks(scanWarnings) : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ") };
+  const benchmarks = canUseLiveSchwab
+    ? await loadBenchmarks(scanWarnings)
+    : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ"), vixLevel: undefined };
+  const macroRegime: MacroRegimeContext = computeMacroRegimeContext({
+    spyCandles: benchmarks.spyCandles,
+    qqqCandles: benchmarks.qqqCandles,
+    vixLevel: benchmarks.vixLevel
+  });
+  macroRegime.warnings.forEach((warning) => scanWarnings.add(warning));
   const sectorBySymbol = await getDefaultUniverseSectorMap();
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
@@ -205,6 +215,7 @@ export async function runFullScan(): Promise<ScanResponse> {
       quote: quoteMap.get(symbol),
       spyCandles: benchmarks.spyCandles,
       qqqCandles: benchmarks.qqqCandles,
+      macroRegime,
       sector,
       sectorCandles: sector ? sectorHistories.get(sector) : undefined,
       sectorHistories,
@@ -220,7 +231,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
     if (outcome.result) evaluatedSymbols.add(outcome.result.symbol);
     if (outcome.result && shouldIncludeResult(outcome.result)) {
-      let result = outcome.result;
+      let result = applyMacroRegimeModifier(outcome.result, macroRegime);
       if (fmpInstitutionalEdge) {
         const edge = await fmpInstitutionalEdge.enrich(result.symbol, result.assetType, result.price);
         if (edge.usedLive) usedLive = true;
@@ -363,6 +374,7 @@ async function scanSymbol(input: {
   quote?: SchwabQuote;
   spyCandles?: Awaited<ReturnType<typeof fetchHistory>>;
   qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>;
+  macroRegime?: MacroRegimeContext;
   sector?: string;
   sectorCandles?: Candle[];
   sectorHistories?: Map<string, Candle[]>;
@@ -498,6 +510,7 @@ async function scanSymbol(input: {
         weeklySqueezeWarning: weekly.warning,
         spyCandles: input.spyCandles,
         qqqCandles: input.qqqCandles,
+        macroRegime: input.macroRegime,
         sector,
         sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
         minMarketCap: settings.minMarketCap,
@@ -552,6 +565,7 @@ async function scanSymbol(input: {
       weeklySqueezeWarning: weekly.warning,
       spyCandles: input.spyCandles,
       qqqCandles: input.qqqCandles,
+      macroRegime: input.macroRegime,
       sector: input.sector,
       sectorCandles: input.sectorCandles,
       scanRanAt
@@ -641,7 +655,6 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const dailyEntryQualificationMode = resolveCachedDailyEntryQualificationMode(result);
   const squeezeMaturityMode = result.squeezeMaturityMode
     ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
-  const bearishMacro = hasBearishMacro(result);
   const missingDailyEmaStack = hasMissingCachedDailyEmaStack(result);
   const capA = (result.institutionalFactors ?? []).some(
     (item) => (item.name === "Sector Strength" || item.name === "Catalyst Safety") && item.status === "Insufficient Data"
@@ -650,7 +663,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   if (capA && scoreGrade === "A") scoreGrade = "B";
   const grade = result.institutionalPromotionApplied && result.finalGrade === "A" ? "A" : scoreGrade;
   const gradeCapReasons = mergeCachedGradeCapReasons(result, setupScore, dailyEntryQualificationMode, squeezeMaturityMode, missingDailyEmaStack);
-  const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore, bearishMacro);
+  const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore);
   const tradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const longCallDecision = cachedCompatibilityDecision(grade, tradeMark);
   const normalized: ScanResult = {
@@ -676,6 +689,12 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     gradeCapReasons,
     strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
     flags: result.flags ?? [],
+    finalScore: typeof result.finalScore === "number" ? result.finalScore : setupScore,
+    macroModifierApplied: typeof result.macroModifierApplied === "number" ? result.macroModifierApplied : 1,
+    counterTrend: result.counterTrend ?? false,
+    macroRegimeQqq: result.macroRegimeQqq,
+    macroRegimeSpy: result.macroRegimeSpy,
+    effectiveMacroRegime: result.effectiveMacroRegime,
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -743,10 +762,9 @@ function mergeCachedGradeCapReasons(
   return reasons;
 }
 
-function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], setupScore: number, bearishMacro: boolean): string[] {
-  const reasons = (result.tradeMarkReasons ?? []).filter((reason) => reason !== "Institutional Edge is bearish.");
+function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], setupScore: number): string[] {
+  const reasons = (result.tradeMarkReasons ?? []).filter((reason) => reason !== "Institutional Edge is bearish." && reason !== BEARISH_MACRO_GRADE_CAP_REASON);
   if (grade === "C" || setupScore < B_SETUP_SCORE_THRESHOLD) addUnique(reasons, "Setup grade is C.");
-  if (bearishMacro) addUnique(reasons, BEARISH_MACRO_GRADE_CAP_REASON);
   if (result.institutionalPositioningStatus === "capped") addUnique(reasons, "Institutional positioning is not supportive.");
   if (result.institutionalPositioningStatus === "vetoed") addUnique(reasons, "Bearish Flow Veto");
   result.layerEvaluations?.filter((item) => (item.layer === "Squeeze Market Structure" || item.layer === "Compression Quality") && item.status === "Bearish")
@@ -775,10 +793,6 @@ function removeWeeklyCachedGradeReasons(reasons: string[]): string[] {
 
 function addUnique(items: string[], value: string): void {
   if (!items.includes(value)) items.push(value);
-}
-
-function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean {
-  return result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
 }
 
 function hasRelaxedMarketStructure(result: Pick<ScanResult, "layerEvaluations">): boolean {
@@ -844,8 +858,8 @@ async function loadQuoteMap(symbols: string[], warnings: Set<string>): Promise<M
   }
 }
 
-async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>> }> {
-  const output: { spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>> } = {};
+async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>; vixLevel?: number }> {
+  const output: { spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>; vixLevel?: number } = {};
   try {
     output.spyCandles = await fetchHistory("SPY");
   } catch (error) {
@@ -855,6 +869,13 @@ async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awa
     output.qqqCandles = await fetchHistory("QQQ");
   } catch (error) {
     warnings.add(readError(error, "QQQ macro history request failed."));
+  }
+  try {
+    const vixQuote = await fetchQuote("$VIX");
+    if (vixQuote?.price !== undefined) output.vixLevel = vixQuote.price;
+    else warnings.add("VIX quote returned no price; volatility regime treated as low/neutral for this scan.");
+  } catch (error) {
+    warnings.add(readError(error, "VIX quote request failed; volatility regime treated as low/neutral for this scan."));
   }
   return output;
 }

@@ -62,6 +62,9 @@ export type OptionContract = {
 export type SqueezeState = "none" | "low" | "mid" | "high" | "released";
 export type SqueezeMomentumColor = "cyan" | "blue" | "red" | "yellow";
 export type TimeframeBias = "bullish" | "bearish" | "neutral" | "unavailable";
+export type MacroTrendState = "bullish" | "neutral" | "bearish";
+export type VixRegime = "low" | "rising" | "elevated";
+export type MacroRegimeLabel = "bullish" | "neutral" | "bearish";
 export type LayerStatus = "Bullish" | "Neutral" | "Bearish" | "Conflicting" | "Insufficient Data";
 export type LongCallDecision = "Strong Long Call Candidate" | "Moderate Long Call Candidate" | "Watchlist Candidate" | "Avoid";
 export type EntryRecommendationType = "Early Compression Entry" | "Mid Compression Entry" | "High Conviction Compression Entry" | "Compression Watchlist" | "Avoid";
@@ -278,6 +281,12 @@ export type ScanResult = {
   relativeStrengthSummary: string;
   institutionalContextSummary: string;
   macroRegimeSummary: string;
+  macroRegimeQqq?: MacroRegimeLabel;
+  macroRegimeSpy?: MacroRegimeLabel;
+  effectiveMacroRegime?: MacroRegimeLabel;
+  counterTrend?: boolean;
+  macroModifierApplied?: number;
+  finalScore?: number;
   layerEvaluations: LayerEvaluation[];
   recommendedOptionContract?: OptionContract;
   recommendedDte?: string;

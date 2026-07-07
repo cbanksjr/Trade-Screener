@@ -350,7 +350,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["TWODOTS"]);
   }));
 
-  it("keeps bearish-macro cached candidates visible as A setups marked Avoid", async () => withDbRestore(async () => {
+  it("keeps bearish-macro cached candidates visible as A setups still marked Take", async () => withDbRestore(async () => {
     const macroCaution: ScanResult = {
       ...qualifyingResult("MACROCAUTION"),
       setupScore: 95,
@@ -368,9 +368,9 @@ describe("background scan refresh", () => {
 
     expect(result.symbol).toBe("MACROCAUTION");
     expect(result.grade).toBe("A");
-    expect(result.tradeMark).toBe("Avoid");
-    expect(result.longCallDecision).toBe("Avoid");
-    expect(result.tradeMarkReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.tradeMark).toBe("Take");
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.tradeMarkReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
