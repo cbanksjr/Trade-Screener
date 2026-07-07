@@ -499,13 +499,22 @@ export function normalizeIvRank(payload: unknown, compressionActive: boolean): I
 
 export function normalizeFlowRanking(gainersLosersPayload: unknown): Map<string, number> {
   const ranking = new Map<string, number>();
-  const rows = payloadRows(gainersLosersPayload);
-  for (const row of rows) {
-    const ticker = normalizedString(row.ticker, row.symbol).toUpperCase();
+  // Confirmed live: gainers-losers is a ticker-keyed object (e.g.
+  // {"data": {"AAPL": {bearishPremium, bullishPremium, premium, premiumRatio,
+  // tradeCount, volume}, ...}}), not an array of ticker/symbol-labeled rows —
+  // payloadRows() would discard the tickers (the object keys) and leave every
+  // row unattributable, so this reads the map directly instead.
+  const body = objectValue(gainersLosersPayload);
+  const data = body?.data ?? gainersLosersPayload;
+  const entries: [string, Record<string, unknown>][] = Array.isArray(data)
+    ? data.filter(isObject).map((row) => [normalizedString(row.ticker, row.symbol).toUpperCase(), row])
+    : isObject(data)
+      ? Object.entries(data).flatMap(([key, value]) => isObject(value) ? [[key.toUpperCase(), value] as [string, Record<string, unknown>]] : [])
+      : [];
+  for (const [keyTicker, row] of entries) {
+    const ticker = keyTicker || normalizedString(row.ticker, row.symbol).toUpperCase();
     if (!ticker) continue;
-    const premium = Math.abs(numberValue(row.netPremium, row.totalPremium, row.premium) ?? 0)
-      + Math.abs(numberValue(row.netCallPremium) ?? 0)
-      + Math.abs(numberValue(row.netPutPremium) ?? 0);
+    const premium = Math.abs(numberValue(row.premium, row.totalPremium, row.netPremium) ?? 0);
     const percentChange = Math.abs(numberValue(row.percentChange, row.changePercent) ?? 0);
     const score = premium + percentChange * 1_000_000;
     ranking.set(ticker, (ranking.get(ticker) ?? 0) + score);
