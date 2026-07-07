@@ -610,31 +610,6 @@ describe("layer decision engine", () => {
     expect(result.institutionalFactors.find((factor) => factor.name === "Catalyst Safety")?.detail).toBe("ETF has no single-company earnings date; catalyst risk is not applicable.");
   });
 
-  it("requires stocks to meet the current-day volume floor", () => {
-    const candles = activeDailySqueezeCandles();
-    const indicators = latestIndicators(candles);
-    const price = preferredEntryPrice(indicators);
-    const result = gradeSetup({
-      symbol: "THINVOL",
-      candles,
-      currentPrice: price,
-      currentVolume: 332_446,
-      fundamentals: {
-        ...strongFundamentals("THINVOL"),
-        avgShareVolume: 5_000_000,
-        avgDollarVolume20d: 900_000_000
-      },
-      optionable: true,
-      options: demoOptions("THINVOL", price),
-      weeklyIndicators: weeklyIndicator("bullish"),
-      ...institutionalSetupContext()
-    });
-
-    expect(result.passesUniverse).toBe(false);
-    expect(result.longCallDecision).toBe("Avoid");
-    expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
-  });
-
   it("classifies catalyst safety by earnings distance", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
@@ -1073,7 +1048,7 @@ describe("layer decision engine", () => {
     expect(result.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
   });
 
-  it("passes stock liquidity with either 1.5M shares or $300M average dollar volume", () => {
+  it("gates stock liquidity on average dollar volume alone, same as ETFs", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -1092,13 +1067,11 @@ describe("layer decision engine", () => {
       ...institutionalSetupContext()
     });
 
-    const failsBoth = resultFor(1_499_999, 299_999_999);
-    const sharePass = resultFor(1_500_000, 100_000_000);
-    const dollarPass = resultFor(100_000, 300_000_000);
+    const belowThreshold = resultFor(50_000_000, 299_999_999);
+    const atThreshold = resultFor(100_000, 300_000_000);
 
-    expect(failsBoth.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
-    expect(sharePass.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
-    expect(dollarPass.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
+    expect(belowThreshold.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bearish");
+    expect(atThreshold.layerEvaluations.find((layer) => layer.layer === "Institutional Context")?.status).toBe("Bullish");
   });
 
   it("keeps the $2B stock market-cap minimum", () => {

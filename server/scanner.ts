@@ -24,8 +24,7 @@ import {
   isSqueezeActive,
   resolveDailyEntryQualificationMode,
   resolveSqueezeMaturityMode,
-  resolveWeeklyQualificationMode,
-  stockLiquidityPasses
+  resolveWeeklyQualificationMode
 } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
@@ -35,7 +34,6 @@ import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniver
 const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
-const OLD_DEFAULT_MIN_AVG_SHARE_VOLUME = 600_000;
 type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
   "Communication Services": "XLC",
@@ -54,12 +52,8 @@ let activeScan: Promise<void> | null = null;
 
 export async function readSettings(): Promise<Settings> {
   const stored = await getSetting<Partial<Settings>>("settings", {});
-  const normalizedStored = stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME || stored.minAvgShareVolume === OLD_DEFAULT_MIN_AVG_SHARE_VOLUME
-    ? {
-      ...stored,
-      ...(stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME ? { minAvgDollarVolume: defaultSettings.minAvgDollarVolume } : {}),
-      ...(stored.minAvgShareVolume === OLD_DEFAULT_MIN_AVG_SHARE_VOLUME ? { minAvgShareVolume: defaultSettings.minAvgShareVolume } : {})
-    }
+  const normalizedStored = stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME
+    ? { ...stored, minAvgDollarVolume: defaultSettings.minAvgDollarVolume }
     : stored;
   if (normalizedStored !== stored) await setSetting("settings", normalizedStored);
   const defaultUniverse = await getDefaultUniverseStatus();
@@ -68,8 +62,6 @@ export async function readSettings(): Promise<Settings> {
     minPrice: normalizedStored.minPrice ?? defaultSettings.minPrice,
     minBeta: normalizedStored.minBeta ?? defaultSettings.minBeta,
     minMarketCap: normalizedStored.minMarketCap ?? defaultSettings.minMarketCap,
-    minCurrentVolume: normalizedStored.minCurrentVolume ?? defaultSettings.minCurrentVolume,
-    minAvgShareVolume: normalizedStored.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: normalizedStored.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
     brokerBaseUrl: config.schwabMarketDataBaseUrl,
     brokerCallbackUrl: config.schwabCallbackUrl,
@@ -89,8 +81,6 @@ export async function writeSettings(input: Partial<Settings>): Promise<Settings>
     minPrice: input.minPrice ?? current.minPrice,
     minBeta: input.minBeta ?? current.minBeta,
     minMarketCap: input.minMarketCap ?? current.minMarketCap,
-    minCurrentVolume: input.minCurrentVolume ?? current.minCurrentVolume,
-    minAvgShareVolume: input.minAvgShareVolume ?? current.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? current.minAvgDollarVolume,
     useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
     etfSymbols: input.etfSymbols ? resolveEtfSymbols(input.etfSymbols) : current.etfSymbols
@@ -175,7 +165,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const etfSymbolSet = new Set(etfSymbols);
   let symbolsToScan = await resolveScanSymbols(settings);
   const stockSymbolsToScan = symbolsToScan.filter((symbol) => !etfSymbolSet.has(symbol));
-  const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgShareVolume, settings.minAvgDollarVolume);
+  const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgDollarVolume);
   if (symbolsToScan.length < MIN_REFRESHED_SYMBOLS) {
     scanWarnings.add("Scan universe contains only " + symbolsToScan.length + " symbols; expected at least " + MIN_REFRESHED_SYMBOLS + ".");
   }
@@ -381,22 +371,8 @@ async function scanSymbol(input: {
       warnings.push(symbol + ": skipped because Schwab quote price $" + quote.price.toFixed(2) + " is below $" + settings.minPrice + ".");
       return { warnings, usedLive, usedDemo, skipReason: "price" };
     }
-    if (assetType === "etf" && quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
-      warnings.push(symbol + ": skipped because ETF average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
-      return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
-    }
-    if (assetType === "stock" && (quote?.volume === undefined || quote.volume < settings.minCurrentVolume)) {
-      const currentVolumeLabel = quote?.volume === undefined ? "unavailable" : formatShares(quote.volume);
-      warnings.push(symbol + ": skipped because current volume " + currentVolumeLabel + " is below " + formatShares(settings.minCurrentVolume) + ".");
-      return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
-    }
-    if (
-      assetType === "stock"
-      && quote?.averageVolume !== undefined
-      && quote.avgDollarVolume !== undefined
-      && !stockLiquidityPasses(quote.averageVolume, quote.avgDollarVolume, settings.minAvgShareVolume, settings.minAvgDollarVolume)
-    ) {
-      warnings.push(symbol + ": skipped because average share volume and average dollar volume are below the configured liquidity thresholds.");
+    if (quote?.avgDollarVolume !== undefined && quote.avgDollarVolume < settings.minAvgDollarVolume) {
+      warnings.push(symbol + ": skipped because average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
       return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
     }
 
@@ -429,12 +405,9 @@ async function scanSymbol(input: {
 
     const price = quote?.price ?? candles[candles.length - 1].close;
     fundamentals = withCandleLiquidityFallback(fundamentals, candles);
-    const liquidityPasses = assetType === "etf"
-      ? (fundamentals.avgDollarVolume20d ?? 0) >= settings.minAvgDollarVolume
-      : stockLiquidityPasses(fundamentals.avgShareVolume, fundamentals.avgDollarVolume20d, settings.minAvgShareVolume, settings.minAvgDollarVolume);
+    const liquidityPasses = (fundamentals.avgDollarVolume20d ?? 0) >= settings.minAvgDollarVolume;
     if (!liquidityPasses) {
-      warnings.push(symbol + ": skipped because average share volume is below " + formatShares(settings.minAvgShareVolume)
-        + " and average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
+      warnings.push(symbol + ": skipped because average dollar volume is below " + formatMoney(settings.minAvgDollarVolume) + ".");
       return { warnings, usedLive, usedDemo, skipReason: "stockLiquidity" };
     }
     const weekly = weeklySqueezeFromDaily(candles);
@@ -502,8 +475,6 @@ async function scanSymbol(input: {
         sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
         minMarketCap: settings.minMarketCap,
         minBeta: settings.minBeta,
-        minCurrentVolume: settings.minCurrentVolume,
-        minAvgShareVolume: settings.minAvgShareVolume,
         minAvgDollarVolume: settings.minAvgDollarVolume,
         scanRanAt
       });
@@ -602,11 +573,10 @@ function resolveCachedWeeklyQualificationMode(result: ScanResult): NonNullable<S
   return weekly?.bias === "bullish" ? "full-stack" : "none";
 }
 
-function createScanDiagnostics(scannedSymbols: number, minAvgShareVolume: number, minAvgDollarVolume: number): ScanDiagnostics {
+function createScanDiagnostics(scannedSymbols: number, minAvgDollarVolume: number): ScanDiagnostics {
   return {
     scannedSymbols,
     qualifiedResults: 0,
-    minAvgShareVolume,
     minAvgDollarVolume,
     skipped: {
       quoteMissing: 0,

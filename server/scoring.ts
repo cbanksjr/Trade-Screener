@@ -56,8 +56,6 @@ export const defaultSettings = {
   minPrice: 20,
   minBeta: 0.75,
   minMarketCap: 2_000_000_000,
-  minCurrentVolume: 1_000_000,
-  minAvgShareVolume: 1_500_000,
   minAvgDollarVolume: 300_000_000,
   useDemoDataWhenMissingApi: true
 };
@@ -83,8 +81,6 @@ export function gradeSetup(input: {
   strictFundamentals?: boolean;
   minMarketCap?: number;
   minBeta?: number;
-  minCurrentVolume?: number;
-  minAvgShareVolume?: number;
   minAvgDollarVolume?: number;
   scanRanAt?: Date | string;
 }): ScanResult {
@@ -111,16 +107,12 @@ export function gradeSetup(input: {
     price,
     beta,
     marketCap,
-    currentVolume: input.currentVolume,
-    avgShareVolume,
     avgDollarVolume20d,
     optionable: input.optionable,
     strictFundamentals: Boolean(input.strictFundamentals),
     assetType,
     minMarketCap: input.minMarketCap ?? defaultSettings.minMarketCap,
     minBeta: input.minBeta ?? defaultSettings.minBeta,
-    minCurrentVolume: input.minCurrentVolume ?? defaultSettings.minCurrentVolume,
-    minAvgShareVolume: input.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume
   });
   const marketStructure = evaluateMarketStructure(dailyContext, indicators);
@@ -138,9 +130,7 @@ export function gradeSetup(input: {
     institutional,
     optionLayer,
     options,
-    avgShareVolume,
     avgDollarVolume20d,
-    minAvgShareVolume: input.minAvgShareVolume ?? defaultSettings.minAvgShareVolume,
     minAvgDollarVolume: input.minAvgDollarVolume ?? defaultSettings.minAvgDollarVolume,
     spyCandles: input.spyCandles,
     qqqCandles: input.qqqCandles,
@@ -331,35 +321,26 @@ function evaluateInstitutional(input: {
   price: number;
   beta?: number;
   marketCap?: number;
-  currentVolume?: number;
-  avgShareVolume: number;
   avgDollarVolume20d: number;
   optionable: boolean;
   strictFundamentals: boolean;
   assetType: AssetType;
   minMarketCap: number;
   minBeta: number;
-  minCurrentVolume: number;
-  minAvgShareVolume: number;
   minAvgDollarVolume: number;
 }): LayerEvaluation {
   const priceOk = input.price > defaultSettings.minPrice;
   const betaOk = input.assetType === "etf" || (input.beta === undefined ? !input.strictFundamentals : input.beta >= input.minBeta);
   const marketCapOk = input.assetType === "etf" || (input.marketCap === undefined ? !input.strictFundamentals : input.marketCap >= input.minMarketCap);
-  const currentVolumeOk = input.assetType === "etf" || (input.currentVolume === undefined ? !input.strictFundamentals : input.currentVolume >= input.minCurrentVolume);
-  const volumeOk = input.assetType === "etf"
-    ? input.avgDollarVolume20d >= input.minAvgDollarVolume
-    : stockLiquidityPasses(input.avgShareVolume, input.avgDollarVolume20d, input.minAvgShareVolume, input.minAvgDollarVolume);
-  const passed = [priceOk, betaOk, marketCapOk, currentVolumeOk, volumeOk, input.optionable].filter(Boolean).length;
+  const volumeOk = input.avgDollarVolume20d >= input.minAvgDollarVolume;
+  const passed = [priceOk, betaOk, marketCapOk, volumeOk, input.optionable].filter(Boolean).length;
   const detail = input.assetType === "etf"
     ? "ETF price $" + input.price.toFixed(2) + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + "; beta and market cap are not required."
     : "Price $" + input.price.toFixed(2)
       + ", beta " + (input.beta?.toFixed(2) ?? "unavailable")
       + ", market cap " + (input.marketCap ? formatMoney(input.marketCap) : "unavailable")
-      + ", current volume " + formatShares(input.currentVolume)
-      + ", avg share volume " + formatShares(input.avgShareVolume)
       + ", avg dollar volume " + formatMoney(input.avgDollarVolume20d) + ".";
-  if (passed === 6) return layer("Institutional Context", "Bullish", detail);
+  if (passed === 5) return layer("Institutional Context", "Bullish", detail);
   return layer("Institutional Context", "Bearish", detail);
 }
 
@@ -446,9 +427,7 @@ function evaluateSetupScore(input: {
   institutional: LayerEvaluation;
   optionLayer: LayerEvaluation;
   options: OptionContract[];
-  avgShareVolume: number;
   avgDollarVolume20d: number;
-  minAvgShareVolume: number;
   minAvgDollarVolume: number;
   spyCandles?: Candle[];
   qqqCandles?: Candle[];
@@ -580,10 +559,6 @@ function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean 
 function hasMissingDailyEmaStack(result: Pick<ScanResult, "squeezeStatusByTimeframe">): boolean {
   const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
   return daily?.positiveEmaStack === false;
-}
-
-export function stockLiquidityPasses(avgShareVolume: number | undefined, avgDollarVolume: number | undefined, minAvgShareVolume = defaultSettings.minAvgShareVolume, minAvgDollarVolume = defaultSettings.minAvgDollarVolume): boolean {
-  return (avgShareVolume ?? 0) >= minAvgShareVolume || (avgDollarVolume ?? 0) >= minAvgDollarVolume;
 }
 
 function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFactor {

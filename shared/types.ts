@@ -302,8 +302,6 @@ export type Settings = {
   minPrice: number;
   minBeta: number;
   minMarketCap: number;
-  minCurrentVolume: number;
-  minAvgShareVolume: number;
   minAvgDollarVolume: number;
   brokerBaseUrl: string;
   brokerCallbackUrl: string;
@@ -397,7 +395,6 @@ export type ScanDiagnosticCounts = {
 export type ScanDiagnostics = {
   scannedSymbols: number;
   qualifiedResults: number;
-  minAvgShareVolume: number;
   minAvgDollarVolume: number;
   skipped: ScanDiagnosticCounts;
 };
