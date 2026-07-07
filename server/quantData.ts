@@ -213,6 +213,15 @@ export function createQuantDataPositioningProvider(input: {
     if (ivRank.data !== undefined && ivRankEvaluation.signal === "no_data") warnings.push(`QuantData iv-rank shape unrecognized: ${describeBodyKeys(ivRank.data)}`);
     if (oiChange.data !== undefined && oiChangeEvaluation.signal === "no_data") warnings.push(`QuantData open-interest-change shape unrecognized: ${describeBodyKeys(oiChange.data)}`);
     if (exposure.data !== undefined && exposureEvaluation.detail === "Options exposure unavailable.") warnings.push(`QuantData exposure-by-strike shape unrecognized: ${describeBodyKeys(exposure.data)}`);
+    // The order-flow-consolidated path only just started resolving (previously
+    // 404'd), so its row shape has never been confirmed against a live payload
+    // — normalizeOptionsFlow's field names are still a guess. Surface rows
+    // that come back with none of the recognized fields instead of letting
+    // them silently contribute nothing.
+    const orderFlowRows = payloadRows(orderFlow.data);
+    if (orderFlow.data !== undefined && orderFlowRows.length > 0 && !orderFlowRows.some((row) => normalizedString(row.contractType, row.optionType, row.putCall, row.side))) {
+      warnings.push(`QuantData order-flow-consolidated shape unrecognized: ${describeBodyKeys(orderFlow.data)}`);
+    }
     // TEMP diagnostic: exposure-by-strike was never confirmed against a live
     // response (unlike max-pain/iv-rank, which each went through this same
     // capture-then-fix cycle). Print the raw request/response so a follow-up
@@ -286,6 +295,14 @@ export function createQuantDataPositioningProvider(input: {
     ]);
     const warnings = [...netFlow.warnings, ...gainersLosers.warnings];
     const ranking = normalizeFlowRanking(netFlow.data, gainersLosers.data);
+    // net-flow's real response may aggregate into timestamp buckets with no
+    // per-row ticker (unverified — QuantData's docs weren't reachable to
+    // confirm), which would make it silently contribute zero ranking signal.
+    // Surface that mismatch instead of letting it look like a quiet success.
+    const netFlowRows = payloadRows(netFlow.data);
+    if (netFlow.data !== undefined && netFlowRows.length > 0 && !netFlowRows.some((row) => normalizedString(row.ticker, row.symbol))) {
+      warnings.push(`QuantData net-flow rows have no per-ticker field, contributing no ranking signal: ${describeBodyKeys(netFlow.data)}`);
+    }
     if (!ranking.size) return { symbols, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };
     const ranked = [...symbols].sort((a, b) => (ranking.get(b) ?? 0) - (ranking.get(a) ?? 0));
     return { symbols: ranked, warnings, usedLive: netFlow.usedLive || gainersLosers.usedLive };

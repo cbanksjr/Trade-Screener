@@ -379,6 +379,28 @@ describe("QuantData Institutional Positioning", () => {
     expect(provider.remainingCalls()).toBe(0);
   });
 
+  it("warns when order-flow-consolidated rows have none of the recognized fields", async () => {
+    const cache: QuantDataCache = { responses: {} };
+    const provider = createQuantDataPositioningProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.example.test",
+      maxCalls: 10,
+      cache,
+      now: () => new Date("2026-06-30T15:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = input.toString();
+        if (url.includes("order-flow/consolidated")) {
+          return new Response(JSON.stringify({ data: [{ tradeSideCode: "A", tradeConsolidationType: "SWEEP", isOpeningPosition: true }] }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ data: {} }), { status: 200 });
+      }
+    });
+
+    const result = await provider.enrich("AAPL", 100);
+
+    expect(result.warnings.some((warning) => warning.includes("order-flow-consolidated shape unrecognized"))).toBe(true);
+  });
+
   it("only reaches Confirmed status when Net Drift/Order Flow sentiment is corroborated by an OI build", async () => {
     const bullishFixtures: Record<string, unknown> = {
       "net-drift": { data: { "1": { netCallPremium: 200_000, netPutPremium: 20_000 } } },
@@ -449,6 +471,28 @@ describe("QuantData Institutional Positioning", () => {
 
     expect(ranked.symbols).toEqual(["MSFT", "AAPL", "GOOG"]);
     expect(ranked.symbols.sort()).toEqual(["AAPL", "GOOG", "MSFT"]);
+  });
+
+  it("warns when net-flow rows have no per-ticker field instead of silently ranking nothing", async () => {
+    const cache: QuantDataCache = { responses: {} };
+    const provider = createQuantDataPositioningProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.example.test",
+      maxCalls: 10,
+      cache,
+      now: () => new Date("2026-06-30T15:00:00.000Z"),
+      fetchImpl: async (input) => {
+        const url = input.toString();
+        if (url.includes("net-flow")) return new Response(JSON.stringify({ data: [{ timestamp: 1, callSum: 5_000, putSum: 2_000 }] }), { status: 200 });
+        if (url.includes("gainers-losers")) return new Response(JSON.stringify({ data: [] }), { status: 200 });
+        return new Response(JSON.stringify({ data: {} }), { status: 200 });
+      }
+    });
+
+    const ranked = await provider.rankSymbols(["AAPL", "MSFT"]);
+
+    expect(ranked.symbols).toEqual(["AAPL", "MSFT"]);
+    expect(ranked.warnings.some((warning) => warning.includes("net-flow rows have no per-ticker field"))).toBe(true);
   });
 
   it("resolves the previous completed U.S. trading session for options flow", () => {
