@@ -408,3 +408,9 @@ export type ScanResponse = ScanMetadata & {
   settings: Settings;
   warnings: string[];
 };
+
+export type WatchlistEntry = {
+  symbol: string;
+  addedAt: string;
+  result: ScanResult;
+};
