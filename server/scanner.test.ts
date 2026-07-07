@@ -706,17 +706,30 @@ describe("watchlist manual add", () => {
     await expect(addToWatchlist("NOTFOUND")).rejects.toThrow();
   }));
 
-  it("removes a watchlisted symbol once a later scan no longer returns it", async () => withDbRestore(async () => {
+  it("removes a watchlisted symbol once a later scan evaluates it and no longer qualifies", async () => withDbRestore(async () => {
     const take = { ...qualifyingResult("STICKY"), tradeMark: "Take" as const };
 
     await startScanRefresh(() => fakeResponse([take]));
     await settleBackgroundScan();
     await addToWatchlist("STICKY");
-    await startScanRefresh(() => fakeResponse([]));
+    await startScanRefresh(() => fakeResponse([], [], undefined, ["STICKY"]));
     await settleBackgroundScan();
 
     const watchlist = await readWatchlist();
     expect(watchlist.map((entry) => entry.symbol)).not.toContain("STICKY");
+  }));
+
+  it("keeps a watchlisted symbol when a later scan could not evaluate it (data gap)", async () => withDbRestore(async () => {
+    const take = { ...qualifyingResult("GAPPY"), tradeMark: "Take" as const };
+
+    await startScanRefresh(() => fakeResponse([take]));
+    await settleBackgroundScan();
+    await addToWatchlist("GAPPY");
+    await startScanRefresh(() => fakeResponse([]));
+    await settleBackgroundScan();
+
+    const watchlist = await readWatchlist();
+    expect(watchlist.map((entry) => entry.symbol)).toContain("GAPPY");
   }));
 
   it("removes a watchlisted symbol once a later scan marks it Avoid", async () => withDbRestore(async () => {
@@ -789,13 +802,14 @@ async function settleBackgroundScan() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics): Promise<ScanResponse> {
+async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[]): Promise<ScanResponse> {
   return {
     mode: "demo",
     results,
     settings: await readSettings() as Settings,
     warnings,
     scanDiagnostics,
+    evaluatedSymbols,
     scanStatus: "idle"
   };
 }

@@ -214,9 +214,11 @@ export async function runFullScan(): Promise<ScanResponse> {
     });
   });
 
+  const evaluatedSymbols = new Set<string>();
   for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
+    if (outcome.result) evaluatedSymbols.add(outcome.result.symbol);
     if (outcome.result && shouldIncludeResult(outcome.result)) {
       let result = outcome.result;
       if (fmpInstitutionalEdge) {
@@ -259,7 +261,8 @@ export async function runFullScan(): Promise<ScanResponse> {
     results: results.sort(sortByDecision),
     settings,
     warnings: [...scanWarnings].filter(shouldShowWarning),
-    scanDiagnostics: diagnostics
+    scanDiagnostics: diagnostics,
+    evaluatedSymbols: [...evaluatedSymbols]
   });
 }
 
@@ -294,17 +297,20 @@ export async function addToWatchlist(symbol: string): Promise<void> {
   await upsertWatchlistEntry(symbol, match);
 }
 
-async function syncWatchlistWithLatestResults(): Promise<void> {
+async function syncWatchlistWithLatestResults(evaluatedSymbols?: string[]): Promise<void> {
   const entries = await getWatchlistEntries();
   if (!entries.length) return;
   const results = await readDisplayResults();
   const resultBySymbol = new Map(results.map((result) => [result.symbol, result]));
+  const evaluated = new Set(evaluatedSymbols ?? []);
   for (const entry of entries) {
     const match = resultBySymbol.get(entry.symbol);
-    if (!match || !isTakeResult(match)) {
+    if (match) {
+      if (isTakeResult(match)) await upsertWatchlistEntry(entry.symbol, match);
+      else await removeWatchlistEntry(entry.symbol);
+    } else if (evaluated.has(entry.symbol)) {
+      // Fully evaluated this run but didn't make the results — a genuine disqualification, not a data gap.
       await removeWatchlistEntry(entry.symbol);
-    } else {
-      await upsertWatchlistEntry(entry.symbol, match);
     }
   }
 }
@@ -323,7 +329,7 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
   try {
     const response = await scanRunner();
     await replaceScanResults(response.results);
-    await syncWatchlistWithLatestResults();
+    await syncWatchlistWithLatestResults(response.evaluatedSymbols);
     const finishedAt = new Date().toISOString();
     await setScanMetadata({
       scanStatus: "complete",
@@ -807,13 +813,13 @@ function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>
   }
 }
 
-async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics }): Promise<ScanResponse> {
+async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics; evaluatedSymbols?: string[] }): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
   return mergeScanResponseMetadata(input, metadata, Boolean(activeScan));
 }
 
 export function mergeScanResponseMetadata(
-  input: Pick<ScanResponse, "mode" | "results" | "settings" | "warnings" | "scanDiagnostics">,
+  input: Pick<ScanResponse, "mode" | "results" | "settings" | "warnings" | "scanDiagnostics" | "evaluatedSymbols">,
   metadata: ScanMetadata,
   isRefreshing: boolean
 ): ScanResponse {

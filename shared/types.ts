@@ -404,6 +404,8 @@ export type ScanResponse = ScanMetadata & {
   results: ScanResult[];
   settings: Settings;
   warnings: string[];
+  /** Symbols fully evaluated with real data this run, regardless of final inclusion — lets callers tell a genuine disqualification apart from a transient per-symbol data failure. */
+  evaluatedSymbols?: string[];
 };
 
 export type WatchlistEntry = {
