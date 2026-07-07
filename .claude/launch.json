@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "trade-screener-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:client"],
+      "port": 5173
+    }
+  ]
+}
