@@ -10,6 +10,7 @@ import {
   normalizeOpenInterestChange,
   normalizeOptionsExposure,
   normalizeOptionsFlow,
+  mostRecentCompletedSessionDate,
   previousTradingSessionDate,
   type QuantDataCache
 } from "./quantData";
@@ -499,6 +500,23 @@ describe("QuantData Institutional Positioning", () => {
     expect(previousTradingSessionDate(new Date("2026-06-29T15:00:00.000Z"))).toBe("2026-06-26");
     expect(previousTradingSessionDate(new Date("2026-07-06T15:00:00.000Z"))).toBe("2026-07-02");
     expect(previousTradingSessionDate(new Date("2022-01-03T15:00:00.000Z"))).toBe("2021-12-30");
+  });
+
+  it("rolls the flow session forward to the just-closed session after the 4pm ET close", () => {
+    // Tuesday 2026-06-30 during regular hours (09:35 ET) -> prior session (Mon),
+    // so the 8:35am CT / 9:35 ET scan is unchanged.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T13:35:00.000Z"))).toBe("2026-06-29");
+    // One minute before the close (15:59 ET) still resolves to the prior session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T19:59:00.000Z"))).toBe("2026-06-29");
+    // Exactly at the 16:00 ET close -> today's just-closed session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T20:00:00.000Z"))).toBe("2026-06-30");
+    // After the close (16:30 ET) -> today. This is the after-hours fix.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T20:30:00.000Z"))).toBe("2026-06-30");
+    // After close on Friday -> Friday; the weekend then holds that session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-26T20:30:00.000Z"))).toBe("2026-06-26");
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-27T20:30:00.000Z"))).toBe("2026-06-26");
+    // Holiday (observed Independence Day, Fri 2026-07-03) -> prior completed session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-07-03T20:30:00.000Z"))).toBe("2026-07-02");
   });
 });
 

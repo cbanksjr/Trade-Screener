@@ -158,8 +158,11 @@ export function createQuantDataPositioningProvider(input: {
   async function enrich(symbol: string, price: number, context: QuantDataEnrichContext = {}): Promise<QuantDataPositioningResult> {
     const upperSymbol = symbol.trim().toUpperCase();
     if (!upperSymbol || !input.apiKey) return { positioning: DEFAULT_POSITIONING, warnings: [], usedLive: false };
-    const previousFlowSessionDate = previousTradingSessionDate(now());
-    const previousFlowSessionRange = { startDate: previousFlowSessionDate, endDate: previousFlowSessionDate };
+    // Most recently *completed* session: today after the 4pm ET close, otherwise
+    // the prior trading session. Date-suffixing the flow endpoints' cache keys
+    // (below) makes the post-close rollover crisp instead of masked by the TTL.
+    const flowSessionDate = mostRecentCompletedSessionDate(now());
+    const previousFlowSessionRange = { startDate: flowSessionDate, endDate: flowSessionDate };
     // QuantData requires expirationDate inside `filter` and date-only
     // (YYYY-MM-DD); the recommended contract carries a full ISO timestamp.
     const maxPainExpiration = context.nearestExpirationDate?.slice(0, 10);
@@ -168,8 +171,8 @@ export function createQuantDataPositioningProvider(input: {
       : Promise.resolve({ warnings: [], usedLive: false } as { data?: unknown; warnings: string[]; usedLive: boolean });
 
     const [netDrift, orderFlow, exposure, darkPool, maxPain, oiChange, ivRank] = await Promise.all([
-      loadEndpoint(upperSymbol, "net-drift", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol } }),
-      loadEndpoint(upperSymbol, "order-flow-consolidated", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol }, size: 100 }),
+      loadEndpoint(upperSymbol, "net-drift", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol } }, flowSessionDate),
+      loadEndpoint(upperSymbol, "order-flow-consolidated", { sessionDateRange: previousFlowSessionRange, filter: { ticker: upperSymbol }, size: 100 }, flowSessionDate),
       // QuantData rejects "NOTIONAL" (400: accepted values are
       // PER_ONE_DOLLAR_MOVE, PER_ONE_PERCENT_MOVE, RAW). PER_ONE_PERCENT_MOVE
       // is the standard dollar-gamma-per-1%-move scale that matches the
@@ -187,7 +190,7 @@ export function createQuantDataPositioningProvider(input: {
       loadEndpoint(upperSymbol, "open-interest-change", {
         sessionDateRange: previousFlowSessionRange,
         filter: { ticker: upperSymbol, contractType: "CALL" }
-      }),
+      }, flowSessionDate),
       loadEndpoint(upperSymbol, "iv-rank", {
         filter: { ticker: upperSymbol },
         lookBackPeriod: IV_RANK_LOOKBACK_DAYS,
@@ -316,6 +319,31 @@ export function previousTradingSessionDate(from: Date): string {
     cursor = addDays(cursor, -1);
   }
   return isoDate(cursor);
+}
+
+// The date of the most recently *completed* trading session as of `from`. On a
+// trading day at/after the 4pm ET regular close, that is today's just-closed
+// session; otherwise (pre-market, during regular hours, weekends, holidays) it
+// is the prior completed session. This avoids the calendar-date lag where the
+// flow signals kept showing yesterday from the close until NY midnight.
+export function mostRecentCompletedSessionDate(from: Date): string {
+  const marketDate = marketDateUtc(from);
+  const isTradingDay = !isWeekend(marketDate) && !isUsMarketHoliday(marketDate);
+  if (isTradingDay && isAfterMarketClose(from)) return isoDate(marketDate);
+  return previousTradingSessionDate(from);
+}
+
+const MARKET_CLOSE_MINUTES = 16 * 60; // 4:00pm ET regular-session close.
+
+function isAfterMarketClose(date: Date): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(date);
+  const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return Number(values.hour) * 60 + Number(values.minute) >= MARKET_CLOSE_MINUTES;
 }
 
 export function normalizeOptionsFlow(netDriftPayload: unknown, orderFlowPayload?: unknown): OptionsFlowEvaluation {
