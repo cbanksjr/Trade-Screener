@@ -113,6 +113,14 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
     `).run(key, payload);
 }
 
+export async function deleteSetting(key: string): Promise<void> {
+  if (usePostgres) {
+    await pgQuery("DELETE FROM settings WHERE key = $1;", [key]);
+    return;
+  }
+  getDb().prepare("DELETE FROM settings WHERE key = ?;").run(key);
+}
+
 export async function saveScanResult(symbol: string, payload: unknown): Promise<void> {
   const upperSymbol = symbol.toUpperCase();
   const serialized = JSON.stringify(payload);

@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { fetchWithRetry } from "./httpRetry";
-import { getSetting, setSetting } from "./sqlite";
+import { deleteSetting, getSetting, setSetting } from "./sqlite";
 import type { BrokerStatus, Candle, FundamentalAnalysis, FundamentalFieldSources, OptionContract, ScanResult } from "../shared/types";
 
 export type SchwabQuote = {
@@ -56,6 +56,14 @@ const TOKEN_SETTING = "schwabTokens";
 const OAUTH_STATE_VERSION = "v1";
 const OAUTH_STATE_WINDOW_HOURS = 24;
 let tokenCache: SchwabTokens | undefined | null = null;
+let refreshPromise: Promise<SchwabTokens> | null = null;
+
+class SchwabTokenRequestError extends Error {
+  constructor(readonly status: number, statusText: string, body: string) {
+    super(`Schwab token request failed: ${status} ${statusText}${body ? ` - ${body.slice(0, 180)}` : ""}`);
+    this.name = "SchwabTokenRequestError";
+  }
+}
 
 export function hasSchwabCredentials(): boolean {
   return Boolean(config.schwabAppKey && config.schwabAppSecret && config.schwabCallbackUrl);
@@ -443,11 +451,19 @@ async function exchangeAuthorizationCode(code: string) {
 
 async function refreshAccessToken(tokens: SchwabTokens): Promise<SchwabTokens> {
   if (!tokens.refreshToken) throw new Error("Schwab refresh token is missing. Reconnect Schwab.");
-  const response = await tokenRequest({
-    grant_type: "refresh_token",
-    refresh_token: tokens.refreshToken
-  });
-  return saveTokens(response, tokens);
+  try {
+    const response = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: tokens.refreshToken
+    });
+    return saveTokens(response, tokens);
+  } catch (error) {
+    if (error instanceof SchwabTokenRequestError && (error.status === 401 || error.status === 403)) {
+      await clearTokens();
+      throw new Error("Schwab authorization expired or was rejected. Use Connect Schwab to reconnect.");
+    }
+    throw error;
+  }
 }
 
 async function tokenRequest(params: Record<string, string>): Promise<SchwabTokenResponse> {
@@ -463,7 +479,7 @@ async function tokenRequest(params: Record<string, string>): Promise<SchwabToken
   }));
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Schwab token request failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 180)}` : ""}`);
+    throw new SchwabTokenRequestError(response.status, response.statusText, text);
   }
   return response.json() as Promise<SchwabTokenResponse>;
 }
@@ -485,8 +501,6 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
   }
   return response.json() as Promise<T>;
 }
-
-let refreshPromise: Promise<SchwabTokens> | null = null;
 
 async function getAccessToken(): Promise<string> {
   const tokens = await readTokens();
@@ -517,6 +531,16 @@ async function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens
   tokenCache = next;
   await setSetting(TOKEN_SETTING, next);
   return next;
+}
+
+async function clearTokens(): Promise<void> {
+  tokenCache = undefined;
+  await deleteSetting(TOKEN_SETTING);
+}
+
+export function __resetSchwabTokenCacheForTest(): void {
+  tokenCache = null;
+  refreshPromise = null;
 }
 
 function isStrikeNearPrice(item: OptionContract, price: number): boolean {
