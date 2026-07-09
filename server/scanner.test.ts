@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
+import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
@@ -124,6 +124,18 @@ describe("fundamental provider merge", () => {
     });
   });
 
+  it("can disable demo fundamental fallback for live scans", () => {
+    const fundamentals = mergeFundamentals("AAPL", {
+      symbol: "AAPL",
+      price: 210
+    }, undefined, { allowDemoFallback: false });
+
+    expect(fundamentals.beta).toBeUndefined();
+    expect(fundamentals.marketCap).toBeUndefined();
+    expect(fundamentals.sources?.beta).toBeUndefined();
+    expect(fundamentals.sources?.marketCap).toBeUndefined();
+  });
+
   it("uses recent candle volume after Schwab and FMP omit average volume", () => {
     const fundamentals = mergeFundamentals("HISTORY", {
       symbol: "HISTORY",
@@ -219,6 +231,17 @@ describe("settings", () => {
     const settings = await readSettings();
 
     expect(settings.etfSymbols).toEqual(defaultEtfSymbols);
+  }));
+
+  it("rejects invalid numeric settings before they are stored", async () => withDbRestore(async () => {
+    await expect(writeSettings({ minPrice: -1 })).rejects.toBeInstanceOf(SettingsValidationError);
+
+    const settings = await readSettings();
+    expect(settings.minPrice).toBe(20);
+  }));
+
+  it("rejects malformed ETF setting payloads", async () => withDbRestore(async () => {
+    await expect(writeSettings({ etfSymbols: "SPY,QQQ" as unknown as string[] })).rejects.toBeInstanceOf(SettingsValidationError);
   }));
 });
 
@@ -350,7 +373,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["TWODOTS"]);
   }));
 
-  it("keeps bearish-macro cached candidates visible as A setups still marked Take", async () => withDbRestore(async () => {
+  it("keeps bearish-macro cached candidates visible as B setups still marked Take", async () => withDbRestore(async () => {
     const macroCaution: ScanResult = {
       ...qualifyingResult("MACROCAUTION"),
       setupScore: 95,
@@ -367,11 +390,11 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("MACROCAUTION");
-    expect(result.grade).toBe("A");
+    expect(result.grade).toBe("B");
     expect(result.tradeMark).toBe("Take");
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.tradeMarkReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
-    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
@@ -400,6 +423,12 @@ describe("background scan refresh", () => {
     const promoted: ScanResult = {
       ...qualifyingResult("PROMOTED"),
       setupScore: 88,
+      gradeCapReasons: ["Setup score below 90.", BEARISH_MACRO_GRADE_CAP_REASON],
+      layerEvaluations: [{
+        layer: "Macro Regime",
+        status: "Bearish",
+        detail: "SPY or QQQ daily EMA structure is bearish."
+      }],
       gradeBeforeQuantData: "B",
       finalGrade: "A",
       institutionalPromotionApplied: true
@@ -411,6 +440,7 @@ describe("background scan refresh", () => {
     expect(result.symbol).toBe("PROMOTED");
     expect(result.grade).toBe("A");
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
   }));
 
   it("does not promote a cached result on reload when no QuantData promotion was recorded", async () => withDbRestore(async () => {

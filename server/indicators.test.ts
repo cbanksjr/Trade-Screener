@@ -745,7 +745,7 @@ describe("layer decision engine", () => {
     expect(volatilityFit?.detail).toContain("momentum");
   });
 
-  it("keeps bearish macro regime as narrative context without vetoing the trade mark", () => {
+  it("caps bearish macro A setups to B without vetoing the trade mark", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -765,11 +765,11 @@ describe("layer decision engine", () => {
     });
 
     expect(result.layerEvaluations.find((layer) => layer.layer === "Macro Regime")?.status).toBe("Bearish");
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.tradeMark).toBe("Take");
-    expect(result.grade).toBe("A");
+    expect(result.grade).toBe("B");
     expect(result.tradeMarkReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
-    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
 
     const enriched = applyInstitutionalEdge(result, {
@@ -779,8 +779,8 @@ describe("layer decision engine", () => {
       factors: [],
       warnings: []
     });
-    expect(enriched.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(enriched.grade).toBe("A");
+    expect(enriched.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(enriched.grade).toBe("B");
   });
 
   it("ignores lower-timeframe squeeze for grading and reasons", () => {

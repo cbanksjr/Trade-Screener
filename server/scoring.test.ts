@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MacroRegimeLabel, ScanResult } from "../shared/types";
 import type { MacroRegimeContext } from "./macroRegime";
-import { applyMacroRegimeModifier } from "./scoring";
+import { applyMacroRegimeModifier, BEARISH_MACRO_GRADE_CAP_REASON } from "./scoring";
 
 describe("applyMacroRegimeModifier", () => {
   it("applies no discount and no counter-trend flag in a bullish regime", () => {
@@ -35,6 +35,11 @@ describe("applyMacroRegimeModifier", () => {
     expect(result.macroModifierApplied).toBe(0.7);
     expect(result.flags).toContain("Counter-Trend");
     expect(result.flags?.filter((flag) => flag === "Counter-Trend")).toHaveLength(1);
+    expect(result.grade).toBe("B");
+    expect(result.tradeMark).toBe("Take");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.tradeMarkReasons ?? []).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
   });
 
   it("does not duplicate the Counter-Trend flag when applied twice", () => {
@@ -53,7 +58,7 @@ describe("applyMacroRegimeModifier", () => {
     expect(result.finalScore).toBeGreaterThanOrEqual(0);
   });
 
-  it("never changes grade, tradeMark, longCallDecision, or passesUniverse", () => {
+  it("keeps non-A setup grade, trade mark, decision, and universe pass unchanged in bearish macro", () => {
     for (const regime of ["bullish", "neutral", "bearish"] as MacroRegimeLabel[]) {
       const base = baseResult(88, "B");
       const result = applyMacroRegimeModifier(base, macroContext(regime));
@@ -62,6 +67,11 @@ describe("applyMacroRegimeModifier", () => {
       expect(result.tradeMark).toBe(base.tradeMark);
       expect(result.longCallDecision).toBe(base.longCallDecision);
       expect(result.passesUniverse).toBe(base.passesUniverse);
+      if (regime === "bearish") {
+        expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+      } else {
+        expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+      }
     }
   });
 

@@ -56,4 +56,24 @@ describe("fetchWithRetry", () => {
     expect(response.status).toBe(200);
     expect(Date.now() - start).toBeLessThan(1000);
   });
+
+  it("retries thrown transient fetch failures", async () => {
+    const fetchImpl = vi.fn()
+      .mockRejectedValueOnce(new Error("network reset"))
+      .mockResolvedValueOnce(jsonResponse(200));
+
+    const response = await fetchWithRetry(fetchImpl, { baseDelayMs: 1, maxRetries: 1 });
+
+    expect(response.status).toBe(200);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("aborts slow attempts and retries before failing", async () => {
+    const fetchImpl = vi.fn((signal?: AbortSignal) => new Promise<Response>((_resolve, reject) => {
+      signal?.addEventListener("abort", () => reject(new Error("aborted")));
+    }));
+
+    await expect(fetchWithRetry(fetchImpl, { timeoutMs: 1, baseDelayMs: 1, maxRetries: 1 })).rejects.toThrow("Request timed out");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
 });

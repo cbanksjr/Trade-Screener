@@ -22,42 +22,41 @@ import "./styles.css";
 
 const api = {
   async results(): Promise<Partial<ScanResponse>> {
-    const response = await fetch("/api/results");
-    return response.json();
+    return apiJson("/api/results");
   },
   async scan(): Promise<ScanResponse> {
-    const response = await fetch("/api/scan", { method: "POST" });
-    return response.json();
+    return apiJson("/api/scan", { method: "POST" });
   },
   async scanStatus(): Promise<ScanResponse> {
-    const response = await fetch("/api/scan/status");
-    return response.json();
+    return apiJson("/api/scan/status");
   },
   async brokerStatus(): Promise<BrokerStatus> {
-    const response = await fetch("/api/schwab/status");
-    return response.json();
+    return apiJson("/api/schwab/status");
   },
   async connectSchwab(): Promise<{ loginUrl: string }> {
-    const response = await fetch("/api/schwab/login");
-    return response.json();
+    return apiJson("/api/schwab/login");
   },
   async watchlist(): Promise<WatchlistEntry[]> {
-    const response = await fetch("/api/watchlist");
-    return response.json();
+    return apiJson("/api/watchlist");
   },
   async removeFromWatchlist(symbol: string): Promise<WatchlistEntry[]> {
-    const response = await fetch("/api/watchlist/" + encodeURIComponent(symbol), { method: "DELETE" });
-    return response.json();
+    return apiJson("/api/watchlist/" + encodeURIComponent(symbol), { method: "DELETE" });
   },
   async addToWatchlist(symbol: string): Promise<WatchlistEntry[]> {
-    const response = await fetch("/api/watchlist", {
+    return apiJson("/api/watchlist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ symbol })
     });
-    return response.json();
   },
 };
+
+async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const response = await fetch(url, init);
+  const data = await response.json().catch(() => ({})) as { error?: string };
+  if (!response.ok) throw new Error(data.error ?? "Request failed with status " + response.status + ".");
+  return data as T;
+}
 
 const GRADE_ORDER = ["A", "B", "C"] as const;
 type ThemeMode = "light" | "dark";

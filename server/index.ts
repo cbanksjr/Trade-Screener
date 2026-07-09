@@ -7,7 +7,7 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { addToWatchlist, readCachedScanResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings } from "./scanner";
+import { addToWatchlist, readCachedScanResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings, SettingsValidationError } from "./scanner";
 import { initDb } from "./sqlite";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -18,6 +18,9 @@ await refreshUniverseIfNeeded();
 const app = express();
 app.use(cors({ origin: config.clientOrigin }));
 app.use(express.json({ limit: "2mb" }));
+app.use(optionalBasicAuth);
+
+const scanRateLimit = createRateLimit({ maxRequests: 6, windowMs: 5 * 60 * 1000 });
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true, time: new Date().toISOString() });
@@ -74,15 +77,19 @@ app.get("/api/schwab/callback", async (req, res) => {
   }
 
   try {
-    await handleSchwabCallback(String(req.query.code ?? ""));
+    await handleSchwabCallback(String(req.query.code ?? ""), String(req.query.state ?? ""));
     redirectToClient(res, "connected");
   } catch (error) {
     redirectToClient(res, "error", error instanceof Error ? error.message : "Schwab connection failed.");
   }
 });
 
-app.post("/api/scan", async (_req, res, next) => {
+app.post("/api/scan", async (req, res, next) => {
   try {
+    if (!scanRateLimit(req.ip ?? "unknown")) {
+      res.status(429).json({ error: "Too many scan requests. Wait a few minutes before starting another scan." });
+      return;
+    }
     res.json(await runScan());
   } catch (error) {
     next(error);
@@ -154,8 +161,46 @@ if (config.isProduction) {
 }
 
 app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  res.status(500).json({ error: error instanceof Error ? error.message : "Unexpected server error." });
+  const status = error instanceof SettingsValidationError ? 400 : 500;
+  res.status(status).json({ error: error instanceof Error ? error.message : "Unexpected server error." });
 });
+
+function createRateLimit(input: { maxRequests: number; windowMs: number }) {
+  const requestsByKey = new Map<string, number[]>();
+  return (key: string): boolean => {
+    const now = Date.now();
+    const recent = (requestsByKey.get(key) ?? []).filter((timestamp) => now - timestamp < input.windowMs);
+    if (recent.length >= input.maxRequests) {
+      requestsByKey.set(key, recent);
+      return false;
+    }
+    requestsByKey.set(key, [...recent, now]);
+    return true;
+  };
+}
+
+function optionalBasicAuth(req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (!config.appBasicAuthUsername || !config.appBasicAuthPassword) {
+    next();
+    return;
+  }
+  if (req.path === "/api/health" || req.path === "/api/schwab/callback") {
+    next();
+    return;
+  }
+  const header = req.headers.authorization ?? "";
+  const [scheme, credentials] = header.split(" ");
+  const decoded = scheme === "Basic" && credentials ? Buffer.from(credentials, "base64").toString("utf8") : "";
+  const separator = decoded.indexOf(":");
+  const username = separator >= 0 ? decoded.slice(0, separator) : "";
+  const password = separator >= 0 ? decoded.slice(separator + 1) : "";
+  if (username === config.appBasicAuthUsername && password === config.appBasicAuthPassword) {
+    next();
+    return;
+  }
+  res.setHeader("WWW-Authenticate", "Basic realm=\"Trade Screener\"");
+  res.status(401).send("Authentication required.");
+}
 
 async function refreshUniverseIfNeeded() {
   if (await hasCachedDefaultUniverse()) return;

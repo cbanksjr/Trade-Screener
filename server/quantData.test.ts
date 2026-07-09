@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InstitutionalPositioningSummary, ScanResult } from "../shared/types";
-import { applyInstitutionalPositioning } from "./scoring";
+import { applyInstitutionalPositioning, BEARISH_MACRO_GRADE_CAP_REASON } from "./scoring";
 import {
   createQuantDataPositioningProvider,
   normalizeDarkPool,
@@ -320,6 +320,28 @@ describe("QuantData Institutional Positioning", () => {
     expect(result.institutionalPromotionApplied).toBe(true);
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
     expect(result.strongLongCallCandidate).toBe(true);
+    expect(result.flags).toContain("QuantData Grade Promotion");
+  });
+
+  it("allows strong institutional positioning to restore an A setup capped by bearish macro", () => {
+    const macroCappedA: ScanResult = {
+      ...baseResult(95, "B"),
+      gradeCapReasons: [BEARISH_MACRO_GRADE_CAP_REASON],
+      counterTrend: true,
+      flags: ["Counter-Trend"]
+    };
+    const result = applyInstitutionalPositioning(
+      macroCappedA,
+      positioning("confirmed", ["Bullish Flow Confirmation"], { confirmingFactorCount: 3, vetoingFactorCount: 0 })
+    );
+
+    expect(result.gradeBeforeQuantData).toBe("B");
+    expect(result.grade).toBe("A");
+    expect(result.finalGrade).toBe("A");
+    expect(result.institutionalPromotionApplied).toBe(true);
+    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.flags).toContain("Counter-Trend");
     expect(result.flags).toContain("QuantData Grade Promotion");
   });
 

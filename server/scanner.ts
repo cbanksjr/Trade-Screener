@@ -51,6 +51,13 @@ const SECTOR_ETF_BY_GICS: Record<string, string> = {
 };
 let activeScan: Promise<void> | null = null;
 
+export class SettingsValidationError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SettingsValidationError";
+  }
+}
+
 export async function readSettings(): Promise<Settings> {
   const stored = await getSetting<Partial<Settings>>("settings", {});
   const normalizedStored = stored.minAvgDollarVolume === OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME
@@ -77,17 +84,50 @@ export async function readSettings(): Promise<Settings> {
 
 export async function writeSettings(input: Partial<Settings>): Promise<Settings> {
   const current = await readSettings();
+  const validated = validateSettingsInput(input);
   const next: Settings = {
     ...current,
-    minPrice: input.minPrice ?? current.minPrice,
-    minBeta: input.minBeta ?? current.minBeta,
-    minMarketCap: input.minMarketCap ?? current.minMarketCap,
-    minAvgDollarVolume: input.minAvgDollarVolume ?? current.minAvgDollarVolume,
-    useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
-    etfSymbols: input.etfSymbols ? resolveEtfSymbols(input.etfSymbols) : current.etfSymbols
+    minPrice: validated.minPrice ?? current.minPrice,
+    minBeta: validated.minBeta ?? current.minBeta,
+    minMarketCap: validated.minMarketCap ?? current.minMarketCap,
+    minAvgDollarVolume: validated.minAvgDollarVolume ?? current.minAvgDollarVolume,
+    useDemoDataWhenMissingApi: validated.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
+    etfSymbols: validated.etfSymbols ?? current.etfSymbols
   };
   await setSetting("settings", next);
   return readSettings();
+}
+
+function validateSettingsInput(input: Partial<Settings>): Partial<Settings> {
+  const output: Partial<Settings> = {};
+  if ("minPrice" in input) output.minPrice = positiveNumber(input.minPrice, "minPrice", { minExclusive: 0, maxInclusive: 10_000 });
+  if ("minBeta" in input) output.minBeta = positiveNumber(input.minBeta, "minBeta", { minInclusive: 0, maxInclusive: 10 });
+  if ("minMarketCap" in input) output.minMarketCap = positiveNumber(input.minMarketCap, "minMarketCap", { minInclusive: 0, maxInclusive: 10_000_000_000_000 });
+  if ("minAvgDollarVolume" in input) output.minAvgDollarVolume = positiveNumber(input.minAvgDollarVolume, "minAvgDollarVolume", { minInclusive: 0, maxInclusive: 100_000_000_000 });
+  if ("useDemoDataWhenMissingApi" in input) {
+    if (typeof input.useDemoDataWhenMissingApi !== "boolean") throw new SettingsValidationError("useDemoDataWhenMissingApi must be a boolean.");
+    output.useDemoDataWhenMissingApi = input.useDemoDataWhenMissingApi;
+  }
+  if ("etfSymbols" in input) {
+    if (Array.isArray(input.etfSymbols) && input.etfSymbols.every((symbol) => typeof symbol === "string")) {
+      output.etfSymbols = resolveEtfSymbols(input.etfSymbols);
+    } else {
+      throw new SettingsValidationError("etfSymbols must be an array of ticker strings.");
+    }
+  }
+  return output;
+}
+
+function positiveNumber(
+  value: unknown,
+  field: string,
+  bounds: { minExclusive?: number; minInclusive?: number; maxInclusive: number }
+): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new SettingsValidationError(field + " must be a finite number.");
+  if (bounds.minExclusive !== undefined && value <= bounds.minExclusive) throw new SettingsValidationError(field + " must be greater than " + bounds.minExclusive + ".");
+  if (bounds.minInclusive !== undefined && value < bounds.minInclusive) throw new SettingsValidationError(field + " must be at least " + bounds.minInclusive + ".");
+  if (value > bounds.maxInclusive) throw new SettingsValidationError(field + " must be at most " + bounds.maxInclusive + ".");
+  return value;
 }
 
 export async function runScan(): Promise<ScanResponse> {
@@ -389,7 +429,7 @@ async function scanSymbol(input: {
   let candlesSource: "schwab" | "demo" = "demo";
   let optionsSource: "schwab" | "demo" = "demo";
   let quote = input.quote;
-  const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!canUseLiveSchwab || Boolean(demoFundamental(symbol)));
+  const allowDemoFallback = settings.useDemoDataWhenMissingApi && !canUseLiveSchwab;
 
   try {
     if (canUseLiveSchwab && !quote) {
@@ -421,7 +461,7 @@ async function scanSymbol(input: {
     }) : undefined;
     earlyFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (earlyFmp?.usedLive) usedLive = true;
-    let fundamentals = mergeFundamentals(symbol, quote, earlyFmp?.data);
+    let fundamentals = mergeFundamentals(symbol, quote, earlyFmp?.data, { allowDemoFallback });
 
     if (assetType === "stock" && fundamentals.marketCap !== undefined && fundamentals.sources?.marketCap !== "demo" && fundamentals.marketCap < settings.minMarketCap) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.marketCap) + " market cap is below " + formatMoney(settings.minMarketCap) + ".");
@@ -481,7 +521,7 @@ async function scanSymbol(input: {
         ...contextFmp.data,
         nextEarningsDate: input.nextEarningsDate ?? contextFmp.data.nextEarningsDate,
         symbol
-      });
+      }, { allowDemoFallback });
     }
     if (input.nextEarningsDate && fundamentals.sources?.nextEarningsDate !== "fmp") {
       fundamentals = mergeFundamentals(symbol, quote, {
@@ -489,7 +529,7 @@ async function scanSymbol(input: {
         ...(contextFmp?.data ?? {}),
         nextEarningsDate: input.nextEarningsDate,
         symbol
-      });
+      }, { allowDemoFallback });
     }
     fundamentals = withCandleLiquidityFallback(fundamentals, candles);
 
@@ -531,7 +571,7 @@ async function scanSymbol(input: {
           ...(contextFmp?.data ?? {}),
           nextEarningsDate: verifiedDate,
           symbol
-        });
+        }, { allowDemoFallback });
         fundamentals = withCandleLiquidityFallback(fundamentals, candles);
         result = buildResult(fundamentals);
       }
@@ -658,10 +698,13 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const capA = (result.institutionalFactors ?? []).some(
     (item) => (item.name === "Sector Strength" || item.name === "Catalyst Safety") && item.status === "Insufficient Data"
   );
+  const bearishMacro = result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
   let scoreGrade = gradeFromSetupScore(setupScore);
-  if (capA && scoreGrade === "A") scoreGrade = "B";
-  const grade = result.institutionalPromotionApplied && result.finalGrade === "A" ? "A" : scoreGrade;
+  if ((capA || bearishMacro) && scoreGrade === "A") scoreGrade = "B";
+  const promotedByQuantData = result.institutionalPromotionApplied && result.finalGrade === "A";
+  const grade = promotedByQuantData ? "A" : scoreGrade;
   const gradeCapReasons = mergeCachedGradeCapReasons(result, setupScore, dailyEntryQualificationMode, squeezeMaturityMode, missingDailyEmaStack);
+  if (promotedByQuantData) removeItem(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
   const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore);
   const tradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const longCallDecision = cachedCompatibilityDecision(grade, tradeMark);
@@ -753,18 +796,20 @@ function mergeCachedGradeCapReasons(
 ): string[] {
   const reasons = removeWeeklyCachedGradeReasons(result.gradeCapReasons ?? cachedGradeCapReasons(result, setupScore))
     .filter((reason) => reason !== RELAXED_TREND_GRADE_CAP_REASON || missingDailyEmaStack)
-    .filter((reason) => reason !== BEARISH_MACRO_GRADE_CAP_REASON && reason !== "Options Market Context is neutral.");
+    .filter((reason) => reason !== "Options Market Context is neutral.");
   if (dailyEntryQualificationMode === "extended" && !reasons.includes(EXTENDED_ENTRY_GRADE_CAP_REASON)) reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing" && !reasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (hasRelaxedMarketStructure(result) && missingDailyEmaStack && !reasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
+  if (result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") && !reasons.includes(BEARISH_MACRO_GRADE_CAP_REASON)) reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   return reasons;
 }
 
 function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], setupScore: number): string[] {
-  const reasons = (result.tradeMarkReasons ?? []).filter((reason) => reason !== "Institutional Edge is bearish." && reason !== BEARISH_MACRO_GRADE_CAP_REASON);
+  const reasons = (result.tradeMarkReasons ?? []).filter((reason) => reason !== "Institutional Edge is bearish.");
   if (grade === "C" || setupScore < B_SETUP_SCORE_THRESHOLD) addUnique(reasons, "Setup grade is C.");
   if (result.institutionalPositioningStatus === "capped") addUnique(reasons, "Institutional positioning is not supportive.");
   if (result.institutionalPositioningStatus === "vetoed") addUnique(reasons, "Bearish Flow Veto");
+  removeItem(reasons, BEARISH_MACRO_GRADE_CAP_REASON);
   result.layerEvaluations?.filter((item) => (item.layer === "Squeeze Market Structure" || item.layer === "Compression Quality") && item.status === "Bearish")
     .forEach((item) => addUnique(reasons, item.detail));
   result.layerEvaluations?.filter((item) => item.layer === "Options Market Context" && item.status === "Bearish")
@@ -791,6 +836,11 @@ function removeWeeklyCachedGradeReasons(reasons: string[]): string[] {
 
 function addUnique(items: string[], value: string): void {
   if (!items.includes(value)) items.push(value);
+}
+
+function removeItem(items: string[], value: string): void {
+  const index = items.indexOf(value);
+  if (index >= 0) items.splice(index, 1);
 }
 
 function hasRelaxedMarketStructure(result: Pick<ScanResult, "layerEvaluations">): boolean {
@@ -893,8 +943,8 @@ async function loadSectorHistories(warnings: Set<string>): Promise<Map<string, C
   return output;
 }
 
-export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: FmpFundamentals): Fundamentals {
-  const demo = demoFundamental(symbol);
+export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: FmpFundamentals, options: { allowDemoFallback?: boolean } = {}): Fundamentals {
+  const demo = options.allowDemoFallback === false ? undefined : demoFundamental(symbol);
   const sources: FundamentalFieldSources = {};
   const beta = valueWithSource(quote?.beta, "schwab", fmp?.beta, "fmp", demo?.beta, "demo", sources, "beta");
   const marketCap = valueWithSource(quote?.marketCap, "schwab", fmp?.marketCap, "fmp", demo?.marketCap, "demo", sources, "marketCap");

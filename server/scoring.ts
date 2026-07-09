@@ -44,7 +44,7 @@ export const DEVELOPING_SQUEEZE_GRADE_CAP_REASON = "Daily squeeze has 2-4 active
 export const EXTENDED_ENTRY_GRADE_CAP_REASON = "Daily price is above the preferred entry zone but remains within 1.5 ATR of the 21 EMA.";
 export const RELAXED_TREND_GRADE_CAP_REASON = "Daily fast trend qualifies, but the full 8/21/34/55/89 EMA stack is not present; Daily Structure contributes fewer setup points.";
 export const RELAXED_WEEKLY_GRADE_CAP_REASON = "Weekly chart is context only and no longer caps the setup grade.";
-export const BEARISH_MACRO_GRADE_CAP_REASON = "SPY or QQQ has a bearish Daily EMA structure; trade should be avoided until macro improves.";
+export const BEARISH_MACRO_GRADE_CAP_REASON = "SPY or QQQ has a bearish Daily EMA structure; A setups are capped until macro improves.";
 const EARNINGS_AVOID_DAYS = 14;
 const EARNINGS_NEUTRAL_DAYS = 29;
 const MAX_OPTION_SPREAD_PCT = 15;
@@ -144,7 +144,7 @@ export function gradeSetup(input: {
   });
   const weeklyQualificationMode = weeklyContext.weeklyQualificationMode ?? "none";
   let scoreGrade = gradeFromSetupScore(setupScore.score);
-  if (setupScore.capA && scoreGrade === "A") scoreGrade = "B";
+  if ((setupScore.capA || macro.status === "Bearish") && scoreGrade === "A") scoreGrade = "B";
   const grade = scoreGrade;
   const gradeCapReasons = gradeCapReasonsFor(layerEvaluations, dailyContext, dailyEntryQualificationMode, squeezeMaturityMode, setupScore);
   const tradeMarkReasons = tradeMarkReasonsFor({
@@ -270,7 +270,10 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
     && positioning.vetoingFactorCount === 0
     && positioning.confirmingFactorCount >= GRADE_PROMOTION_MIN_CONFIRMATIONS;
   const finalGrade: Grade = promoted ? "A" : gradeBeforeQuantData;
-  if (promoted) addUnique(flags, "QuantData Grade Promotion");
+  if (promoted) {
+    addUnique(flags, "QuantData Grade Promotion");
+    removeItem(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
+  }
   const longCallDecision = compatibilityDecision(finalGrade, tradeMark);
   const strongLongCallCandidate = longCallDecision === "Strong Long Call Candidate";
 
@@ -311,15 +314,27 @@ export function applyMacroRegimeModifier(result: ScanResult, macro: MacroRegimeC
   const { modifier, counterTrend } = resolveMacroModifier(result.setupDirection, macro.effectiveRegime);
   const finalScore = clampScore(round(result.setupScore * modifier, 0));
   const flags = counterTrend ? unique([...(result.flags ?? []), "Counter-Trend"]) : (result.flags ?? []);
+  const gradeCapReasons = [...(result.gradeCapReasons ?? [])];
+  if (counterTrend) addUnique(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
+  else removeItem(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
+  const grade: Grade = counterTrend && result.grade === "A" ? "B" : result.grade;
+  const tradeMark = result.tradeMark ?? "Take";
+  const longCallDecision = compatibilityDecision(grade, tradeMark);
 
   return {
     ...result,
+    grade,
     macroRegimeQqq: macro.qqq.regime,
     macroRegimeSpy: macro.spy.regime,
     effectiveMacroRegime: macro.effectiveRegime,
     counterTrend,
     macroModifierApplied: modifier,
     finalScore,
+    longCallDecision,
+    setupQuality: grade === "A" ? "High" : "Moderate",
+    strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
+    entryRecommendationType: entryType(longCallDecision, result.compressionQualityStatus),
+    gradeCapReasons,
     macroRegimeSummary: macro.detail,
     flags
   };
@@ -506,6 +521,7 @@ function gradeCapReasonsFor(
   if (dailyEntryQualificationMode === "extended") reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing") reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (layer("Squeeze Market Structure")?.status === "Neutral" && !dailyContext.positiveEmaStack) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
+  if (layer("Macro Regime")?.status === "Bearish") reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");
   return removeWeeklyGradeReasons(reasons);

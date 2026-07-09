@@ -63,6 +63,7 @@ Recommended Supabase + Render setup:
   - `SCHWAB_CALLBACK_URL=https://trade-screener-auyv.onrender.com/api/schwab/callback`
   - `SCHWAB_APP_KEY` and `SCHWAB_APP_SECRET`
   - `FMP_API_KEY`
+  - Optional private access gate: `APP_BASIC_AUTH_USERNAME` and `APP_BASIC_AUTH_PASSWORD`
 
 Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB_CALLBACK_URL`. Render provides public HTTPS, so the app disables its local self-signed HTTPS server in production.
 
