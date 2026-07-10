@@ -403,7 +403,7 @@ function FocusPanel({ result, theme, isWatchlisted, watchlistBusy, onToggleWatch
       <section className="chart-section">
         <div className="section-heading compact">
           <div><span>Price structure</span><h3>Daily candlestick chart</h3></div>
-          <div className="chart-legend"><span><i className="ema-color" />8 EMA</span><span><i className="entry-color" />Entry</span><span><i className="risk-color" />Stop</span></div>
+          <div className="chart-legend"><span><i className="ema-color" />8 EMA</span><span><i className="ema21-color" />21 EMA</span><span><i className="entry-color" />Entry</span><span><i className="risk-color" />Stop</span></div>
         </div>
         <CandlestickChart candles={result.candles} entryArea={result.suggestedEntryArea} stopPrice={result.stockStopPrice} target1={result.target1} target2={result.target2} symbol={result.symbol} theme={theme} />
       </section>

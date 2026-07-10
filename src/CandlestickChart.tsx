@@ -99,14 +99,23 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
       close: candle.close,
     })) as CandlestickData<Time>[]);
 
-    const ema = chart.addSeries(LineSeries, {
+    const ema8 = chart.addSeries(LineSeries, {
       color: dark ? "#62a7ff" : "#2563eb",
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    ema.setData(emaSeries(visibleCandles, 8));
+    ema8.setData(emaSeries(visibleCandles, 8));
+
+    const ema21 = chart.addSeries(LineSeries, {
+      color: dark ? "#fbbf24" : "#d97706",
+      lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    ema21.setData(emaSeries(visibleCandles, 21));
 
     const entry = parseEntryPrice(entryArea);
     if (entry !== null) candleSeries.createPriceLine({ price: entry, color: dark ? "#49d7c2" : "#0f8d7d", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" });
@@ -122,5 +131,5 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     return <div className="chart-empty">Price history is unavailable for this setup.</div>;
   }
 
-  return <div className="candlestick-chart" ref={containerRef} role="img" aria-label={`${symbol} daily candlestick chart with EMA and trade levels`} />;
+  return <div className="candlestick-chart" ref={containerRef} role="img" aria-label={`${symbol} daily candlestick chart with 8 EMA, 21 EMA, and trade levels`} />;
 }
