@@ -4,7 +4,8 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import type { SchwabQuote } from "./schwab";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
@@ -894,6 +895,61 @@ async function withDbRestore(run: () => Promise<void>) {
 async function settleBackgroundScan() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
+
+describe("live price overlay", () => {
+  const quote = (symbol: string, price: number): SchwabQuote => ({ symbol, price });
+
+  it("replaces the frozen scan-time price with the fresh live quote", async () => {
+    __clearLivePriceCacheForTest();
+    const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
+    const overlaid = await overlayLiveQuotePrices(results, {
+      isLive: async () => true,
+      fetchQuotesFor: async (symbols) => new Map(symbols.map((s) => [s, quote(s, 142.27)])),
+      now: () => 1_000
+    });
+    expect(overlaid[0].price).toBe(142.27);
+    // Setup levels are untouched — only the live price changes.
+    expect(overlaid[0].target1).toBe(qualifyingResult("AAPL").target1);
+  });
+
+  it("is a no-op when live Schwab is unavailable", async () => {
+    __clearLivePriceCacheForTest();
+    let fetched = false;
+    const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
+    const overlaid = await overlayLiveQuotePrices(results, {
+      isLive: async () => false,
+      fetchQuotesFor: async (symbols) => { fetched = true; return new Map(symbols.map((s) => [s, quote(s, 999)])); },
+      now: () => 1_000
+    });
+    expect(fetched).toBe(false);
+    expect(overlaid[0].price).toBe(100);
+  });
+
+  it("reuses the cached quote within the TTL window and re-quotes after it lapses", async () => {
+    __clearLivePriceCacheForTest();
+    let calls = 0;
+    const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
+    const deps = (price: number, now: number) => ({
+      isLive: async () => true,
+      fetchQuotesFor: async (symbols: string[]) => { calls += 1; return new Map(symbols.map((s) => [s, quote(s, price)])); },
+      now: () => now
+    });
+
+    const first = await overlayLiveQuotePrices(results, deps(142.27, 0));
+    expect(first[0].price).toBe(142.27);
+    expect(calls).toBe(1);
+
+    // Within the 60s TTL: cache is reused, no second fetch, price unchanged.
+    const second = await overlayLiveQuotePrices(results, deps(150, 30_000));
+    expect(second[0].price).toBe(142.27);
+    expect(calls).toBe(1);
+
+    // After the TTL lapses: re-quote and pick up the new price.
+    const third = await overlayLiveQuotePrices(results, deps(150, 61_000));
+    expect(third[0].price).toBe(150);
+    expect(calls).toBe(2);
+  });
+});
 
 async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[], evaluatedResults: ScanResult[] = results): Promise<ScanResponse> {
   return {

@@ -162,7 +162,7 @@ export async function readCachedScanResponse(): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
   return {
     mode: metadata.lastScanMode ?? "demo",
-    results: await readDisplayResults(),
+    results: await overlayLiveQuotePrices(await readDisplayResults()),
     settings: await readSettings(),
     warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
     ...metadata,
@@ -365,11 +365,74 @@ export async function readDisplayResults(): Promise<ScanResult[]> {
 
 export async function readWatchlist(): Promise<WatchlistEntry[]> {
   const entries = await getWatchlistEntries();
-  return entries.map((entry) => ({
+  const results = await overlayLiveQuotePrices(
+    entries.map((entry) => normalizeCachedResult(entry.payload as ScanResult))
+  );
+  return entries.map((entry, index) => ({
     symbol: entry.symbol,
     addedAt: entry.addedAt,
-    result: normalizeCachedResult(entry.payload as ScanResult)
+    result: results[index]
   }));
+}
+
+// `ScanResult.price` is frozen when a scan runs and persisted, but a full scan only
+// happens ~once a weekday plus opportunistic refreshes. Between scans the stored price
+// goes stale relative to the broker's live last price. This overlay re-quotes the
+// displayed symbols on the read/refresh path so the number shown tracks the current
+// Schwab quote. Setup levels (entry/target/stop) are intentionally left untouched — they
+// are the levels the setup earned, not the live price.
+type LivePriceCacheEntry = { price: number; at: number };
+const livePriceCache = new Map<string, LivePriceCacheEntry>();
+
+export function __clearLivePriceCacheForTest(): void {
+  livePriceCache.clear();
+}
+
+async function isLiveSchwabAvailable(): Promise<boolean> {
+  return hasSchwabCredentials() && (await hasSchwabTokens());
+}
+
+export async function overlayLiveQuotePrices(
+  results: ScanResult[],
+  deps: {
+    isLive?: () => Promise<boolean>;
+    fetchQuotesFor?: (symbols: string[]) => Promise<Map<string, SchwabQuote>>;
+    now?: () => number;
+  } = {}
+): Promise<ScanResult[]> {
+  if (!results.length) return results;
+  const isLive = deps.isLive ?? isLiveSchwabAvailable;
+  if (!(await isLive())) return results;
+
+  const fetchQuotesFor = deps.fetchQuotesFor ?? fetchQuotes;
+  const now = deps.now ?? Date.now;
+  const ttlMs = Math.max(0, config.livePriceOverlayTtlSeconds * 1000);
+  const currentTime = now();
+
+  const symbols = [...new Set(results.map((result) => result.symbol))];
+  const staleSymbols = symbols.filter((symbol) => {
+    const entry = livePriceCache.get(symbol);
+    return !entry || currentTime - entry.at >= ttlMs;
+  });
+
+  if (staleSymbols.length) {
+    try {
+      const quotes = await fetchQuotesFor(staleSymbols);
+      for (const symbol of staleSymbols) {
+        const price = quotes.get(symbol)?.price;
+        if (typeof price === "number" && price > 0) {
+          livePriceCache.set(symbol, { price, at: currentTime });
+        }
+      }
+    } catch {
+      // Leave prices as-is (cached or scan-time) rather than breaking the dashboard.
+    }
+  }
+
+  return results.map((result) => {
+    const entry = livePriceCache.get(result.symbol);
+    return entry ? { ...result, price: entry.price } : result;
+  });
 }
 
 export async function removeFromWatchlist(symbol: string): Promise<void> {
