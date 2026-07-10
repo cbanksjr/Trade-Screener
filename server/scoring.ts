@@ -245,10 +245,8 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   };
 }
 
-const GRADE_PROMOTION_MIN_CONFIRMATIONS = 3;
-
 export function applyInstitutionalPositioning(result: ScanResult, positioning: InstitutionalPositioningSummary): ScanResult {
-  const flags = unique([...(result.flags ?? []), ...positioning.flags]);
+  const flags = unique([...(result.flags ?? []).filter((flag) => flag !== "QuantData Grade Promotion"), ...positioning.flags]);
   const gradeCapReasons = removeWeeklyGradeReasons(result.gradeCapReasons ?? []);
   const tradeMarkReasons = [...(result.tradeMarkReasons ?? [])];
 
@@ -263,17 +261,9 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
 
   const tradeMark: TradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const gradeBeforeQuantData = result.grade;
-  // Promotion only ever raises a technical B to an A, on multi-factor QuantData confluence,
-  // and never fires on a setup the technical gate already rejected (tradeMark === "Avoid").
-  const promoted = tradeMark === "Take"
-    && gradeBeforeQuantData === "B"
-    && positioning.vetoingFactorCount === 0
-    && positioning.confirmingFactorCount >= GRADE_PROMOTION_MIN_CONFIRMATIONS;
-  const finalGrade: Grade = promoted ? "A" : gradeBeforeQuantData;
-  if (promoted) {
-    addUnique(flags, "QuantData Grade Promotion");
-    removeItem(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
-  }
+  // Institutional positioning is an execution overlay only. It can confirm,
+  // caution, or veto through Take/Avoid, but never changes the technical grade.
+  const finalGrade: Grade = gradeBeforeQuantData;
   const longCallDecision = compatibilityDecision(finalGrade, tradeMark);
   const strongLongCallCandidate = longCallDecision === "Strong Long Call Candidate";
 
@@ -282,7 +272,7 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
     grade: finalGrade,
     gradeBeforeQuantData,
     finalGrade,
-    institutionalPromotionApplied: promoted,
+    institutionalPromotionApplied: false,
     tradeMark,
     tradeMarkReasons,
     longCallDecision,

@@ -1,4 +1,5 @@
 import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import { AUTO_REFRESH_INTERVAL_MS } from "../shared/refreshSchedule";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { resolveEtfSymbols } from "./etfUniverse";
@@ -32,8 +33,9 @@ import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, rem
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
 
-const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
+const MAX_STORED_SCAN_WARNINGS = 50;
+const CATASTROPHIC_FAILURE_RATIO = 0.8;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
 type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
@@ -137,15 +139,21 @@ export async function runScan(): Promise<ScanResponse> {
 export async function startScanRefresh(scanRunner: () => Promise<ScanResponse> = runFullScan): Promise<ScanResponse> {
   if (!activeScan) {
     const startedAt = new Date().toISOString();
-    await setScanMetadata({
-      ...await readScanMetadata(),
+    const initialized = readScanMetadata().then((metadata) => setScanMetadata({
+      ...metadata,
       scanStatus: "running",
       lastScanStartedAt: startedAt,
       isRefreshing: true
-    });
-    activeScan = executeScanRefresh(scanRunner, startedAt).finally(() => {
+    }));
+    // Claim the in-process lock before awaiting persistence so simultaneous
+    // browser and cron triggers cannot start duplicate full-universe scans.
+    activeScan = initialized
+      .then(() => executeScanRefresh(scanRunner, startedAt))
+      .catch(() => undefined)
+      .finally(() => {
       activeScan = null;
     });
+    await initialized;
   }
   return readCachedScanResponse();
 }
@@ -169,6 +177,7 @@ export async function readScanMetadata(): Promise<ScanMetadata> {
     scanStatus: stored.scanStatus ?? "idle",
     lastScanStartedAt: stored.lastScanStartedAt,
     lastScanFinishedAt: stored.lastScanFinishedAt,
+    lastScanFailedAt: stored.lastScanFailedAt,
     lastScanMode: stored.lastScanMode,
     lastScanWarnings: (stored.lastScanWarnings ?? []).filter(shouldShowWarning),
     scanDiagnostics: stored.scanDiagnostics,
@@ -198,7 +207,12 @@ export async function shouldAutoRefresh(): Promise<boolean> {
 export async function runFullScan(): Promise<ScanResponse> {
   const scanRanAt = new Date();
   const settings = await readSettings();
+  const previousResults = await readDisplayResults();
+  const previousBySymbol = new Map(previousResults.map((result) => [result.symbol, result]));
+  const watchlistEntries = await readWatchlist();
+  const watchlistBySymbol = new Map(watchlistEntries.map((entry) => [entry.symbol, entry]));
   const results: ScanResult[] = [];
+  const evaluatedResults: ScanResult[] = [];
   const scanWarnings = new Set<string>();
   let usedLive = false;
   let usedDemo = false;
@@ -268,15 +282,23 @@ export async function runFullScan(): Promise<ScanResponse> {
   for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
-    if (outcome.result) evaluatedSymbols.add(outcome.result.symbol);
-    if (outcome.result && shouldIncludeResult(outcome.result)) {
-      let result = applyMacroRegimeModifier(outcome.result, macroRegime);
+    if (outcome.result) {
+      evaluatedSymbols.add(outcome.result.symbol);
+      const previous = previousBySymbol.get(outcome.result.symbol);
+      const watchlistEntry = watchlistBySymbol.get(outcome.result.symbol);
+      const wasTracked = Boolean(previous || watchlistEntry);
+      const keepTrackedUntilFire = wasTracked && isActiveTrackedSqueeze(outcome.result);
+      const newlyDiscovered = shouldIncludeResult(outcome.result);
+      let result = outcome.result;
+      if (newlyDiscovered || keepTrackedUntilFire) result = applyMacroRegimeModifier(result, macroRegime);
       if (fmpInstitutionalEdge) {
-        const edge = await fmpInstitutionalEdge.enrich(result.symbol, result.assetType, result.price);
-        if (edge.usedLive) usedLive = true;
-        result = applyInstitutionalEdge(result, edge.edge);
+        if (newlyDiscovered || keepTrackedUntilFire) {
+          const edge = await fmpInstitutionalEdge.enrich(result.symbol, result.assetType, result.price);
+          if (edge.usedLive) usedLive = true;
+          result = applyInstitutionalEdge(result, edge.edge);
+        }
       }
-      if (quantDataPositioning) {
+      if (quantDataPositioning && (newlyDiscovered || keepTrackedUntilFire)) {
         const compressionActive = result.layerEvaluations.some((item) => item.layer === "Compression Quality" && item.status !== "Bearish");
         const positioning = await quantDataPositioning.enrich(result.symbol, result.price, {
           compressionActive,
@@ -287,12 +309,25 @@ export async function runFullScan(): Promise<ScanResponse> {
         positioning.warnings.forEach((warning) => scanWarnings.add(warning));
         result = applyInstitutionalPositioning(result, positioning.positioning);
       }
-      if (shouldIncludeResult(result)) results.push(result);
+      if (newlyDiscovered || keepTrackedUntilFire) {
+        result = withSqueezeLifecycle(result, previous?.firstDetectedAt ?? watchlistEntry?.result.firstDetectedAt ?? previous?.lastUpdated ?? watchlistEntry?.addedAt ?? scanRanAt.toISOString());
+      }
+      evaluatedResults.push(result);
+      if (shouldIncludeResult(result) || keepTrackedUntilFire) results.push(result);
       else diagnostics.skipped[classifyFilteredResult(result)] += 1;
-    } else if (outcome.result) diagnostics.skipped[classifyFilteredResult(outcome.result)] += 1;
-    else if (!outcome.skipReason) diagnostics.skipped.other += 1;
+    } else if (!outcome.skipReason) diagnostics.skipped.other += 1;
     if (outcome.usedLive) usedLive = true;
     if (outcome.usedDemo) usedDemo = true;
+  }
+
+  const resultSymbols = new Set(results.map((result) => result.symbol));
+  const scannedSymbols = new Set(symbolsToScan);
+  for (const previous of previousResults) {
+    if (!scannedSymbols.has(previous.symbol) || evaluatedSymbols.has(previous.symbol) || resultSymbols.has(previous.symbol)) continue;
+    // A provider/data gap cannot prove that a tracked squeeze fired. Keep the
+    // last known active payload until a later scan evaluates its squeeze state.
+    results.push(previous);
+    resultSymbols.add(previous.symbol);
   }
   diagnostics.qualifiedResults = results.length;
 
@@ -312,7 +347,8 @@ export async function runFullScan(): Promise<ScanResponse> {
     settings,
     warnings: [...scanWarnings].filter(shouldShowWarning),
     scanDiagnostics: diagnostics,
-    evaluatedSymbols: [...evaluatedSymbols]
+    evaluatedSymbols: [...evaluatedSymbols],
+    evaluatedResults
   });
 }
 
@@ -347,27 +383,21 @@ export async function addToWatchlist(symbol: string): Promise<void> {
   await upsertWatchlistEntry(symbol, match);
 }
 
-async function syncWatchlistWithLatestResults(evaluatedSymbols?: string[]): Promise<void> {
+async function syncWatchlistWithLatestResults(evaluatedResults: ScanResult[] = []): Promise<void> {
   const entries = await getWatchlistEntries();
   if (!entries.length) return;
-  const results = await readDisplayResults();
-  const resultBySymbol = new Map(results.map((result) => [result.symbol, result]));
-  const evaluated = new Set(evaluatedSymbols ?? []);
+  const resultBySymbol = new Map(evaluatedResults.map((result) => [result.symbol, result]));
   for (const entry of entries) {
     const match = resultBySymbol.get(entry.symbol);
-    if (match) {
-      if (isTakeResult(match)) await upsertWatchlistEntry(entry.symbol, match);
-      else await removeWatchlistEntry(entry.symbol);
-    } else if (evaluated.has(entry.symbol)) {
-      // Fully evaluated this run but didn't make the results — a genuine disqualification, not a data gap.
+    if (!match) continue;
+    if (isActiveTrackedSqueeze(match)) {
+      const previous = entry.payload as ScanResult;
+      await upsertWatchlistEntry(entry.symbol, withSqueezeLifecycle(match, previous.firstDetectedAt ?? entry.addedAt));
+    } else {
+      // Only a confirmed squeeze release/end or a manual action removes a saved setup.
       await removeWatchlistEntry(entry.symbol);
     }
   }
-}
-
-function isTakeResult(result: ScanResult): boolean {
-  if (result.tradeMark) return result.tradeMark === "Take";
-  return result.longCallDecision !== "Avoid" && result.longCallDecision !== "Watchlist Candidate";
 }
 
 export async function __resetScanStateForTest() {
@@ -378,17 +408,20 @@ export async function __resetScanStateForTest() {
 async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, startedAt: string): Promise<void> {
   try {
     const response = await scanRunner();
+    const catastrophicReason = catastrophicScanReason(response);
+    if (catastrophicReason) throw new Error(catastrophicReason);
     await replaceScanResults(response.results);
-    await syncWatchlistWithLatestResults(response.evaluatedSymbols);
+    await syncWatchlistWithLatestResults(response.evaluatedResults);
     const finishedAt = new Date().toISOString();
     await setScanMetadata({
       scanStatus: "complete",
       lastScanStartedAt: startedAt,
       lastScanFinishedAt: finishedAt,
+      lastScanFailedAt: undefined,
       lastScanMode: response.mode,
-      lastScanWarnings: response.warnings,
+      lastScanWarnings: compactScanWarnings(response.warnings),
       scanDiagnostics: response.scanDiagnostics,
-      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
+      nextRefreshAt: new Date(new Date(startedAt).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
       isRefreshing: false
     });
   } catch (error) {
@@ -397,9 +430,9 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
       ...await readScanMetadata(),
       scanStatus: "failed",
       lastScanStartedAt: startedAt,
-      lastScanFinishedAt: finishedAt,
+      lastScanFailedAt: finishedAt,
       lastScanWarnings: [readError(error, "Scan failed.")].filter(shouldShowWarning),
-      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
+      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
       isRefreshing: false
     });
   }
@@ -618,21 +651,39 @@ async function scanSymbol(input: {
 }
 
 function shouldIncludeResult(result: ScanResult): boolean {
-  return result.passesUniverse
-    && result.setupDirection === "long"
-    && result.indicators.momentum > 0
-    && dailySqueezeCriteriaPass(result)
+  if (result.setupDirection !== "long" || !isActiveTrackedSqueeze(result)) return false;
+  if (result.squeezeLifecycleStatus) return true;
+  if (!result.passesUniverse) return false;
+  const dotCount = result.dailySqueezeDotCount ?? 0;
+  // Five active dots establish a trackable squeeze setup. Momentum, entry
+  // location, setup score, and institutional context still determine grade and
+  // Take/Avoid, but no longer hide the setup before it fires.
+  if (dotCount >= 5) return true;
+  return result.indicators.momentum > 0
+    && !hasBearishCompression(result)
     && result.dailyEntryQualificationMode !== "none"
     && (result.grade === "A" || result.grade === "B");
 }
 
-function dailySqueezeCriteriaPass(result: ScanResult): boolean {
+export function isActiveTrackedSqueeze(result: ScanResult): boolean {
   const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
   if (!isSqueezeActive(daily?.squeezeState === "unavailable" ? undefined : daily?.squeezeState)) return false;
   if (result.squeezeMaturityMode === "insufficient") return false;
   if (typeof result.dailySqueezeDotCount === "number" && result.dailySqueezeDotCount < 2) return false;
-  if (result.layerEvaluations?.some((item) => item.layer === "Compression Quality" && item.status === "Bearish")) return false;
   return true;
+}
+
+function hasBearishCompression(result: ScanResult): boolean {
+  return result.layerEvaluations?.some((item) => item.layer === "Compression Quality" && item.status === "Bearish") ?? false;
+}
+
+function withSqueezeLifecycle(result: ScanResult, firstDetectedAt: string): ScanResult {
+  const dotCount = result.dailySqueezeDotCount ?? 0;
+  return {
+    ...result,
+    squeezeLifecycleStatus: dotCount >= 5 ? "ready" : "developing",
+    firstDetectedAt: result.firstDetectedAt ?? firstDetectedAt
+  };
 }
 
 function hasBearishOrUnavailableWeeklyContext(result: ScanResult): boolean {
@@ -701,10 +752,8 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const bearishMacro = result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
   let scoreGrade = gradeFromSetupScore(setupScore);
   if ((capA || bearishMacro) && scoreGrade === "A") scoreGrade = "B";
-  const promotedByQuantData = result.institutionalPromotionApplied && result.finalGrade === "A";
-  const grade = promotedByQuantData ? "A" : scoreGrade;
+  const grade = scoreGrade;
   const gradeCapReasons = mergeCachedGradeCapReasons(result, setupScore, dailyEntryQualificationMode, squeezeMaturityMode, missingDailyEmaStack);
-  if (promotedByQuantData) removeItem(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
   const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore);
   const tradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const longCallDecision = cachedCompatibilityDecision(grade, tradeMark);
@@ -726,11 +775,20 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     dailyEntryQualificationMode,
     weeklyQualificationMode,
     squeezeMaturityMode,
+    squeezeLifecycleStatus: dotCount !== undefined && dotCount >= 2 && isCachedDailySqueezeActive(result)
+      ? result.squeezeLifecycleStatus ?? (dotCount >= 5 ? "ready" : "developing")
+      : undefined,
+    firstDetectedAt: dotCount !== undefined && dotCount >= 2 && isCachedDailySqueezeActive(result)
+      ? result.firstDetectedAt ?? result.lastUpdated
+      : result.firstDetectedAt,
     tradeMark,
     tradeMarkReasons,
     gradeCapReasons,
     strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
-    flags: result.flags ?? [],
+    flags: (result.flags ?? []).filter((flag) => flag !== "QuantData Grade Promotion"),
+    gradeBeforeQuantData: result.institutionalPositioningStatus ? grade : result.gradeBeforeQuantData,
+    finalGrade: result.institutionalPositioningStatus ? grade : result.finalGrade,
+    institutionalPromotionApplied: false,
     finalScore: typeof result.finalScore === "number" ? result.finalScore : setupScore,
     macroModifierApplied: typeof result.macroModifierApplied === "number" ? result.macroModifierApplied : 1,
     counterTrend: result.counterTrend ?? false,
@@ -852,6 +910,11 @@ function hasMissingCachedDailyEmaStack(result: Pick<ScanResult, "squeezeStatusBy
   return daily?.positiveEmaStack === false;
 }
 
+function isCachedDailySqueezeActive(result: Pick<ScanResult, "squeezeStatusByTimeframe">): boolean {
+  const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
+  return isSqueezeActive(daily?.squeezeState === "unavailable" ? undefined : daily?.squeezeState);
+}
+
 function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {
   if (typeof result.dailySqueezeDotCount === "number") return result.dailySqueezeDotCount;
   if (!result.candles?.length) return undefined;
@@ -875,13 +938,13 @@ function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>
   }
 }
 
-async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics; evaluatedSymbols?: string[] }): Promise<ScanResponse> {
+async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics; evaluatedSymbols?: string[]; evaluatedResults?: ScanResult[] }): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
   return mergeScanResponseMetadata(input, metadata, Boolean(activeScan));
 }
 
 export function mergeScanResponseMetadata(
-  input: Pick<ScanResponse, "mode" | "results" | "settings" | "warnings" | "scanDiagnostics" | "evaluatedSymbols">,
+  input: Pick<ScanResponse, "mode" | "results" | "settings" | "warnings" | "scanDiagnostics" | "evaluatedSymbols" | "evaluatedResults">,
   metadata: ScanMetadata,
   isRefreshing: boolean
 ): ScanResponse {
@@ -891,6 +954,21 @@ export function mergeScanResponseMetadata(
     scanStatus: isRefreshing ? "running" : metadata.scanStatus,
     isRefreshing
   };
+}
+
+export function catastrophicScanReason(response: Pick<ScanResponse, "scanDiagnostics">): string | undefined {
+  const diagnostics = response.scanDiagnostics;
+  if (!diagnostics || diagnostics.scannedSymbols <= 0) return undefined;
+  const providerFailures = diagnostics.skipped.quoteMissing + diagnostics.skipped.candleHistory;
+  if (providerFailures / diagnostics.scannedSymbols < CATASTROPHIC_FAILURE_RATIO) return undefined;
+  return "Scan failed safely: market-data providers could not fully evaluate " + providerFailures + " of " + diagnostics.scannedSymbols + " symbols. Previous results and watchlist entries were preserved.";
+}
+
+function compactScanWarnings(warnings: string[]): string[] {
+  if (warnings.length <= MAX_STORED_SCAN_WARNINGS) return warnings;
+  const visible = warnings.slice(0, MAX_STORED_SCAN_WARNINGS - 1);
+  visible.push((warnings.length - visible.length) + " additional scan warnings were omitted from persisted metadata.");
+  return visible;
 }
 
 function readError(error: unknown, fallback: string): string {

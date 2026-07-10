@@ -308,22 +308,22 @@ describe("QuantData Institutional Positioning", () => {
     expect(result.institutionalPromotionApplied).toBe(false);
   });
 
-  it("promotes a clean high-B setup to A on multi-factor QuantData confluence", () => {
+  it("keeps a clean high-B setup at B even with strong institutional confluence", () => {
     const result = applyInstitutionalPositioning(
       baseResult(88, "B"),
       positioning("confirmed", ["Bullish Flow Confirmation"], { confirmingFactorCount: 3, vetoingFactorCount: 0 })
     );
 
     expect(result.gradeBeforeQuantData).toBe("B");
-    expect(result.grade).toBe("A");
-    expect(result.finalGrade).toBe("A");
-    expect(result.institutionalPromotionApplied).toBe(true);
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(result.strongLongCallCandidate).toBe(true);
-    expect(result.flags).toContain("QuantData Grade Promotion");
+    expect(result.grade).toBe("B");
+    expect(result.finalGrade).toBe("B");
+    expect(result.institutionalPromotionApplied).toBe(false);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.strongLongCallCandidate).toBe(false);
+    expect(result.flags).not.toContain("QuantData Grade Promotion");
   });
 
-  it("allows strong institutional positioning to restore an A setup capped by bearish macro", () => {
+  it("does not let strong institutional positioning override a bearish-macro grade cap", () => {
     const macroCappedA: ScanResult = {
       ...baseResult(95, "B"),
       gradeCapReasons: [BEARISH_MACRO_GRADE_CAP_REASON],
@@ -336,13 +336,13 @@ describe("QuantData Institutional Positioning", () => {
     );
 
     expect(result.gradeBeforeQuantData).toBe("B");
-    expect(result.grade).toBe("A");
-    expect(result.finalGrade).toBe("A");
-    expect(result.institutionalPromotionApplied).toBe(true);
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.grade).toBe("B");
+    expect(result.finalGrade).toBe("B");
+    expect(result.institutionalPromotionApplied).toBe(false);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.flags).toContain("Counter-Trend");
-    expect(result.flags).toContain("QuantData Grade Promotion");
+    expect(result.flags).not.toContain("QuantData Grade Promotion");
   });
 
   it("never promotes an A-grade setup or a setup the technical gate already rejected", () => {

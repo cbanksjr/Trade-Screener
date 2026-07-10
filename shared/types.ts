@@ -4,6 +4,7 @@ export type AssetType = "stock" | "etf";
 export type WeeklyQualificationMode = "full-stack" | "ema21-atr" | "none";
 export type DailyEntryQualificationMode = "strict" | "extended" | "none";
 export type SqueezeMaturityMode = "mature" | "developing" | "insufficient";
+export type SqueezeLifecycleStatus = "developing" | "ready";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
@@ -252,6 +253,8 @@ export type ScanResult = {
   weeklyContextSummary: string;
   dailySqueezeDotCount?: number;
   squeezeMaturityMode?: SqueezeMaturityMode;
+  squeezeLifecycleStatus?: SqueezeLifecycleStatus;
+  firstDetectedAt?: string;
   compressionQualityScore: number;
   compressionQualityStatus: LayerStatus;
   setupScore: number;
@@ -379,6 +382,7 @@ export type ScanMetadata = {
   scanStatus: ScanStatus;
   lastScanStartedAt?: string;
   lastScanFinishedAt?: string;
+  lastScanFailedAt?: string;
   lastScanMode?: ScanMode;
   lastScanWarnings?: string[];
   scanDiagnostics?: ScanDiagnostics;
@@ -415,6 +419,8 @@ export type ScanResponse = ScanMetadata & {
   warnings: string[];
   /** Symbols fully evaluated with real data this run, regardless of final inclusion — lets callers tell a genuine disqualification apart from a transient per-symbol data failure. */
   evaluatedSymbols?: string[];
+  /** Internal refresh payload used to update tracked/watchlisted squeeze lifecycles even when a result is currently marked Avoid. */
+  evaluatedResults?: ScanResult[];
 };
 
 export type WatchlistEntry = {
