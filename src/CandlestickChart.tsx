@@ -38,15 +38,24 @@ function emaSeries(candles: Candle[], length: number): LineData<Time>[] {
   });
 }
 
+function visibleCandleCount(width: number, available: number): number {
+  const preferred = width < 420 ? 30 : width < 620 ? 42 : 60;
+  return Math.min(preferred, available);
+}
+
 export function CandlestickChart({ candles, entryArea, stopPrice, target1, target2, symbol, theme }: CandlestickChartProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const container = containerRef.current;
-    const visibleCandles = candles.filter((candle) => (
+    const validCandles = candles.filter((candle) => (
       Number.isFinite(candle.open) && Number.isFinite(candle.high) && Number.isFinite(candle.low) && Number.isFinite(candle.close)
-    )).slice(-60);
-    if (!container || visibleCandles.length < 2) return;
+    ));
+    if (!container || validCandles.length < 2) return;
+
+    const visibleCandles = validCandles.slice(-60);
+    const ema8Data = emaSeries(validCandles, 8).slice(-60);
+    const ema21Data = emaSeries(validCandles, 21).slice(-60);
 
     const dark = theme === "dark";
     const chart = createChart(container, {
@@ -69,8 +78,8 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
         borderColor: dark ? "#243746" : "#d7e1e8",
         timeVisible: false,
         rightOffset: 2,
-        barSpacing: 10,
-        minBarSpacing: 5,
+        barSpacing: 11,
+        minBarSpacing: 7,
       },
       crosshair: {
         vertLine: { color: dark ? "#507080" : "#8da5b3", labelBackgroundColor: dark ? "#173847" : "#dceff1" },
@@ -106,7 +115,7 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    ema8.setData(emaSeries(visibleCandles, 8));
+    ema8.setData(ema8Data);
 
     const ema21 = chart.addSeries(LineSeries, {
       color: dark ? "#fbbf24" : "#d97706",
@@ -115,7 +124,7 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    ema21.setData(emaSeries(visibleCandles, 21));
+    ema21.setData(ema21Data);
 
     const entry = parseEntryPrice(entryArea);
     if (entry !== null) candleSeries.createPriceLine({ price: entry, color: dark ? "#49d7c2" : "#0f8d7d", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" });
@@ -123,8 +132,19 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     if (typeof target1 === "number") candleSeries.createPriceLine({ price: target1, color: dark ? "#59d8a0" : "#168a64", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "T1" });
     if (typeof target2 === "number") candleSeries.createPriceLine({ price: target2, color: dark ? "#7dd3fc" : "#1678a8", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "T2" });
 
-    chart.timeScale().fitContent();
-    return () => chart.remove();
+    const updateVisibleRange = () => {
+      const count = visibleCandleCount(container.clientWidth, visibleCandles.length);
+      const lastIndex = visibleCandles.length - 1;
+      chart.timeScale().setVisibleLogicalRange({ from: lastIndex - count + 1, to: lastIndex + 1.5 });
+    };
+    const resizeObserver = new ResizeObserver(updateVisibleRange);
+    resizeObserver.observe(container);
+    updateVisibleRange();
+
+    return () => {
+      resizeObserver.disconnect();
+      chart.remove();
+    };
   }, [candles, entryArea, stopPrice, symbol, target1, target2, theme]);
 
   if (candles.length < 2) {
