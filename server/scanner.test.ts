@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import { __resetScanStateForTest, addToWatchlist, assertProductionMarketDataAvailable, isDisplayableScanResult, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
@@ -243,6 +243,24 @@ describe("settings", () => {
   it("rejects malformed ETF setting payloads", async () => withDbRestore(async () => {
     await expect(writeSettings({ etfSymbols: "SPY,QQQ" as unknown as string[] })).rejects.toBeInstanceOf(SettingsValidationError);
   }));
+});
+
+describe("production price integrity", () => {
+  it("does not expose synthetic stock or ETF prices in production", () => {
+    expect(isDisplayableScanResult({ dataSource: "demo" }, true)).toBe(false);
+    expect(isDisplayableScanResult({ dataSource: "schwab" }, true)).toBe(true);
+    expect(isDisplayableScanResult({ dataSource: "mixed" }, true)).toBe(true);
+  });
+
+  it("keeps synthetic prices available for explicit local demo use", () => {
+    expect(isDisplayableScanResult({ dataSource: "demo" }, false)).toBe(true);
+  });
+
+  it("preserves the verified cache instead of running a synthetic production scan", () => {
+    expect(() => assertProductionMarketDataAvailable(false, true)).toThrow("previous verified scan was preserved");
+    expect(() => assertProductionMarketDataAvailable(true, true)).not.toThrow();
+    expect(() => assertProductionMarketDataAvailable(false, false)).not.toThrow();
+  });
 });
 
 describe("background scan refresh", () => {

@@ -225,6 +225,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     scanWarnings.add("Scan universe contains only " + symbolsToScan.length + " symbols; expected at least " + MIN_REFRESHED_SYMBOLS + ".");
   }
   const canUseLiveSchwab = hasSchwabCredentials() && await hasSchwabTokens();
+  assertProductionMarketDataAvailable(canUseLiveSchwab);
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
   const benchmarks = canUseLiveSchwab
     ? await loadBenchmarks(scanWarnings)
@@ -360,16 +361,34 @@ export async function resolveScanSymbols(inputSettings?: Settings): Promise<stri
 export async function readDisplayResults(): Promise<ScanResult[]> {
   return (await getCachedResults())
     .map((result) => normalizeCachedResult(result as ScanResult))
+    .filter((result) => isDisplayableScanResult(result))
     .filter((result): result is ScanResult => shouldIncludeResult(result));
 }
 
 export async function readWatchlist(): Promise<WatchlistEntry[]> {
   const entries = await getWatchlistEntries();
-  return entries.map((entry) => ({
-    symbol: entry.symbol,
-    addedAt: entry.addedAt,
-    result: normalizeCachedResult(entry.payload as ScanResult)
-  }));
+  return entries
+    .map((entry) => ({
+      symbol: entry.symbol,
+      addedAt: entry.addedAt,
+      result: normalizeCachedResult(entry.payload as ScanResult)
+    }))
+    .filter((entry) => isDisplayableScanResult(entry.result));
+}
+
+/**
+ * Demo candles intentionally generate synthetic prices. They are useful for
+ * local development, but must never be presented as real stock or ETF prices
+ * by a production deployment.
+ */
+export function isDisplayableScanResult(result: Pick<ScanResult, "dataSource">, isProduction = config.isProduction): boolean {
+  return !isProduction || result.dataSource !== "demo";
+}
+
+export function assertProductionMarketDataAvailable(canUseLiveSchwab: boolean, isProduction = config.isProduction): void {
+  if (isProduction && !canUseLiveSchwab) {
+    throw new Error("Live Schwab market data is unavailable; the previous verified scan was preserved instead of generating synthetic prices.");
+  }
 }
 
 export async function removeFromWatchlist(symbol: string): Promise<void> {

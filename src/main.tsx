@@ -9,7 +9,6 @@ import {
   ChevronDown,
   ChevronRight,
   CircleHelp,
-  Filter,
   Gauge,
   LayoutDashboard,
   Moon,
@@ -72,6 +71,7 @@ const FILTERS = ["all", "take", "avoid", "grade-a"] as const;
 type ThemeMode = "light" | "dark";
 type ViewMode = "scanner" | "watchlist";
 type ResultFilter = typeof FILTERS[number];
+type SymbolSort = "original" | "asc" | "desc";
 
 function initialTheme(): ThemeMode {
   const saved = localStorage.getItem("theme");
@@ -86,6 +86,7 @@ function App() {
   const [query, setQuery] = React.useState("");
   const deferredQuery = React.useDeferredValue(query);
   const [filter, setFilter] = React.useState<ResultFilter>("all");
+  const [symbolSort, setSymbolSort] = React.useState<SymbolSort>("original");
   const [loading, setLoading] = React.useState(false);
   const [message, setMessage] = React.useState("");
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
@@ -233,11 +234,18 @@ function App() {
     [results, view, watchlist],
   );
   const normalizedQuery = deferredQuery.trim().toUpperCase();
-  const visibleEntries = React.useMemo(() => sourceEntries.filter(({ result }) => {
-    const matchesQuery = !normalizedQuery || result.symbol.includes(normalizedQuery) || result.companyName?.toUpperCase().includes(normalizedQuery);
-    const matchesFilter = filter === "all" || (filter === "take" && tradeMark(result) === "Take") || (filter === "avoid" && tradeMark(result) === "Avoid") || (filter === "grade-a" && result.grade === "A");
-    return matchesQuery && matchesFilter;
-  }), [filter, normalizedQuery, sourceEntries]);
+  const visibleEntries = React.useMemo(() => {
+    const matchingEntries = sourceEntries.filter(({ result }) => {
+      const matchesQuery = !normalizedQuery || result.symbol.includes(normalizedQuery) || result.companyName?.toUpperCase().includes(normalizedQuery);
+      const matchesFilter = filter === "all" || (filter === "take" && tradeMark(result) === "Take") || (filter === "avoid" && tradeMark(result) === "Avoid") || (filter === "grade-a" && result.grade === "A");
+      return matchesQuery && matchesFilter;
+    });
+    if (symbolSort === "original") return matchingEntries;
+    return [...matchingEntries].sort((left, right) => {
+      const comparison = left.result.symbol.localeCompare(right.result.symbol);
+      return symbolSort === "asc" ? comparison : -comparison;
+    });
+  }, [filter, normalizedQuery, sourceEntries, symbolSort]);
   React.useEffect(() => {
     if (visibleEntries.length && !visibleEntries.some(({ result }) => result.symbol === selected)) {
       setSelected(visibleEntries[0].result.symbol);
@@ -307,6 +315,8 @@ function App() {
             view={view}
             filter={filter}
             onFilter={setFilter}
+            symbolSort={symbolSort}
+            onSymbolSort={setSymbolSort}
             activeSymbol={active?.symbol}
             onSelect={setSelected}
             loading={loading && results.length === 0}
@@ -328,11 +338,13 @@ function RailButton({ label, active, onClick, children }: { label: string; activ
   return <button className={`rail-button${active ? " active" : ""}`} aria-label={label} title={label} onClick={onClick}>{children}</button>;
 }
 
-function CandidatePanel({ entries, view, filter, onFilter, activeSymbol, onSelect, loading, counts }: {
+function CandidatePanel({ entries, view, filter, onFilter, symbolSort, onSymbolSort, activeSymbol, onSelect, loading, counts }: {
   entries: Array<{ result: ScanResult; addedAt?: string }>;
   view: ViewMode;
   filter: ResultFilter;
   onFilter: (filter: ResultFilter) => void;
+  symbolSort: SymbolSort;
+  onSymbolSort: (sort: SymbolSort) => void;
   activeSymbol?: string;
   onSelect: (symbol: string) => void;
   loading: boolean;
@@ -342,7 +354,6 @@ function CandidatePanel({ entries, view, filter, onFilter, activeSymbol, onSelec
     <aside className="candidates-panel">
       <div className="section-heading">
         <div><span>{view === "scanner" ? "Shortlist" : "Saved setups"}</span><h2>{view === "scanner" ? "Candidates" : "Watchlist"} <em>{counts.all}</em></h2></div>
-        <button className="icon-action" aria-label="Filter candidates"><Filter size={16} /></button>
       </div>
       <div className="filter-tabs" role="tablist" aria-label="Candidate filters">
         <FilterTab label="All" count={counts.all} value="all" active={filter === "all"} onFilter={onFilter} />
@@ -350,14 +361,23 @@ function CandidatePanel({ entries, view, filter, onFilter, activeSymbol, onSelec
         <FilterTab label="Avoid" count={counts.avoid} value="avoid" active={filter === "avoid"} onFilter={onFilter} />
         <FilterTab label="A setups" count={counts.gradeA} value="grade-a" active={filter === "grade-a"} onFilter={onFilter} />
       </div>
-      <div className="candidate-labels"><span>Symbol</span><span>Grade</span><span>Squeeze</span><span>Mark</span></div>
+      <div className="candidate-labels">
+        <span className="symbol-label">Symbol
+          <select value={symbolSort} onChange={(event) => onSymbolSort(event.target.value as SymbolSort)} aria-label="Sort candidates by symbol">
+            <option value="original">Original</option>
+            <option value="asc">A–Z</option>
+            <option value="desc">Z–A</option>
+          </select>
+        </span>
+        <span>Grade</span><span>Squeeze</span><span>Mark</span>
+      </div>
       <div className="candidate-list">
         {loading ? <ResultSkeleton /> : entries.map(({ result, addedAt }) => (
           <CandidateRow result={result} addedAt={addedAt} active={result.symbol === activeSymbol} onSelect={onSelect} key={result.symbol} />
         ))}
         {!loading && !entries.length ? <div className="no-results">{view === "watchlist" ? "No saved setups match this filter." : "No candidates match this filter."}</div> : null}
       </div>
-      <footer><SlidersHorizontal size={13} />Sorted by setup score <span>{entries.length} shown</span></footer>
+      <footer><SlidersHorizontal size={13} />{symbolSort === "original" ? "Original setup order" : `Symbol ${symbolSort === "asc" ? "A–Z" : "Z–A"}`} <span>{entries.length} shown</span></footer>
     </aside>
   );
 }
