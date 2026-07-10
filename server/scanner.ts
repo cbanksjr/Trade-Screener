@@ -151,8 +151,8 @@ export async function startScanRefresh(scanRunner: () => Promise<ScanResponse> =
       .then(() => executeScanRefresh(scanRunner, startedAt))
       .catch(() => undefined)
       .finally(() => {
-      activeScan = null;
-    });
+        activeScan = null;
+      });
     await initialized;
   }
   return readCachedScanResponse();
