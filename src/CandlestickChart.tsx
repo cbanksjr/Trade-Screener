@@ -11,6 +11,7 @@ import {
 import type { Candle } from "../shared/types";
 
 type ThemeMode = "light" | "dark";
+const FIXED_VISIBLE_CANDLES = 40;
 
 type CandlestickChartProps = {
   candles: Candle[];
@@ -36,11 +37,6 @@ function emaSeries(candles: Candle[], length: number): LineData<Time>[] {
     ema = index === 0 ? candle.close : candle.close * multiplier + ema * (1 - multiplier);
     return { time: candle.date.slice(0, 10) as Time, value: ema };
   });
-}
-
-function visibleCandleCount(width: number, available: number): number {
-  const preferred = width < 420 ? 30 : width < 620 ? 42 : 60;
-  return Math.min(preferred, available);
 }
 
 export function CandlestickChart({ candles, entryArea, stopPrice, target1, target2, symbol, theme }: CandlestickChartProps) {
@@ -78,8 +74,6 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
         borderColor: dark ? "#243746" : "#d7e1e8",
         timeVisible: false,
         rightOffset: 2,
-        barSpacing: 11,
-        minBarSpacing: 7,
       },
       crosshair: {
         vertLine: { color: dark ? "#507080" : "#8da5b3", labelBackgroundColor: dark ? "#173847" : "#dceff1" },
@@ -90,13 +84,14 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     });
 
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: dark ? "#59d8a0" : "#168a64",
-      downColor: dark ? "#fb7185" : "#d7485f",
-      wickUpColor: dark ? "#77e5b5" : "#168a64",
-      wickDownColor: dark ? "#ff8b9b" : "#d7485f",
+      upColor: "#26a69a",
+      downColor: "#ef5350",
+      wickUpColor: "#26a69a",
+      wickDownColor: "#ef5350",
+      wickVisible: true,
       borderVisible: true,
-      borderUpColor: dark ? "#77e5b5" : "#168a64",
-      borderDownColor: dark ? "#ff8b9b" : "#d7485f",
+      borderUpColor: "#26a69a",
+      borderDownColor: "#ef5350",
       priceLineVisible: true,
       lastValueVisible: true,
     });
@@ -132,19 +127,11 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     if (typeof target1 === "number") candleSeries.createPriceLine({ price: target1, color: dark ? "#59d8a0" : "#168a64", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "T1" });
     if (typeof target2 === "number") candleSeries.createPriceLine({ price: target2, color: dark ? "#7dd3fc" : "#1678a8", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "T2" });
 
-    const updateVisibleRange = () => {
-      const count = visibleCandleCount(container.clientWidth, visibleCandles.length);
-      const lastIndex = visibleCandles.length - 1;
-      chart.timeScale().setVisibleLogicalRange({ from: lastIndex - count + 1, to: lastIndex + 1.5 });
-    };
-    const resizeObserver = new ResizeObserver(updateVisibleRange);
-    resizeObserver.observe(container);
-    updateVisibleRange();
+    const lastIndex = visibleCandles.length - 1;
+    const firstIndex = Math.max(0, lastIndex - FIXED_VISIBLE_CANDLES + 1);
+    chart.timeScale().setVisibleLogicalRange({ from: firstIndex, to: lastIndex + 1.5 });
 
-    return () => {
-      resizeObserver.disconnect();
-      chart.remove();
-    };
+    return () => chart.remove();
   }, [candles, entryArea, stopPrice, symbol, target1, target2, theme]);
 
   if (candles.length < 2) {

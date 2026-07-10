@@ -270,7 +270,7 @@ h1, h2, h3, p { margin: 0; }
 .filter-tabs button.active { background: var(--blue-soft); border-color: color-mix(in srgb, var(--blue) 26%, var(--line)); color: var(--blue); }
 .candidate-labels, .candidate-row { align-items: center; display: grid; grid-template-columns: minmax(102px, 1fr) 49px 76px 46px; }
 .candidate-labels { border-bottom: 1px solid var(--line-soft); color: var(--faint); font-size: 9px; font-weight: 800; letter-spacing: .07em; padding: 7px 13px; text-transform: uppercase; }
-.candidate-list { content-visibility: auto; flex: 1; min-height: 0; overflow-y: auto; padding: 4px 7px; scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent; scrollbar-width: thin; }
+.candidate-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 4px 7px; scrollbar-color: color-mix(in srgb, var(--muted) 35%, transparent) transparent; scrollbar-width: thin; -webkit-overflow-scrolling: touch; }
 .candidate-row {
   background: transparent;
   border: 1px solid transparent;
