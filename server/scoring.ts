@@ -764,9 +764,7 @@ function withCurrentPrice(context: LowerTimeframeContext, price: number): LowerT
   const percentAboveEma50 = context.ema50 > 0 ? ((price - context.ema50) / context.ema50) * 100 : Number.POSITIVE_INFINITY;
   const percentBelowEma8 = context.ema8 > 0 ? ((context.ema8 - price) / context.ema8) * 100 : Number.NEGATIVE_INFINITY;
   const dailyEntryQualificationMode = resolveDailyEntryQualificationMode({
-    ema8: context.ema8,
     ema21: context.ema21,
-    ema34: context.ema34,
     atr14: context.atr14
   }, price);
   const withinEmaPocket = dailyEntryQualificationMode === "strict";
