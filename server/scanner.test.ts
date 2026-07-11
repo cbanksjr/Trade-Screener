@@ -4,10 +4,10 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, startScanRefresh, withCandleLiquidityFallback } from "./scanner";
+import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
-  BROAD_ENTRY_GRADE_CAP_REASON,
+  EXTENDED_ENTRY_GRADE_CAP_REASON,
   RELAXED_TREND_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON
 } from "./scoring";
@@ -124,6 +124,18 @@ describe("fundamental provider merge", () => {
     });
   });
 
+  it("can disable demo fundamental fallback for live scans", () => {
+    const fundamentals = mergeFundamentals("AAPL", {
+      symbol: "AAPL",
+      price: 210
+    }, undefined, { allowDemoFallback: false });
+
+    expect(fundamentals.beta).toBeUndefined();
+    expect(fundamentals.marketCap).toBeUndefined();
+    expect(fundamentals.sources?.beta).toBeUndefined();
+    expect(fundamentals.sources?.marketCap).toBeUndefined();
+  });
+
   it("uses recent candle volume after Schwab and FMP omit average volume", () => {
     const fundamentals = mergeFundamentals("HISTORY", {
       symbol: "HISTORY",
@@ -220,6 +232,17 @@ describe("settings", () => {
 
     expect(settings.etfSymbols).toEqual(defaultEtfSymbols);
   }));
+
+  it("rejects invalid numeric settings before they are stored", async () => withDbRestore(async () => {
+    await expect(writeSettings({ minPrice: -1 })).rejects.toBeInstanceOf(SettingsValidationError);
+
+    const settings = await readSettings();
+    expect(settings.minPrice).toBe(20);
+  }));
+
+  it("rejects malformed ETF setting payloads", async () => withDbRestore(async () => {
+    await expect(writeSettings({ etfSymbols: "SPY,QQQ" as unknown as string[] })).rejects.toBeInstanceOf(SettingsValidationError);
+  }));
 });
 
 describe("background scan refresh", () => {
@@ -257,6 +280,26 @@ describe("background scan refresh", () => {
     const second = await startScanRefresh(runner);
 
     expect(calls).toBe(1);
+    expect(second.isRefreshing).toBe(true);
+
+    resolveScan(await fakeResponse([]));
+    await settleBackgroundScan();
+  }));
+
+  it("deduplicates simultaneous refresh triggers before scan metadata is persisted", async () => withDbRestore(async () => {
+    let calls = 0;
+    let resolveScan!: (value: ScanResponse) => void;
+    const runner = () => {
+      calls += 1;
+      return new Promise<ScanResponse>((resolve) => {
+        resolveScan = resolve;
+      });
+    };
+
+    const [first, second] = await Promise.all([startScanRefresh(runner), startScanRefresh(runner)]);
+
+    expect(calls).toBe(1);
+    expect(first.isRefreshing).toBe(true);
     expect(second.isRefreshing).toBe(true);
 
     resolveScan(await fakeResponse([]));
@@ -350,7 +393,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["TWODOTS"]);
   }));
 
-  it("keeps bearish-macro cached candidates visible as A setups marked Avoid", async () => withDbRestore(async () => {
+  it("keeps bearish-macro cached candidates visible as B setups still marked Take", async () => withDbRestore(async () => {
     const macroCaution: ScanResult = {
       ...qualifyingResult("MACROCAUTION"),
       setupScore: 95,
@@ -367,11 +410,11 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("MACROCAUTION");
-    expect(result.grade).toBe("A");
-    expect(result.tradeMark).toBe("Avoid");
-    expect(result.longCallDecision).toBe("Avoid");
-    expect(result.tradeMarkReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
-    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.grade).toBe("B");
+    expect(result.tradeMark).toBe("Take");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.tradeMarkReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
@@ -396,10 +439,16 @@ describe("background scan refresh", () => {
     expect(result.institutionalEdgeStatus).toBe("Bearish");
   }));
 
-  it("preserves a QuantData grade promotion across a cache reload instead of reverting to the technical grade", async () => withDbRestore(async () => {
+  it("removes legacy QuantData promotion from cached results and restores the technical grade", async () => withDbRestore(async () => {
     const promoted: ScanResult = {
       ...qualifyingResult("PROMOTED"),
       setupScore: 88,
+      gradeCapReasons: ["Setup score below 90.", BEARISH_MACRO_GRADE_CAP_REASON],
+      layerEvaluations: [{
+        layer: "Macro Regime",
+        status: "Bearish",
+        detail: "SPY or QQQ daily EMA structure is bearish."
+      }],
       gradeBeforeQuantData: "B",
       finalGrade: "A",
       institutionalPromotionApplied: true
@@ -409,8 +458,10 @@ describe("background scan refresh", () => {
     const [result] = await readDisplayResults();
 
     expect(result.symbol).toBe("PROMOTED");
-    expect(result.grade).toBe("A");
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
+    expect(result.grade).toBe("B");
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.institutionalPromotionApplied).toBe(false);
   }));
 
   it("does not promote a cached result on reload when no QuantData promotion was recorded", async () => withDbRestore(async () => {
@@ -515,23 +566,23 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("keeps broad-entry cached candidates visible without a weekly-style cap", async () => withDbRestore(async () => {
-    const broadEntry: ScanResult = {
-      ...qualifyingResult("BROADENTRY"),
-      dailyEntryQualificationMode: "broad",
+  it("keeps extended-entry cached candidates visible without a weekly-style cap", async () => withDbRestore(async () => {
+    const extendedEntry: ScanResult = {
+      ...qualifyingResult("EXTENDEDENTRY"),
+      dailyEntryQualificationMode: "extended",
       squeezeMaturityMode: "mature",
       setupScore: 95,
       grade: "A",
       longCallDecision: "Strong Long Call Candidate"
     };
-    await replaceScanResults([broadEntry]);
+    await replaceScanResults([extendedEntry]);
 
     const [result] = await readDisplayResults();
 
-    expect(result.symbol).toBe("BROADENTRY");
+    expect(result.symbol).toBe("EXTENDEDENTRY");
     expect(result.grade).toBe("A");
     expect(result.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(result.gradeCapReasons).toContain(BROAD_ENTRY_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).toContain(EXTENDED_ENTRY_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
@@ -615,6 +666,31 @@ describe("background scan refresh", () => {
     expect(await readDisplayResults()).toEqual([]);
   }));
 
+  it("keeps a five-dot squeeze visible even when score, momentum, entry, and compression context say Avoid", async () => withDbRestore(async () => {
+    const fiveDot: ScanResult = {
+      ...qualifyingResult("FIVEDOT"),
+      setupScore: 55,
+      grade: "C",
+      dailySqueezeDotCount: 5,
+      squeezeMaturityMode: "mature",
+      dailyEntryQualificationMode: "none",
+      indicators: { ...qualifyingResult("FIVEDOT").indicators, momentum: -1, momentumImproving: false },
+      layerEvaluations: [{
+        layer: "Compression Quality",
+        status: "Bearish",
+        detail: "Secondary contraction context is weak."
+      }]
+    };
+    await replaceScanResults([fiveDot]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.symbol).toBe("FIVEDOT");
+    expect(result.grade).toBe("C");
+    expect(result.tradeMark).toBe("Avoid");
+    expect(result.squeezeLifecycleStatus).toBe("ready");
+  }));
+
   it("saves scan metadata after a completed refresh", async () => withDbRestore(async () => {
     const diagnostics = fakeDiagnostics({ scannedSymbols: 2, qualifiedResults: 1, stockLiquidity: 1 });
     await startScanRefresh(() => fakeResponse([qualifyingResult("META")], ["ok"], diagnostics));
@@ -634,6 +710,20 @@ describe("background scan refresh", () => {
         stockLiquidity: 1
       }
     });
+  }));
+
+  it("marks a provider-wide scan failure and preserves the previous result cache", async () => withDbRestore(async () => {
+    await replaceScanResults([qualifyingResult("PRESERVED")]);
+    const diagnostics = fakeDiagnostics({ scannedSymbols: 100, qualifiedResults: 0, quoteMissing: 90 });
+
+    await startScanRefresh(() => fakeResponse([], ["provider failed"], diagnostics, [], []));
+    await settleBackgroundScan();
+
+    expect((await readDisplayResults()).map((result) => result.symbol)).toContain("PRESERVED");
+    const metadata = await getScanMetadata();
+    expect(metadata.scanStatus).toBe("failed");
+    expect(metadata.lastScanFailedAt).toBeTruthy();
+    expect(metadata.lastScanWarnings?.[0]).toContain("Previous results and watchlist entries were preserved");
   }));
 
   it("returns completed scan diagnostics with cached results", async () => withDbRestore(async () => {
@@ -706,13 +796,14 @@ describe("watchlist manual add", () => {
     await expect(addToWatchlist("NOTFOUND")).rejects.toThrow();
   }));
 
-  it("removes a watchlisted symbol once a later scan evaluates it and no longer qualifies", async () => withDbRestore(async () => {
+  it("removes a watchlisted symbol only after a later scan confirms the squeeze fired", async () => withDbRestore(async () => {
     const take = { ...qualifyingResult("STICKY"), tradeMark: "Take" as const };
+    const fired = releasedResult(take);
 
     await startScanRefresh(() => fakeResponse([take]));
     await settleBackgroundScan();
     await addToWatchlist("STICKY");
-    await startScanRefresh(() => fakeResponse([], [], undefined, ["STICKY"]));
+    await startScanRefresh(() => fakeResponse([], [], undefined, ["STICKY"], [fired]));
     await settleBackgroundScan();
 
     const watchlist = await readWatchlist();
@@ -732,7 +823,7 @@ describe("watchlist manual add", () => {
     expect(watchlist.map((entry) => entry.symbol)).toContain("GAPPY");
   }));
 
-  it("removes a watchlisted symbol once a later scan marks it Avoid", async () => withDbRestore(async () => {
+  it("keeps and updates a watchlisted symbol when a later scan marks it Avoid", async () => withDbRestore(async () => {
     const take = { ...qualifyingResult("FLIPS"), tradeMark: "Take" as const };
     const avoid = { ...qualifyingResult("FLIPS"), tradeMark: "Avoid" as const, tradeMarkReasons: ["Bearish macro."] };
 
@@ -743,7 +834,9 @@ describe("watchlist manual add", () => {
     await settleBackgroundScan();
 
     const watchlist = await readWatchlist();
-    expect(watchlist.map((entry) => entry.symbol)).not.toContain("FLIPS");
+    const entry = watchlist.find((item) => item.symbol === "FLIPS");
+    expect(entry?.result.tradeMark).toBe("Avoid");
+    expect(entry?.result.tradeMarkReasons).toContain("Bearish macro.");
   }));
 
   it("refreshes a watchlisted symbol's stored result after a later scan", async () => withDbRestore(async () => {
@@ -802,7 +895,7 @@ async function settleBackgroundScan() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[]): Promise<ScanResponse> {
+async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[], evaluatedResults: ScanResult[] = results): Promise<ScanResponse> {
   return {
     mode: "demo",
     results,
@@ -810,17 +903,31 @@ async function fakeResponse(results: ScanResult[], warnings: string[] = [], scan
     warnings,
     scanDiagnostics,
     evaluatedSymbols,
+    evaluatedResults,
     scanStatus: "idle"
   };
 }
 
-function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: number; stockLiquidity?: number; options?: number }): ScanDiagnostics {
+function releasedResult(result: ScanResult): ScanResult {
+  return {
+    ...result,
+    dailySqueezeDotCount: 0,
+    squeezeMaturityMode: "insufficient",
+    squeezeLifecycleStatus: undefined,
+    indicators: { ...result.indicators, squeezeState: "released" },
+    squeezeStatusByTimeframe: result.squeezeStatusByTimeframe.map((item) => item.timeframe === "daily"
+      ? { ...item, squeezeState: "released", compressionStatus: "Bearish" }
+      : item)
+  };
+}
+
+function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: number; quoteMissing?: number; stockLiquidity?: number; options?: number }): ScanDiagnostics {
   return {
     scannedSymbols: input.scannedSymbols,
     qualifiedResults: input.qualifiedResults,
     minAvgDollarVolume: 300_000_000,
     skipped: {
-      quoteMissing: 0,
+      quoteMissing: input.quoteMissing ?? 0,
       price: 0,
       stockLiquidity: input.stockLiquidity ?? 0,
       marketCap: 0,

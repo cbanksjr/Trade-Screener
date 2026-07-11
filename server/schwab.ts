@@ -1,8 +1,9 @@
 import { Buffer } from "node:buffer";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { fetchWithRetry } from "./httpRetry";
-import { getSetting, setSetting } from "./sqlite";
+import { deleteSetting, getSetting, setSetting } from "./sqlite";
 import type { BrokerStatus, Candle, FundamentalAnalysis, FundamentalFieldSources, OptionContract, ScanResult } from "../shared/types";
 
 export type SchwabQuote = {
@@ -52,7 +53,17 @@ type SchwabOptionChainResponse = {
 };
 
 const TOKEN_SETTING = "schwabTokens";
+const OAUTH_STATE_VERSION = "v1";
+const OAUTH_STATE_WINDOW_HOURS = 24;
 let tokenCache: SchwabTokens | undefined | null = null;
+let refreshPromise: Promise<SchwabTokens> | null = null;
+
+class SchwabTokenRequestError extends Error {
+  constructor(readonly status: number, statusText: string, body: string) {
+    super(`Schwab token request failed: ${status} ${statusText}${body ? ` - ${body.slice(0, 180)}` : ""}`);
+    this.name = "SchwabTokenRequestError";
+  }
+}
 
 export function hasSchwabCredentials(): boolean {
   return Boolean(config.schwabAppKey && config.schwabAppSecret && config.schwabCallbackUrl);
@@ -68,11 +79,13 @@ export function getSchwabLoginUrl(): string {
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", config.schwabAppKey);
   url.searchParams.set("redirect_uri", config.schwabCallbackUrl);
+  url.searchParams.set("state", createSchwabOAuthState());
   return url.toString();
 }
 
-export async function handleSchwabCallback(code: string): Promise<BrokerStatus> {
+export async function handleSchwabCallback(code: string, state: string): Promise<BrokerStatus> {
   if (!code) throw new Error("Schwab callback did not include an authorization code.");
+  if (!isValidSchwabOAuthState(state)) throw new Error("Schwab callback state was invalid. Start the Schwab connection flow again.");
   await exchangeAuthorizationCode(code);
   return getSchwabStatus();
 }
@@ -438,26 +451,35 @@ async function exchangeAuthorizationCode(code: string) {
 
 async function refreshAccessToken(tokens: SchwabTokens): Promise<SchwabTokens> {
   if (!tokens.refreshToken) throw new Error("Schwab refresh token is missing. Reconnect Schwab.");
-  const response = await tokenRequest({
-    grant_type: "refresh_token",
-    refresh_token: tokens.refreshToken
-  });
-  return saveTokens(response, tokens);
+  try {
+    const response = await tokenRequest({
+      grant_type: "refresh_token",
+      refresh_token: tokens.refreshToken
+    });
+    return saveTokens(response, tokens);
+  } catch (error) {
+    if (error instanceof SchwabTokenRequestError && (error.status === 401 || error.status === 403)) {
+      await clearTokens();
+      throw new Error("Schwab authorization expired or was rejected. Use Connect Schwab to reconnect.");
+    }
+    throw error;
+  }
 }
 
 async function tokenRequest(params: Record<string, string>): Promise<SchwabTokenResponse> {
   const body = new URLSearchParams(params);
-  const response = await fetchWithRetry(() => fetch(`${config.schwabAuthBaseUrl}/token`, {
+  const response = await fetchWithRetry((signal) => fetch(`${config.schwabAuthBaseUrl}/token`, {
     method: "POST",
     headers: {
       Authorization: `Basic ${Buffer.from(`${config.schwabAppKey}:${config.schwabAppSecret}`).toString("base64")}`,
       "Content-Type": "application/x-www-form-urlencoded"
     },
-    body
+    body,
+    signal
   }));
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(`Schwab token request failed: ${response.status} ${response.statusText}${text ? ` - ${text.slice(0, 180)}` : ""}`);
+    throw new SchwabTokenRequestError(response.status, response.statusText, text);
   }
   return response.json() as Promise<SchwabTokenResponse>;
 }
@@ -466,11 +488,12 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
   const token = await getAccessToken();
   const url = new URL(`${config.schwabMarketDataBaseUrl}${path}`);
   Object.entries(params).forEach(([key, value]) => url.searchParams.set(key, String(value)));
-  const response = await fetchWithRetry(() => fetch(url, {
+  const response = await fetchWithRetry((signal) => fetch(url, {
     headers: {
       Authorization: `Bearer ${token}`,
       Accept: "application/json"
-    }
+    },
+    signal
   }));
   if (!response.ok) {
     const body = await response.text();
@@ -478,8 +501,6 @@ async function schwabGet<T>(path: string, params: Record<string, string | number
   }
   return response.json() as Promise<T>;
 }
-
-let refreshPromise: Promise<SchwabTokens> | null = null;
 
 async function getAccessToken(): Promise<string> {
   const tokens = await readTokens();
@@ -510,6 +531,16 @@ async function saveTokens(response: SchwabTokenResponse, previous?: SchwabTokens
   tokenCache = next;
   await setSetting(TOKEN_SETTING, next);
   return next;
+}
+
+async function clearTokens(): Promise<void> {
+  tokenCache = undefined;
+  await deleteSetting(TOKEN_SETTING);
+}
+
+export function __resetSchwabTokenCacheForTest(): void {
+  tokenCache = null;
+  refreshPromise = null;
 }
 
 function isStrikeNearPrice(item: OptionContract, price: number): boolean {
@@ -549,6 +580,34 @@ function isEasternDaylightTime(dateOnly: string): boolean {
     timeZoneName: "shortOffset"
   }).formatToParts(noonUtc).find((part) => part.type === "timeZoneName")?.value ?? "";
   return offsetLabel.includes("-4");
+}
+
+function createSchwabOAuthState(now = Date.now()): string {
+  const bucket = Math.floor(now / (60 * 60 * 1000));
+  return `${OAUTH_STATE_VERSION}.${bucket}.${stateSignature(bucket)}`;
+}
+
+function isValidSchwabOAuthState(value: string, now = Date.now()): boolean {
+  const [version, bucketText, signature] = value.split(".");
+  const bucket = Number(bucketText);
+  if (version !== OAUTH_STATE_VERSION || !Number.isInteger(bucket) || !signature) return false;
+  const currentBucket = Math.floor(now / (60 * 60 * 1000));
+  if (bucket < currentBucket - OAUTH_STATE_WINDOW_HOURS || bucket > currentBucket) return false;
+  return timingSafeEqualString(signature, stateSignature(bucket));
+}
+
+function stateSignature(bucket: number): string {
+  return createHmac("sha256", config.schwabAppSecret)
+    .update(config.schwabCallbackUrl)
+    .update("|")
+    .update(String(bucket))
+    .digest("base64url");
+}
+
+function timingSafeEqualString(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }
 
 function objectValue(value: unknown): Record<string, unknown> {

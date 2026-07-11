@@ -25,6 +25,7 @@ import type {
 } from "../shared/types";
 import { dailyEntryDetail, resolveDailyEntryQualificationMode } from "./entryZone";
 import { activeSqueezeDotCount, latestIndicators, round } from "./indicators";
+import { clampScore, resolveMacroModifier, type MacroRegimeContext } from "./macroRegime";
 import { buildTimeframeContext, compressionLayerStatus, compressionQualityScore, hasPositiveEmaStack } from "./timeframes";
 
 const SQUEEZE_STATES: SqueezeState[] = ["low", "mid", "high"];
@@ -40,11 +41,10 @@ export const A_SETUP_SCORE_THRESHOLD = 90;
 export const B_SETUP_SCORE_THRESHOLD = 70;
 export const WEEKLY_ATR_GRADE_CAP_REASON = "Weekly chart is context only and no longer caps the setup grade.";
 export const DEVELOPING_SQUEEZE_GRADE_CAP_REASON = "Daily squeeze has 2-4 active dots; developing compression contributes fewer setup points.";
-export const BROAD_ENTRY_GRADE_CAP_REASON = "Daily price is in the broader valid entry zone rather than the preferred A-entry zone.";
 export const EXTENDED_ENTRY_GRADE_CAP_REASON = "Daily price is above the preferred entry zone but remains within 1.5 ATR of the 21 EMA.";
 export const RELAXED_TREND_GRADE_CAP_REASON = "Daily fast trend qualifies, but the full 8/21/34/55/89 EMA stack is not present; Daily Structure contributes fewer setup points.";
 export const RELAXED_WEEKLY_GRADE_CAP_REASON = "Weekly chart is context only and no longer caps the setup grade.";
-export const BEARISH_MACRO_GRADE_CAP_REASON = "SPY or QQQ has a bearish Daily EMA structure; trade should be avoided until macro improves.";
+export const BEARISH_MACRO_GRADE_CAP_REASON = "SPY or QQQ has a bearish Daily EMA structure; A setups are capped until macro improves.";
 const EARNINGS_AVOID_DAYS = 14;
 const EARNINGS_NEUTRAL_DAYS = 29;
 const MAX_OPTION_SPREAD_PCT = 15;
@@ -76,6 +76,7 @@ export function gradeSetup(input: {
   weeklySqueezeWarning?: string;
   spyCandles?: Candle[];
   qqqCandles?: Candle[];
+  macroRegime?: MacroRegimeContext;
   sector?: string;
   sectorCandles?: Candle[];
   strictFundamentals?: boolean;
@@ -118,7 +119,7 @@ export function gradeSetup(input: {
   const marketStructure = evaluateMarketStructure(dailyContext, indicators);
   const optionLayer = evaluateOptions(input.options, options, price);
   const compression = evaluateCompression(dailySqueezeDotCount);
-  const macro = evaluateMacro(input.spyCandles, input.qqqCandles);
+  const macro = evaluateMacro(input.macroRegime);
   const relativeStrengthSummary = evaluateRelativeStrength(input.candles, input.spyCandles, input.qqqCandles);
   const layerEvaluations = [marketStructure, institutional, optionLayer, macro, compression];
   const setupScore = evaluateSetupScore({
@@ -143,7 +144,7 @@ export function gradeSetup(input: {
   });
   const weeklyQualificationMode = weeklyContext.weeklyQualificationMode ?? "none";
   let scoreGrade = gradeFromSetupScore(setupScore.score);
-  if (setupScore.capA && scoreGrade === "A") scoreGrade = "B";
+  if ((setupScore.capA || macro.status === "Bearish") && scoreGrade === "A") scoreGrade = "B";
   const grade = scoreGrade;
   const gradeCapReasons = gradeCapReasonsFor(layerEvaluations, dailyContext, dailyEntryQualificationMode, squeezeMaturityMode, setupScore);
   const tradeMarkReasons = tradeMarkReasonsFor({
@@ -151,8 +152,7 @@ export function gradeSetup(input: {
     layerEvaluations,
     setupScore,
     recommendedOption,
-    institutional,
-    macro
+    institutional
   });
   const tradeMark: TradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const decision = compatibilityDecision(grade, tradeMark);
@@ -245,10 +245,8 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   };
 }
 
-const GRADE_PROMOTION_MIN_CONFIRMATIONS = 3;
-
 export function applyInstitutionalPositioning(result: ScanResult, positioning: InstitutionalPositioningSummary): ScanResult {
-  const flags = unique([...(result.flags ?? []), ...positioning.flags]);
+  const flags = unique([...(result.flags ?? []).filter((flag) => flag !== "QuantData Grade Promotion"), ...positioning.flags]);
   const gradeCapReasons = removeWeeklyGradeReasons(result.gradeCapReasons ?? []);
   const tradeMarkReasons = [...(result.tradeMarkReasons ?? [])];
 
@@ -263,14 +261,9 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
 
   const tradeMark: TradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const gradeBeforeQuantData = result.grade;
-  // Promotion only ever raises a technical B to an A, on multi-factor QuantData confluence,
-  // and never fires on a setup the technical gate already rejected (tradeMark === "Avoid").
-  const promoted = tradeMark === "Take"
-    && gradeBeforeQuantData === "B"
-    && positioning.vetoingFactorCount === 0
-    && positioning.confirmingFactorCount >= GRADE_PROMOTION_MIN_CONFIRMATIONS;
-  const finalGrade: Grade = promoted ? "A" : gradeBeforeQuantData;
-  if (promoted) addUnique(flags, "QuantData Grade Promotion");
+  // Institutional positioning is an execution overlay only. It can confirm,
+  // caution, or veto through Take/Avoid, but never changes the technical grade.
+  const finalGrade: Grade = gradeBeforeQuantData;
   const longCallDecision = compatibilityDecision(finalGrade, tradeMark);
   const strongLongCallCandidate = longCallDecision === "Strong Long Call Candidate";
 
@@ -279,7 +272,7 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
     grade: finalGrade,
     gradeBeforeQuantData,
     finalGrade,
-    institutionalPromotionApplied: promoted,
+    institutionalPromotionApplied: false,
     tradeMark,
     tradeMarkReasons,
     longCallDecision,
@@ -304,6 +297,36 @@ export function applyInstitutionalPositioning(result: ScanResult, positioning: I
       ? unique([...result.reasonsAgainstTrade, positioning.reason]).slice(0, 8)
       : result.reasonsAgainstTrade,
     warnings: unique([...result.warnings, ...positioning.warnings])
+  };
+}
+
+export function applyMacroRegimeModifier(result: ScanResult, macro: MacroRegimeContext): ScanResult {
+  const { modifier, counterTrend } = resolveMacroModifier(result.setupDirection, macro.effectiveRegime);
+  const finalScore = clampScore(round(result.setupScore * modifier, 0));
+  const flags = counterTrend ? unique([...(result.flags ?? []), "Counter-Trend"]) : (result.flags ?? []);
+  const gradeCapReasons = [...(result.gradeCapReasons ?? [])];
+  if (counterTrend) addUnique(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
+  else removeItem(gradeCapReasons, BEARISH_MACRO_GRADE_CAP_REASON);
+  const grade: Grade = counterTrend && result.grade === "A" ? "B" : result.grade;
+  const tradeMark = result.tradeMark ?? "Take";
+  const longCallDecision = compatibilityDecision(grade, tradeMark);
+
+  return {
+    ...result,
+    grade,
+    macroRegimeQqq: macro.qqq.regime,
+    macroRegimeSpy: macro.spy.regime,
+    effectiveMacroRegime: macro.effectiveRegime,
+    counterTrend,
+    macroModifierApplied: modifier,
+    finalScore,
+    longCallDecision,
+    setupQuality: grade === "A" ? "High" : "Moderate",
+    strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
+    entryRecommendationType: entryType(longCallDecision, result.compressionQualityStatus),
+    gradeCapReasons,
+    macroRegimeSummary: macro.detail,
+    flags
   };
 }
 
@@ -375,17 +398,10 @@ function evaluateCompression(dailySqueezeDotCount: number): LayerEvaluation {
   return layer("Compression Quality", "Bullish", "Daily chart has " + dailySqueezeDotCount + " consecutive active squeeze dots.");
 }
 
-function evaluateMacro(spyCandles?: Candle[], qqqCandles?: Candle[]): LayerEvaluation {
-  if (!spyCandles?.length || !qqqCandles?.length) return layer("Macro Regime", "Neutral", "SPY/QQQ macro context was not available; market regime treated as contextual.");
-  try {
-    const spy = buildTimeframeContext("daily", spyCandles);
-    const qqq = buildTimeframeContext("daily", qqqCandles);
-    if (spy.bias === "bullish" && qqq.bias === "bullish") return layer("Macro Regime", "Bullish", "SPY and QQQ daily EMA structures are bullish.");
-    if (spy.bias === "bearish" || qqq.bias === "bearish") return layer("Macro Regime", "Bearish", "SPY or QQQ daily EMA structure is bearish.");
-    return layer("Macro Regime", "Neutral", "SPY/QQQ daily EMA structures are mixed.");
-  } catch {
-    return layer("Macro Regime", "Neutral", "SPY/QQQ macro context could not be calculated.");
-  }
+function evaluateMacro(macro?: MacroRegimeContext): LayerEvaluation {
+  if (!macro) return layer("Macro Regime", "Neutral", "SPY/QQQ macro context was not available; market regime treated as contextual.");
+  const status: LayerStatus = macro.effectiveRegime === "bullish" ? "Bullish" : macro.effectiveRegime === "bearish" ? "Bearish" : "Neutral";
+  return layer("Macro Regime", status, macro.detail);
 }
 
 function evaluateRelativeStrength(candles: Candle[], spyCandles?: Candle[], qqqCandles?: Candle[]): string {
@@ -492,10 +508,10 @@ function gradeCapReasonsFor(
   const layer = (name: LayerEvaluation["layer"]) => layerEvaluations.find((item) => item.layer === name);
   const factor = (name: InstitutionalFactorName) => setupScore.factors.find((item) => item.name === name);
   if (setupScore.score < A_SETUP_SCORE_THRESHOLD) reasons.push("Setup score below 90.");
-  if (dailyEntryQualificationMode === "broad") reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
   if (dailyEntryQualificationMode === "extended") reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing") reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (layer("Squeeze Market Structure")?.status === "Neutral" && !dailyContext.positiveEmaStack) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
+  if (layer("Macro Regime")?.status === "Bearish") reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   if (factor("Sector Strength")?.status === "Insufficient Data") reasons.push("Sector Strength unavailable.");
   if (factor("Catalyst Safety")?.status === "Insufficient Data") reasons.push("Catalyst Safety unavailable.");
   return removeWeeklyGradeReasons(reasons);
@@ -507,7 +523,6 @@ function tradeMarkReasonsFor(input: {
   setupScore: SetupScoreResult;
   recommendedOption?: OptionContract;
   institutional: LayerEvaluation;
-  macro: LayerEvaluation;
 }): string[] {
   const reasons: string[] = [];
   const optionLayer = input.layerEvaluations.find((item) => item.layer === "Options Market Context");
@@ -517,7 +532,6 @@ function tradeMarkReasonsFor(input: {
   if (marketStructure?.status === "Bearish") reasons.push(marketStructure.detail);
   if (compression?.status === "Bearish") reasons.push(compression.detail);
   if (input.setupScore.catalystBlock) reasons.push("Earnings are within 14 days.");
-  if (input.macro.status === "Bearish") reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   if (input.institutional.status === "Bearish" || input.institutional.status === "Insufficient Data") reasons.push("Basic universe, liquidity, market-cap, or optionability filters failed.");
   if (optionLayer?.status === "Bearish") reasons.push(optionLayer.detail);
   else if (!input.recommendedOption) reasons.push("No preferred call contract was found.");
@@ -847,11 +861,9 @@ function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
   const extensionUpper = indicators.ema21 + indicators.atr14 * 1.5;
   const prefix = mode === "strict"
     ? "Current price is inside the preferred zone: "
-    : mode === "broad"
-      ? "Current price is inside the valid entry range: "
-      : mode === "extended"
-        ? "Current price is inside the controlled extension: "
-        : "Qualifying entry range: ";
+    : mode === "extended"
+      ? "Current price is inside the controlled extension: "
+      : "Qualifying entry range: ";
   return prefix + "$" + round(preferredLower, 2).toFixed(2) + " to $" + round(preferredUpper, 2).toFixed(2)
     + "; maximum B extension $" + round(extensionUpper, 2).toFixed(2) + ".";
 }

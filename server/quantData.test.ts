@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { InstitutionalPositioningSummary, ScanResult } from "../shared/types";
-import { applyInstitutionalPositioning } from "./scoring";
+import { applyInstitutionalPositioning, BEARISH_MACRO_GRADE_CAP_REASON } from "./scoring";
 import {
   createQuantDataPositioningProvider,
   normalizeDarkPool,
@@ -10,6 +10,7 @@ import {
   normalizeOpenInterestChange,
   normalizeOptionsExposure,
   normalizeOptionsFlow,
+  mostRecentCompletedSessionDate,
   previousTradingSessionDate,
   type QuantDataCache
 } from "./quantData";
@@ -307,19 +308,41 @@ describe("QuantData Institutional Positioning", () => {
     expect(result.institutionalPromotionApplied).toBe(false);
   });
 
-  it("promotes a clean high-B setup to A on multi-factor QuantData confluence", () => {
+  it("keeps a clean high-B setup at B even with strong institutional confluence", () => {
     const result = applyInstitutionalPositioning(
       baseResult(88, "B"),
       positioning("confirmed", ["Bullish Flow Confirmation"], { confirmingFactorCount: 3, vetoingFactorCount: 0 })
     );
 
     expect(result.gradeBeforeQuantData).toBe("B");
-    expect(result.grade).toBe("A");
-    expect(result.finalGrade).toBe("A");
-    expect(result.institutionalPromotionApplied).toBe(true);
-    expect(result.longCallDecision).toBe("Strong Long Call Candidate");
-    expect(result.strongLongCallCandidate).toBe(true);
-    expect(result.flags).toContain("QuantData Grade Promotion");
+    expect(result.grade).toBe("B");
+    expect(result.finalGrade).toBe("B");
+    expect(result.institutionalPromotionApplied).toBe(false);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.strongLongCallCandidate).toBe(false);
+    expect(result.flags).not.toContain("QuantData Grade Promotion");
+  });
+
+  it("does not let strong institutional positioning override a bearish-macro grade cap", () => {
+    const macroCappedA: ScanResult = {
+      ...baseResult(95, "B"),
+      gradeCapReasons: [BEARISH_MACRO_GRADE_CAP_REASON],
+      counterTrend: true,
+      flags: ["Counter-Trend"]
+    };
+    const result = applyInstitutionalPositioning(
+      macroCappedA,
+      positioning("confirmed", ["Bullish Flow Confirmation"], { confirmingFactorCount: 3, vetoingFactorCount: 0 })
+    );
+
+    expect(result.gradeBeforeQuantData).toBe("B");
+    expect(result.grade).toBe("B");
+    expect(result.finalGrade).toBe("B");
+    expect(result.institutionalPromotionApplied).toBe(false);
+    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
+    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.flags).toContain("Counter-Trend");
+    expect(result.flags).not.toContain("QuantData Grade Promotion");
   });
 
   it("never promotes an A-grade setup or a setup the technical gate already rejected", () => {
@@ -499,6 +522,23 @@ describe("QuantData Institutional Positioning", () => {
     expect(previousTradingSessionDate(new Date("2026-06-29T15:00:00.000Z"))).toBe("2026-06-26");
     expect(previousTradingSessionDate(new Date("2026-07-06T15:00:00.000Z"))).toBe("2026-07-02");
     expect(previousTradingSessionDate(new Date("2022-01-03T15:00:00.000Z"))).toBe("2021-12-30");
+  });
+
+  it("rolls the flow session forward to the just-closed session after the 4pm ET close", () => {
+    // Tuesday 2026-06-30 during regular hours (09:35 ET) -> prior session (Mon),
+    // so the 8:35am CT / 9:35 ET scan is unchanged.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T13:35:00.000Z"))).toBe("2026-06-29");
+    // One minute before the close (15:59 ET) still resolves to the prior session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T19:59:00.000Z"))).toBe("2026-06-29");
+    // Exactly at the 16:00 ET close -> today's just-closed session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T20:00:00.000Z"))).toBe("2026-06-30");
+    // After the close (16:30 ET) -> today. This is the after-hours fix.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-30T20:30:00.000Z"))).toBe("2026-06-30");
+    // After close on Friday -> Friday; the weekend then holds that session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-26T20:30:00.000Z"))).toBe("2026-06-26");
+    expect(mostRecentCompletedSessionDate(new Date("2026-06-27T20:30:00.000Z"))).toBe("2026-06-26");
+    // Holiday (observed Independence Day, Fri 2026-07-03) -> prior completed session.
+    expect(mostRecentCompletedSessionDate(new Date("2026-07-03T20:30:00.000Z"))).toBe("2026-07-02");
   });
 });
 

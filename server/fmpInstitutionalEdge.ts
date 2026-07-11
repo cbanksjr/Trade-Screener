@@ -138,7 +138,7 @@ export function createFmpInstitutionalEdgeProvider(input: {
 
     remainingCalls -= 1;
     const path = endpointPath(endpoint);
-    const response = await fetchWithRetry(() => fetchImpl(fmpUrl(input.baseUrl, path, { ...params, apikey: input.apiKey })));
+    const response = await fetchWithRetry((signal) => fetchImpl(fmpUrl(input.baseUrl, path, { ...params, apikey: input.apiKey }), { signal }));
     const text = await response.text();
     if (isUnavailableStatus(response.status)) {
       markAvailability(endpoint, false, `FMP ${path} unavailable: ${response.status}`);
