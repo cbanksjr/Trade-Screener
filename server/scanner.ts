@@ -39,6 +39,8 @@ const MAX_STORED_SCAN_WARNINGS = 50;
 const CATASTROPHIC_FAILURE_RATIO = 0.8;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
 type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
+type ScanSymbolOutcome = { result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason };
+export type ScanOutcomeResolution = "evaluated" | "conclusive-skip" | "transient-failure";
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
   "Communication Services": "XLC",
   "Consumer Discretionary": "XLY",
@@ -221,6 +223,8 @@ export async function runFullScan(): Promise<ScanResponse> {
   let usedLive = false;
   let usedDemo = false;
   let processedSymbols = 0;
+  let transientlyRetainedResults = 0;
+  let discardedStaleDemoResults = 0;
   const etfSymbols = settings.etfSymbols;
   const etfSymbolSet = new Set(etfSymbols);
   let symbolsToScan = await resolveScanSymbols(settings);
@@ -283,10 +287,11 @@ export async function runFullScan(): Promise<ScanResponse> {
       fmp,
       scanRanAt
     });
+    const resolution = classifyScanOutcome(outcome);
+    if (resolution !== "transient-failure") evaluatedSymbols.add(symbol);
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
     if (outcome.result) {
-      evaluatedSymbols.add(outcome.result.symbol);
       const previous = previousBySymbol.get(outcome.result.symbol);
       const watchlistEntry = watchlistBySymbol.get(outcome.result.symbol);
       const wasTracked = Boolean(previous || watchlistEntry);
@@ -332,6 +337,13 @@ export async function runFullScan(): Promise<ScanResponse> {
   const scannedSymbols = new Set(symbolsToScan);
   for (const previous of previousResults) {
     if (!scannedSymbols.has(previous.symbol) || evaluatedSymbols.has(previous.symbol) || resultSymbols.has(previous.symbol)) continue;
+    // Demo rows are never valid evidence for a live scan. If the current live
+    // request hit a transient provider gap, discard the old simulation rather
+    // than presenting it as a live candidate.
+    if (!canRetainPreviousResult(previous, canUseLiveSchwab)) {
+      discardedStaleDemoResults += 1;
+      continue;
+    }
     // Never re-emit a stale payload whose header price no longer matches its
     // candle scale (e.g. a legacy live-quote-over-demo-candles row); its chart
     // and trade plan would be meaningless.
@@ -343,6 +355,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     // last known active payload until a later scan evaluates its squeeze state.
     results.push(previous);
     resultSymbols.add(previous.symbol);
+    transientlyRetainedResults += 1;
   }
   diagnostics.qualifiedResults = results.length;
 
@@ -361,6 +374,8 @@ export async function runFullScan(): Promise<ScanResponse> {
     universeSize: symbolsToScan.length,
     retainedResults: results.length,
     watchlistEvaluations: watchlistEvaluatedResults.length,
+    transientlyRetainedResults,
+    discardedStaleDemoResults,
     durationMs: Date.now() - scanRanAt.getTime()
   });
   return withScanMetadata({
@@ -545,7 +560,7 @@ async function scanSymbol(input: {
   nextEarningsDate?: string;
   fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
   scanRanAt?: Date;
-}): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason }> {
+}): Promise<ScanSymbolOutcome> {
   const { symbol, settings, canUseLiveSchwab, assetType } = input;
   const scanRanAt = input.scanRanAt ?? new Date();
   const warnings: string[] = [];
@@ -741,6 +756,18 @@ async function scanSymbol(input: {
     warnings.push(...fallback.warnings.map((warning) => symbol + ": " + warning));
     return { result: fallback, warnings, usedLive, usedDemo: true };
   }
+}
+
+export function classifyScanOutcome(outcome: Pick<ScanSymbolOutcome, "result" | "skipReason">): ScanOutcomeResolution {
+  if (outcome.result) return "evaluated";
+  if (outcome.skipReason === "price" || outcome.skipReason === "stockLiquidity" || outcome.skipReason === "marketCap") {
+    return "conclusive-skip";
+  }
+  return "transient-failure";
+}
+
+export function canRetainPreviousResult(previous: Pick<ScanResult, "dataSource">, liveScan: boolean): boolean {
+  return !(liveScan && previous.dataSource === "demo");
 }
 
 // A result's header price (result.price, from the live quote) and its chart /

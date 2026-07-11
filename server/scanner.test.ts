@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, canRetainPreviousResult, classifyScanOutcome, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import type { SchwabQuote } from "./schwab";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
@@ -29,6 +29,31 @@ describe("scan symbol resolution", () => {
 
   it("normalizes ETF symbols from configuration-style input", () => {
     expect(parseEtfSymbols("spy, qqq, SMH, bad-symbol!, spy")).toEqual(["QQQ", "SMH", "SPY"]);
+  });
+});
+
+describe("scan outcome retention", () => {
+  it("treats deterministic universe filters as conclusive", () => {
+    expect(classifyScanOutcome({ skipReason: "price" })).toBe("conclusive-skip");
+    expect(classifyScanOutcome({ skipReason: "stockLiquidity" })).toBe("conclusive-skip");
+    expect(classifyScanOutcome({ skipReason: "marketCap" })).toBe("conclusive-skip");
+  });
+
+  it("treats provider and candle gaps as transient", () => {
+    expect(classifyScanOutcome({ skipReason: "quoteMissing" })).toBe("transient-failure");
+    expect(classifyScanOutcome({ skipReason: "candleHistory" })).toBe("transient-failure");
+    expect(classifyScanOutcome({ skipReason: "other" })).toBe("transient-failure");
+  });
+
+  it("treats a constructed result as evaluated", () => {
+    expect(classifyScanOutcome({ result: qualifyingResult("EVALUATED") })).toBe("evaluated");
+  });
+
+  it("never carries demo results into a live scan", () => {
+    expect(canRetainPreviousResult({ dataSource: "demo" }, true)).toBe(false);
+    expect(canRetainPreviousResult({ dataSource: "schwab" }, true)).toBe(true);
+    expect(canRetainPreviousResult({ dataSource: "mixed" }, true)).toBe(true);
+    expect(canRetainPreviousResult({ dataSource: "demo" }, false)).toBe(true);
   });
 });
 
