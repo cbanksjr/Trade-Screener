@@ -24,7 +24,7 @@ import {
   WalletCards,
   XCircle,
 } from "lucide-react";
-import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, SnapshotState, WatchlistEntry } from "../shared/types";
 import { isMarketRefreshWindow, isRefreshDue } from "../shared/refreshSchedule";
 import { CandlestickChart } from "./CandlestickChart";
 import "./styles.css";
@@ -91,6 +91,7 @@ function App() {
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
   const [scanStatus, setScanStatus] = React.useState("idle");
   const [lastScanFinishedAt, setLastScanFinishedAt] = React.useState<string>();
+  const [snapshotState, setSnapshotState] = React.useState<SnapshotState>("empty");
   const [nextRefreshAt, setNextRefreshAt] = React.useState<string>();
   const [theme, setTheme] = React.useState<ThemeMode>(initialTheme);
   const [view, setView] = React.useState<ViewMode>("scanner");
@@ -121,7 +122,6 @@ function App() {
 
       if (brokerOutcome.status === "fulfilled") {
         setBrokerStatus(brokerOutcome.value);
-        if (resultsOutcome.status === "fulfilled" && brokerOutcome.value.ok && shouldRefresh(resultsOutcome.value)) void startRefresh(false);
       } else {
         setBrokerStatus({ configured: false, baseUrl: "", ok: false, checkedAt: new Date().toISOString(), message: "Unable to check Schwab status." });
       }
@@ -148,7 +148,7 @@ function App() {
       if (!isMarketRefreshWindow() || !isRefreshDue(nextRefreshAt)) return;
       if (automaticRefreshPending.current) return;
       automaticRefreshPending.current = true;
-      void startRefresh(false).finally(() => {
+      void api.results().then(applyScanResponse).finally(() => {
         automaticRefreshPending.current = false;
       });
     };
@@ -160,43 +160,17 @@ function App() {
     };
   }, [brokerStatus?.ok, loading, nextRefreshAt, scanStatus]);
 
-  // While the market is open, poll the lightweight read endpoints so the displayed price
-  // tracks the broker's live quote. The server overlays a fresh Schwab price on every read
-  // (guarded by its own short TTL cache), so this is a read-only refresh — it never triggers
-  // a rescan. Outside market hours it stays idle, and the last price shown on load already
-  // reflects the most recent close via the same overlay.
-  React.useEffect(() => {
-    if (!brokerStatus?.ok) return;
-    const pollLivePrices = () => {
-      if (document.visibilityState !== "visible" || loading || scanStatus === "running") return;
-      if (!isMarketRefreshWindow()) return;
-      void api.results().then((data) => applyScanResponse(data)).catch(() => undefined);
-      if (view === "watchlist") void api.watchlist().then(setWatchlist).catch(() => undefined);
-    };
-    const interval = window.setInterval(pollLivePrices, 45_000);
-    document.addEventListener("visibilitychange", pollLivePrices);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", pollLivePrices);
-    };
-  }, [brokerStatus?.ok, loading, scanStatus, view]);
-
   function applyScanResponse(data: Partial<ScanResponse>) {
     const nextResults = sortResultsByGrade(data.results ?? []);
     setResults(nextResults);
     if (data.settings) setSettings(data.settings);
     if (data.lastScanFinishedAt) setLastScanFinishedAt(data.lastScanFinishedAt);
+    if (data.snapshotState) setSnapshotState(data.snapshotState);
     if (data.nextRefreshAt) setNextRefreshAt(data.nextRefreshAt);
     setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
     if (!data.isRefreshing) void api.watchlist().then(setWatchlist).catch(() => undefined);
-  }
-
-  function shouldRefresh(data: Partial<ScanResponse>) {
-    if (data.isRefreshing) return false;
-    if (!data.results?.length || !data.nextRefreshAt) return true;
-    return new Date(data.nextRefreshAt).getTime() <= Date.now();
   }
 
   async function startRefresh(showMessage: boolean) {
@@ -313,7 +287,7 @@ function App() {
           </label>
           <div className="top-status">
             <BrokerBadge brokerStatus={brokerStatus} settings={settings} onConnect={connectSchwab} />
-            <span className="freshness"><RefreshCw size={13} className={loading ? "spin" : ""} />{lastUpdatedLabel(lastScanFinishedAt, loading)}</span>
+            <span className={`freshness ${snapshotState === "stale" ? "stale" : ""}`}><RefreshCw size={13} className={loading ? "spin" : ""} />{lastUpdatedLabel(lastScanFinishedAt, loading, snapshotState)}</span>
           </div>
           <button className="theme-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>
             {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}<span>{theme === "dark" ? "Light" : "Dark"}</span>
@@ -324,7 +298,7 @@ function App() {
         </header>
 
         <section className="summary-bar" aria-label="Scan summary">
-          <span><ShieldCheck size={15} />{scanStatusLabel(scanStatus, loading)}</span><i />
+          <span><ShieldCheck size={15} />{scanStatusLabel(scanStatus, loading, snapshotState)}</span><i />
           <span><strong>{passingCount}</strong> passing</span>
           <span className="take-text"><strong>{takeCount}</strong> Take</span>
           <span className="a-text"><strong>{gradeACount}</strong> A setups</span>
@@ -586,18 +560,21 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   });
 }
 
-function scanStatusLabel(status: string, loading: boolean): string {
-  if (loading || status === "running") return "Scan refreshing";
+function scanStatusLabel(status: string, loading: boolean, snapshotState: SnapshotState): string {
+  if (loading || status === "running") return snapshotState === "empty" ? "First scan running" : "Saved scan refreshing";
+  if (snapshotState === "stale") return "Stale snapshot";
   if (status === "complete") return "Scan complete";
   if (status === "failed") return "Scan failed";
   return "Cached results";
 }
 
-function lastUpdatedLabel(value: string | undefined, loading: boolean): string {
-  if (loading) return "Refreshing in background";
-  if (!value) return "Cached results";
+function lastUpdatedLabel(value: string | undefined, loading: boolean, snapshotState: SnapshotState): string {
+  if (!value) return loading ? "Building first snapshot" : "No saved scan";
   const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? `Updated ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : "Cached results";
+  if (!Number.isFinite(date.getTime())) return "Saved scan";
+  const timestamp = `${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
+  if (loading) return `Saved scan · ${timestamp} · Refreshing`;
+  return snapshotState === "stale" ? `Stale snapshot · ${timestamp}` : `Latest scan · ${timestamp}`;
 }
 
 function shortDate(value: string): string {

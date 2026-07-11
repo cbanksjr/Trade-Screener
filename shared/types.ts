@@ -7,6 +7,7 @@ export type SqueezeMaturityMode = "mature" | "developing" | "insufficient";
 export type SqueezeLifecycleStatus = "developing" | "ready";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
+export type SnapshotState = "current" | "stale" | "empty";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
 
 export type Candle = {
@@ -378,6 +379,8 @@ export type ScanMetadata = {
   scanDiagnostics?: ScanDiagnostics;
   nextRefreshAt?: string;
   isRefreshing?: boolean;
+  snapshotState?: SnapshotState;
+  snapshotAgeMs?: number;
 };
 
 export type ScanDiagnosticCounts = {

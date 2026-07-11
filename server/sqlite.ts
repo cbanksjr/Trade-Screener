@@ -178,6 +178,53 @@ export async function replaceScanResults(results: Array<{ symbol: string }>): Pr
   replaceAll(results);
 }
 
+export async function replaceScanSnapshot(results: Array<{ symbol: string }>, metadata: ScanMetadata): Promise<void> {
+  const serializedMetadata = JSON.stringify(metadata);
+  const updatedAt = metadata.lastScanFinishedAt ?? new Date().toISOString();
+  if (usePostgres) {
+    const client = await pgClient();
+    try {
+      await client.query("BEGIN");
+      await client.query("DELETE FROM scan_results;");
+      for (const result of results) {
+        await client.query(`
+          INSERT INTO scan_results (symbol, payload, updated_at)
+          VALUES ($1, $2, $3)
+          ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
+        `, [result.symbol.toUpperCase(), JSON.stringify(result), updatedAt]);
+      }
+      await client.query(`
+        INSERT INTO settings (key, value)
+        VALUES ('scanMetadata', $1)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+      `, [serializedMetadata]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    return;
+  }
+
+  const upsert = getDb().prepare(`
+    INSERT INTO scan_results (symbol, payload, updated_at)
+    VALUES (?, ?, ?)
+    ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
+  `);
+  const saveSnapshot = getDb().transaction((rows: Array<{ symbol: string }>) => {
+    getDb().prepare("DELETE FROM scan_results;").run();
+    for (const result of rows) upsert.run(result.symbol.toUpperCase(), JSON.stringify(result), updatedAt);
+    getDb().prepare(`
+      INSERT INTO settings (key, value)
+      VALUES ('scanMetadata', ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value;
+    `).run(serializedMetadata);
+  });
+  saveSnapshot(results);
+}
+
 export async function getCachedResults(): Promise<unknown[]> {
   if (usePostgres) {
     const rows = (await pgQuery<{ payload: string }>("SELECT payload FROM scan_results ORDER BY updated_at DESC;")).rows;
@@ -185,6 +232,14 @@ export async function getCachedResults(): Promise<unknown[]> {
   }
   const rows = getDb().prepare("SELECT payload FROM scan_results ORDER BY updated_at DESC;").all() as { payload: string }[];
   return rows.map((row) => JSON.parse(row.payload));
+}
+
+export async function hasCachedResults(): Promise<boolean> {
+  if (usePostgres) {
+    const row = (await pgQuery<{ present: boolean }>("SELECT EXISTS (SELECT 1 FROM scan_results) AS present;")).rows[0];
+    return Boolean(row?.present);
+  }
+  return Boolean(getDb().prepare("SELECT 1 FROM scan_results LIMIT 1;").get());
 }
 
 export async function upsertWatchlistEntry(symbol: string, payload: unknown): Promise<void> {

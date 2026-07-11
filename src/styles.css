@@ -148,6 +148,7 @@ h1, h2, h3, p { margin: 0; }
 .search-box kbd { background: var(--surface-3); border: 1px solid var(--line); border-radius: 5px; color: var(--faint); font-size: 10px; padding: 2px 6px; }
 .top-status { align-items: center; display: flex; gap: 13px; }
 .freshness { align-items: center; color: var(--muted); display: inline-flex; font-size: 11px; gap: 6px; white-space: nowrap; }
+.freshness.stale { color: var(--amber); }
 .broker-badge {
   align-items: center;
   background: transparent;

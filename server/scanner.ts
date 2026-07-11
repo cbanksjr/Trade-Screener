@@ -1,5 +1,5 @@
 import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
-import { AUTO_REFRESH_INTERVAL_MS } from "../shared/refreshSchedule";
+import { AUTO_REFRESH_INTERVAL_MS, snapshotFreshness } from "../shared/refreshSchedule";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { resolveEtfSymbols } from "./etfUniverse";
@@ -29,7 +29,7 @@ import {
   resolveWeeklyQualificationMode
 } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
-import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, hasCachedResults, removeWatchlistEntry, replaceScanSnapshot, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
 
@@ -163,12 +163,14 @@ export async function startScanRefresh(scanRunner: () => Promise<ScanResponse> =
 
 export async function readCachedScanResponse(): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
+  const freshness = snapshotFreshness(metadata.lastScanFinishedAt);
   return {
     mode: metadata.lastScanMode ?? "demo",
-    results: await overlayLiveQuotePrices(await readDisplayResults()),
+    results: await readDisplayResults(),
     settings: await readSettings(),
     warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
     ...metadata,
+    ...freshness,
     scanStatus: activeScan ? "running" : metadata.scanStatus,
     isRefreshing: Boolean(activeScan)
   };
@@ -176,8 +178,9 @@ export async function readCachedScanResponse(): Promise<ScanResponse> {
 
 export async function readScanMetadata(): Promise<ScanMetadata> {
   const stored = await getScanMetadata();
+  const storedStatus = stored.scanStatus === "running" && !activeScan ? "idle" : stored.scanStatus;
   return {
-    scanStatus: stored.scanStatus ?? "idle",
+    scanStatus: storedStatus ?? "idle",
     lastScanStartedAt: stored.lastScanStartedAt,
     lastScanFinishedAt: stored.lastScanFinishedAt,
     lastScanFailedAt: stored.lastScanFailedAt,
@@ -198,13 +201,11 @@ export async function recordUniverseWarning(message: string): Promise<void> {
 }
 
 export async function shouldAutoRefresh(): Promise<boolean> {
-  const cached = await readDisplayResults();
   const metadata = await readScanMetadata();
   if (activeScan) return false;
   if (!hasSchwabCredentials() || !await hasSchwabTokens()) return false;
-  if (!cached.length) return true;
-  if (!metadata.nextRefreshAt) return true;
-  return new Date(metadata.nextRefreshAt).getTime() <= Date.now();
+  if (!await hasCachedResults()) return true;
+  return snapshotFreshness(metadata.lastScanFinishedAt).snapshotState === "stale";
 }
 
 export async function runFullScan(): Promise<ScanResponse> {
@@ -402,9 +403,7 @@ export async function readDisplayResults(): Promise<ScanResult[]> {
 
 export async function readWatchlist(): Promise<WatchlistEntry[]> {
   const entries = await getWatchlistEntries();
-  const results = await overlayLiveQuotePrices(
-    entries.map((entry) => normalizeCachedResult(entry.payload as ScanResult))
-  );
+  const results = entries.map((entry) => normalizeCachedResult(entry.payload as ScanResult));
   return entries.map((entry, index) => ({
     symbol: entry.symbol,
     addedAt: entry.addedAt,
@@ -516,10 +515,8 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
     const response = await scanRunner();
     const catastrophicReason = catastrophicScanReason(response);
     if (catastrophicReason) throw new Error(catastrophicReason);
-    await replaceScanResults(response.results);
-    await syncWatchlistWithLatestResults(response.evaluatedResults);
     const finishedAt = new Date().toISOString();
-    await setScanMetadata({
+    const completedMetadata: ScanMetadata = {
       scanStatus: "complete",
       lastScanStartedAt: startedAt,
       lastScanFinishedAt: finishedAt,
@@ -527,9 +524,15 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
       lastScanMode: response.mode,
       lastScanWarnings: compactScanWarnings(response.warnings),
       scanDiagnostics: response.scanDiagnostics,
-      nextRefreshAt: new Date(new Date(startedAt).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
+      nextRefreshAt: new Date(new Date(finishedAt).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
       isRefreshing: false
-    });
+    };
+    await replaceScanSnapshot(response.results, completedMetadata);
+    try {
+      await syncWatchlistWithLatestResults(response.evaluatedResults);
+    } catch (error) {
+      console.warn("Scan snapshot committed, but watchlist synchronization failed:", readError(error, "Unknown watchlist error."));
+    }
   } catch (error) {
     const finishedAt = new Date().toISOString();
     logScanMemory("failed", { message: readError(error, "Scan failed.") });

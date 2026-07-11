@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { Candle, ScanDiagnostics, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
-import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, replaceScanSnapshot, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
 import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, canRetainPreviousResult, classifyScanOutcome, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import type { SchwabQuote } from "./schwab";
@@ -339,6 +339,33 @@ describe("background scan refresh", () => {
     const response = await readCachedScanResponse();
 
     expect(response.results.map((result) => result.symbol)).toEqual(["CACHE"]);
+    expect(response.isRefreshing).toBe(false);
+    expect(response.snapshotState).toBe("stale");
+  }));
+
+  it("stores completed results and their metadata as one snapshot", async () => withDbRestore(async () => {
+    const finishedAt = new Date().toISOString();
+    await replaceScanSnapshot([qualifyingResult("SNAPSHOT")], {
+      scanStatus: "complete",
+      lastScanMode: "live",
+      lastScanFinishedAt: finishedAt,
+      nextRefreshAt: new Date(new Date(finishedAt).getTime() + 15 * 60 * 1000).toISOString()
+    });
+
+    const response = await readCachedScanResponse();
+
+    expect(response.results.map((result) => result.symbol)).toEqual(["SNAPSHOT"]);
+    expect(response.lastScanFinishedAt).toBe(finishedAt);
+    expect(response.lastScanMode).toBe("live");
+    expect(response.snapshotState).toBe("current");
+  }));
+
+  it("does not report an orphaned persisted running state after restart", async () => withDbRestore(async () => {
+    await setScanMetadata({ scanStatus: "running", lastScanFinishedAt: "2026-05-30T12:00:00.000Z" });
+
+    const response = await readCachedScanResponse();
+
+    expect(response.scanStatus).toBe("idle");
     expect(response.isRefreshing).toBe(false);
   }));
 

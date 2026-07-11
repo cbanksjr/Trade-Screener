@@ -49,8 +49,8 @@ app.put("/api/settings", async (req, res, next) => {
 
 app.get("/api/results", async (_req, res, next) => {
   try {
-    const response = await readCachedScanResponse();
-    if (await shouldAutoRefresh()) void startScanRefresh();
+    let response = await readCachedScanResponse();
+    if (await shouldAutoRefresh()) response = await startScanRefresh();
     res.json(response);
   } catch (error) {
     next(error);
