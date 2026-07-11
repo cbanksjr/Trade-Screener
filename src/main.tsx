@@ -160,6 +160,27 @@ function App() {
     };
   }, [brokerStatus?.ok, loading, nextRefreshAt, scanStatus]);
 
+  // While the market is open, poll the lightweight read endpoints so the displayed price
+  // tracks the broker's live quote. The server overlays a fresh Schwab price on every read
+  // (guarded by its own short TTL cache), so this is a read-only refresh — it never triggers
+  // a rescan. Outside market hours it stays idle, and the last price shown on load already
+  // reflects the most recent close via the same overlay.
+  React.useEffect(() => {
+    if (!brokerStatus?.ok) return;
+    const pollLivePrices = () => {
+      if (document.visibilityState !== "visible" || loading || scanStatus === "running") return;
+      if (!isMarketRefreshWindow()) return;
+      void api.results().then((data) => applyScanResponse(data)).catch(() => undefined);
+      if (view === "watchlist") void api.watchlist().then(setWatchlist).catch(() => undefined);
+    };
+    const interval = window.setInterval(pollLivePrices, 45_000);
+    document.addEventListener("visibilitychange", pollLivePrices);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", pollLivePrices);
+    };
+  }, [brokerStatus?.ok, loading, scanStatus, view]);
+
   function applyScanResponse(data: Partial<ScanResponse>) {
     const nextResults = sortResultsByGrade(data.results ?? []);
     setResults(nextResults);

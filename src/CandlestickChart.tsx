@@ -38,12 +38,6 @@ function emaSeries(candles: Candle[], length: number): LineData<Time>[] {
   });
 }
 
-// Trailing window of daily candles rendered on the chart. The most recent bars that
-// fit the container are anchored to the right; the remainder scroll into view. Keeping
-// this generous (rather than a fixed on-screen count) seeds the EMAs well before the
-// visible region.
-const CHART_CANDLE_WINDOW = 120;
-
 export function CandlestickChart({ candles, entryArea, stopPrice, target1, target2, symbol, theme }: CandlestickChartProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
 
@@ -54,9 +48,9 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     ));
     if (!container || validCandles.length < 2) return;
 
-    const visibleCandles = validCandles.slice(-CHART_CANDLE_WINDOW);
-    const ema8Data = emaSeries(validCandles, 8).slice(-CHART_CANDLE_WINDOW);
-    const ema21Data = emaSeries(validCandles, 21).slice(-CHART_CANDLE_WINDOW);
+    const visibleCandles = validCandles.slice(-60);
+    const ema8Data = emaSeries(visibleCandles, 8);
+    const ema21Data = emaSeries(visibleCandles, 21);
 
     const dark = theme === "dark";
     const chart = createChart(container, {
@@ -78,13 +72,9 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
       timeScale: {
         borderColor: dark ? "#243746" : "#d7e1e8",
         timeVisible: false,
-        rightOffset: 3,
-        // A fixed integer bar spacing keeps every bar on whole-pixel boundaries so the
-        // 1px wick renders centered on the body. Do NOT pair this with an explicit
-        // setVisibleLogicalRange() — a fractional range forces fractional bar widths and
-        // pushes wicks off-center (they drift to the left edge of the body).
-        barSpacing: 12,
-        minBarSpacing: 6,
+        rightOffset: 2,
+        barSpacing: 10,
+        minBarSpacing: 5,
       },
       crosshair: {
         vertLine: { color: dark ? "#507080" : "#8da5b3", labelBackgroundColor: dark ? "#173847" : "#dceff1" },
@@ -94,16 +84,14 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
       handleScale: { axisPressedMouseMove: true, mouseWheel: true, pinch: true },
     });
 
-    const upColor = dark ? "#59d8a0" : "#168a64";
-    const downColor = dark ? "#fb7185" : "#d7485f";
     const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor,
-      downColor,
-      // Solid single-color candles: wick matches the body and borders are off. The old
-      // lighter wick/border tints made bodies read as hollow outlined bars.
-      wickUpColor: upColor,
-      wickDownColor: downColor,
-      borderVisible: false,
+      upColor: dark ? "#59d8a0" : "#168a64",
+      downColor: dark ? "#fb7185" : "#d7485f",
+      wickUpColor: dark ? "#77e5b5" : "#168a64",
+      wickDownColor: dark ? "#ff8b9b" : "#d7485f",
+      borderVisible: true,
+      borderUpColor: dark ? "#77e5b5" : "#168a64",
+      borderDownColor: dark ? "#ff8b9b" : "#d7485f",
       priceLineVisible: true,
       lastValueVisible: true,
     });
@@ -139,14 +127,9 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     if (typeof target1 === "number") candleSeries.createPriceLine({ price: target1, color: dark ? "#59d8a0" : "#168a64", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "T1" });
     if (typeof target2 === "number") candleSeries.createPriceLine({ price: target2, color: dark ? "#7dd3fc" : "#1678a8", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "T2" });
 
-    // Anchor to the most recent bars; the fixed barSpacing above decides how many fit.
-    // `autoSize: true` gives the chart its own resize handling, so no manual
-    // ResizeObserver (and no fractional setVisibleLogicalRange) is needed here.
-    chart.timeScale().scrollToRealTime();
+    chart.timeScale().fitContent();
 
-    return () => {
-      chart.remove();
-    };
+    return () => chart.remove();
   }, [candles, entryArea, stopPrice, symbol, target1, target2, theme]);
 
   if (candles.length < 2) {
