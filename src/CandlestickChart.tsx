@@ -49,8 +49,10 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     if (!container || validCandles.length < 2) return;
 
     const visibleCandles = validCandles.slice(-60);
-    const ema8Data = emaSeries(visibleCandles, 8);
-    const ema21Data = emaSeries(visibleCandles, 21);
+    // Seed the EMAs from the full candle history so the plotted lines match
+    // the backend's values instead of drifting from a visible-window seed.
+    const ema8Data = emaSeries(validCandles, 8).slice(-visibleCandles.length);
+    const ema21Data = emaSeries(validCandles, 21).slice(-visibleCandles.length);
 
     const dark = theme === "dark";
     const chart = createChart(container, {

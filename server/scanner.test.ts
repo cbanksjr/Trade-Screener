@@ -963,6 +963,21 @@ describe("live price overlay", () => {
     expect(third[0].price).toBe(150);
     expect(calls).toBe(2);
   });
+
+  it("keeps the scan-time price when the live quote diverges too far from the cached candles", async () => {
+    __clearLivePriceCacheForTest();
+    const base = { ...qualifyingResult("AAPL"), price: 100, candles: [candleAt(100)] };
+    const divergedQuote = 150;
+    const results = [base];
+    const overlaid = await overlayLiveQuotePrices(results, {
+      isLive: async () => true,
+      fetchQuotesFor: async (symbols) => new Map(symbols.map((s) => [s, quote(s, divergedQuote)])),
+      now: () => 1_000
+    });
+    // The overlaid price would fail priceMatchesCandles, so the frozen
+    // scan-time price stays until a fresh scan replaces the candles.
+    expect(overlaid[0].price).toBe(base.price);
+  });
 });
 
 async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[], evaluatedResults: ScanResult[] = results): Promise<ScanResponse> {

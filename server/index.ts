@@ -17,6 +17,10 @@ await initDb();
 await refreshUniverseIfNeeded();
 
 const app = express();
+// Render (and similar hosts) terminate TLS one proxy hop in front of the app;
+// without this, req.ip is the proxy's address and the scan rate limit lumps
+// every client together.
+app.set("trust proxy", 1);
 app.use(cors({ origin: config.clientOrigin }));
 app.use(express.json({ limit: "2mb" }));
 app.use(optionalBasicAuth);

@@ -439,7 +439,13 @@ export async function overlayLiveQuotePrices(
 
   return results.map((result) => {
     const entry = livePriceCache.get(result.symbol);
-    return entry ? { ...result, price: entry.price } : result;
+    if (!entry) return result;
+    const overlaid = { ...result, price: entry.price };
+    // Keep the price/candle scale guard intact between scans: a live quote
+    // that has moved beyond what the cached candles can represent would pair
+    // a mismatched header price with the chart and trade plan, so keep the
+    // scan-time price until the next refresh replaces the candles.
+    return priceMatchesCandles(overlaid) ? overlaid : result;
   });
 }
 
@@ -1007,6 +1013,10 @@ function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {
   if (typeof result.dailySqueezeDotCount === "number") return result.dailySqueezeDotCount;
   if (!result.candles?.length) return undefined;
   try {
+    // Cached rows only carry the trailing 120-candle window (scoring.ts), so
+    // this recompute is a lower bound for legacy rows whose squeeze predates
+    // the window. That is safe: every grading threshold saturates at 5 dots,
+    // so only the displayed count can understate, never the behavior.
     return activeSqueezeDotCount(result.candles);
   } catch {
     return undefined;
