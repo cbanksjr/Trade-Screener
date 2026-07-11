@@ -213,7 +213,7 @@ export function gradeSetup(input: {
     recommendedDelta: recommendedOption?.delta !== undefined ? recommendedOption.delta.toFixed(2) : undefined,
     suggestedEntryArea: suggestedEntry(price, indicators),
     invalidationLevel: invalidation(price, indicators),
-    stockStopPrice: round(indicators.ema34, 2),
+    stockStopPrice: round(Math.min(indicators.ema55, indicators.ema89), 2),
     target1: round(price + indicators.atr14 * 1.5, 2),
     target2: round(price + indicators.atr14 * 2.5, 2),
     reasonsSupportingTrade: supportReasons(layerEvaluations, dailyContext, weeklyContext, indicators, recommendedOption),
@@ -855,8 +855,8 @@ function riskReasons(layers: LayerEvaluation[], dailyContext: LowerTimeframeCont
 }
 
 function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
-  const preferredLower = indicators.ema21;
-  const preferredUpper = indicators.ema21 + indicators.atr14;
+  const preferredLower = indicators.ema34;
+  const preferredUpper = Math.max(indicators.ema8, indicators.ema21 + indicators.atr14);
   const mode = resolveDailyEntryQualificationMode(indicators, price);
   const extensionUpper = indicators.ema21 + indicators.atr14 * 1.5;
   const prefix = mode === "strict"
@@ -869,7 +869,7 @@ function suggestedEntry(price: number, indicators: IndicatorSnapshot): string {
 }
 
 function invalidation(_price: number, indicators: IndicatorSnapshot): string {
-  return "Daily close below the 34 EMA near $" + round(indicators.ema34, 2).toFixed(2) + ".";
+  return "Daily close below the 55/89 EMA zone near $" + round(Math.min(indicators.ema55, indicators.ema89), 2).toFixed(2) + ".";
 }
 
 function optionDteLabel(contract: OptionContract): string {

@@ -83,12 +83,12 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Market cap >= $2B when Schwab provides market cap
 - ETFs bypass beta, market-cap, sector, and single-company earnings requirements
 - Stock liquidity requires current-day volume >= 1M and passes with either average share volume >= 1.5M or average dollar volume >= $300M; average share volume uses Schwab first, FMP profile second, and recent 20-session candle volume last
-- A setups require the full bullish 8/21/34/55/89 EMA stack and price between the 21 EMA and 1 ATR above it
+- A setups require the full bullish 8/21/34/55/89 EMA stack and the preferred 21-to-8 EMA entry pocket
 - B setups may use the expanded trend path when the Daily 8 EMA is above the 21 EMA and price is between the 21 EMA and 1.5 ATR above it
 - Selected timeframes: daily and weekly
 - At least 2 consecutive active Daily squeeze dots before expansion; 2-4 dots can qualify as a developing B setup, while 5+ dots establish a ready setup that remains visible until the squeeze fires
 - Daily 20-period Squeeze histogram must be strictly above zero; both cyan (positive and rising) and blue (positive but falling) qualify
-- Daily price from the 21 EMA through 1 ATR above it is eligible for the preferred A-entry zone; controlled extension from 1 ATR through 1.5 ATR above the 21 EMA remains valid but contributes fewer setup points. A Daily close below the 34 EMA is the stock-price invalidation level.
+- Daily price between the 34 EMA and 8 EMA, or within 1 ATR above the 21 EMA, is eligible for the preferred A-entry zone; controlled extension up to 1.5 ATR above the 21 EMA remains valid but contributes fewer setup points
 - Daily squeeze-dot count and a histogram above zero are compression gates; ATR contraction, Bollinger Band contraction, candle-range contraction, and whether positive momentum is improving remain context
 - Weekly full-stack or 21-EMA proximity confirmation remains preferred; neutral Weekly structure can qualify only as B, while bearish Weekly structure is still rejected
 - Weekly squeeze is bonus confirmation, not a requirement
