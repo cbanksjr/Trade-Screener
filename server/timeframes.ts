@@ -1,43 +1,6 @@
-import type { AnalysisTimeframe, Candle, LayerStatus, LowerTimeframeConfluence, LowerTimeframeContext, TimeframeBias } from "../shared/types";
+import type { AnalysisTimeframe, Candle, LayerStatus, LowerTimeframeContext, TimeframeBias } from "../shared/types";
 import { dailyEntryDetail, resolveDailyEntryQualificationMode } from "./entryZone";
 import { latestIndicators } from "./indicators";
-
-export function buildLowerTimeframeConfluence(thirtyMinuteCandles: Candle[]): LowerTimeframeConfluence {
-  const oneHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 2, { includeIncomplete: false });
-  const fourHourCandles = aggregateSequentialCandles(thirtyMinuteCandles, 8, { includeIncomplete: false });
-  return {
-    thirtyMinute: buildContext("30m", thirtyMinuteCandles),
-    oneHour: buildContext("1h", oneHourCandles),
-    fourHour: buildContext("4h", fourHourCandles)
-  };
-}
-
-export function aggregateSequentialCandles(candles: Candle[], candlesPerBar: number, options: { includeIncomplete?: boolean } = {}): Candle[] {
-  const includeIncomplete = options.includeIncomplete ?? true;
-  const bySession = new Map<string, Candle[]>();
-  for (const candle of candles.filter((item) => Number.isFinite(new Date(item.date).getTime())).sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())) {
-    const session = new Date(candle.date).toISOString().slice(0, 10);
-    bySession.set(session, [...(bySession.get(session) ?? []), candle]);
-  }
-
-  const output: Candle[] = [];
-  for (const sessionCandles of bySession.values()) {
-    for (let index = 0; index < sessionCandles.length; index += candlesPerBar) {
-      const group = sessionCandles.slice(index, index + candlesPerBar);
-      if (!includeIncomplete && group.length < candlesPerBar) continue;
-      if (!group.length) continue;
-      output.push({
-        date: group[0].date,
-        open: group[0].open,
-        high: Math.max(...group.map((candle) => candle.high)),
-        low: Math.min(...group.map((candle) => candle.low)),
-        close: group[group.length - 1].close,
-        volume: group.reduce((sum, candle) => sum + candle.volume, 0)
-      });
-    }
-  }
-  return output;
-}
 
 export function buildTimeframeContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTimeframeContext {
   return buildContext(timeframe, candles);

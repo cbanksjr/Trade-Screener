@@ -153,12 +153,6 @@ export type LowerTimeframeContext = {
   detail: string;
 };
 
-export type LowerTimeframeConfluence = {
-  thirtyMinute: LowerTimeframeContext;
-  oneHour: LowerTimeframeContext;
-  fourHour: LowerTimeframeContext;
-};
-
 export type IndicatorSnapshot = {
   ema8: number;
   ema21: number;
@@ -246,7 +240,6 @@ export type ScanResult = {
   maxScore: number;
   indicators: IndicatorSnapshot;
   weeklyIndicators?: IndicatorSnapshot;
-  lowerTimeframes?: LowerTimeframeConfluence;
   squeezeStatusByTimeframe: TimeframeSqueezeStatus[];
   dailyEntryQualificationMode?: DailyEntryQualificationMode;
   weeklyQualificationMode?: WeeklyQualificationMode;
@@ -370,9 +363,6 @@ export type FundamentalAnalysis = {
     longCallDecision?: LongCallDecision;
     dailySqueeze: SqueezeState;
     weeklySqueeze?: SqueezeState;
-    thirtyMinuteSqueeze?: SqueezeState;
-    oneHourSqueeze?: SqueezeState;
-    fourHourSqueeze?: SqueezeState;
     optionable: boolean;
     suggestedOptionCount: number;
   };

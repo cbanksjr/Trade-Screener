@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Candle, LowerTimeframeConfluence, LowerTimeframeContext, SqueezeState } from "../shared/types";
+import type { Candle, SqueezeState } from "../shared/types";
 import { demoOptions } from "./demoData";
 import {
   activeSqueezeDotCount,
@@ -25,7 +25,6 @@ import {
   rankCallOptions,
   resolveWeeklyQualificationMode
 } from "./scoring";
-import { buildLowerTimeframeConfluence } from "./timeframes";
 
 describe("indicator calculations", () => {
   it("seeds the EMA with a simple moving average instead of the first raw value", () => {
@@ -153,7 +152,6 @@ describe("layer decision engine", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
-    const lowerTimeframes = bullishLowerTimeframes("none");
     const result = gradeSetup({
       symbol: "BULL",
       candles,
@@ -161,7 +159,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("BULL"),
       optionable: true,
       options: demoOptions("BULL", price),
-      lowerTimeframes,
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -184,7 +181,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("NODAILY"),
       optionable: true,
       options: demoOptions("NODAILY", price),
-      lowerTimeframes: bullishLowerTimeframes("low")
     });
 
     expect(result.indicators.squeezeState).not.toBe("low");
@@ -203,7 +199,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("DAILYSQZ"),
       optionable: true,
       options: demoOptions("DAILYSQZ", price),
-      lowerTimeframes: bullishLowerTimeframes("none"),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -252,7 +247,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("FOURDOTS"),
       optionable: true,
       options: demoOptions("FOURDOTS", price),
-      lowerTimeframes: bullishLowerTimeframes("none"),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -301,7 +295,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("LOWEREXT"),
       optionable: true,
       options: demoOptions("LOWEREXT", price),
-      lowerTimeframes: bullishLowerTimeframes("none", false),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -794,7 +787,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("BONUSSQZ"),
       optionable: true,
       options: demoOptions("BONUSSQZ", price),
-      lowerTimeframes: bullishLowerTimeframes("high"),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -814,7 +806,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("BEARLOWER"),
       optionable: true,
       options: demoOptions("BEARLOWER", price),
-      lowerTimeframes: bearishLowerTimeframes(),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -834,10 +825,8 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("INTRADAYONLY"),
       optionable: true,
       options: demoOptions("INTRADAYONLY", price),
-      lowerTimeframes: bullishLowerTimeframes("high")
     });
 
-    expect(result.lowerTimeframes?.thirtyMinute.squeezeState).toBe("high");
     expect(result.longCallDecision).toBe("Avoid");
   });
 
@@ -853,7 +842,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("ABOVE21"),
       optionable: true,
       options: demoOptions("ABOVE21", lowerPocketPrice),
-      lowerTimeframes: bullishLowerTimeframes("none"),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -864,7 +852,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("BELOW8"),
       optionable: true,
       options: demoOptions("BELOW8", upperPocketPrice),
-      lowerTimeframes: bullishLowerTimeframes("none"),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -950,7 +937,6 @@ describe("layer decision engine", () => {
       fundamentals: strongFundamentals("NOWEEKLY"),
       optionable: true,
       options: demoOptions("NOWEEKLY", price),
-      lowerTimeframes: buildLowerTimeframeConfluence(intradayCandles("up", 90))
     });
 
     expect(result.weeklyContextSummary).toContain("Weekly context unavailable");
@@ -1253,26 +1239,6 @@ function bearishMacroRegime(): MacroRegimeContext {
   };
 }
 
-function intradayCandles(direction: "up" | "down", days = 90): Candle[] {
-  const candles: Candle[] = [];
-  const start = Date.UTC(2026, 0, 5, 14, 30);
-  for (let day = 0; day < days; day += 1) {
-    for (let slot = 0; slot < 13; slot += 1) {
-      const index = day * 13 + slot;
-      const close = direction === "up" ? 100 + index * 0.08 : 220 - index * 0.08;
-      candles.push({
-        date: new Date(start + day * 24 * 60 * 60 * 1000 + slot * 30 * 60 * 1000).toISOString(),
-        open: close - 0.08,
-        high: close + 0.35,
-        low: close - 0.35,
-        close,
-        volume: 1_000_000
-      });
-    }
-  }
-  return candles;
-}
-
 function strongFundamentals(symbol: string) {
   return {
     symbol,
@@ -1335,122 +1301,6 @@ function weeklyProximityIndicator(price: number, atrDistance: number) {
     ema89: ema21 - 5,
     ema100: ema21 - 6,
     atr14
-  };
-}
-
-function bullishLowerTimeframes(squeezeState: SqueezeState, withinOneAtrOfEma21 = true): LowerTimeframeConfluence {
-  return {
-    thirtyMinute: bullishContext("30m", squeezeState, withinOneAtrOfEma21),
-    oneHour: bullishContext("1h", squeezeState, withinOneAtrOfEma21),
-    fourHour: bullishContext("4h", squeezeState, withinOneAtrOfEma21)
-  };
-}
-
-function bearishLowerTimeframes(): LowerTimeframeConfluence {
-  return {
-    thirtyMinute: bearishContext("30m"),
-    oneHour: bearishContext("1h"),
-    fourHour: bearishContext("4h")
-  };
-}
-
-function mixedLowerTimeframes(bullishCount: number): LowerTimeframeConfluence {
-  const contexts: LowerTimeframeContext[] = [
-    bullishCount >= 1 ? bullishContext("30m", "none") : neutralContext("30m"),
-    bullishCount >= 2 ? bullishContext("1h", "none") : neutralContext("1h"),
-    bullishCount >= 3 ? bullishContext("4h", "none") : neutralContext("4h")
-  ];
-  return {
-    thirtyMinute: contexts[0],
-    oneHour: contexts[1],
-    fourHour: contexts[2]
-  };
-}
-
-function bullishContext(timeframe: LowerTimeframeContext["timeframe"], squeezeState: SqueezeState, withinOneAtrOfEma21 = true): LowerTimeframeContext {
-  return {
-    timeframe,
-    bias: "bullish",
-    price: withinOneAtrOfEma21 ? 105 : 110,
-    ema8: 104,
-    ema21: 103,
-    ema34: 102,
-    ema50: 101.5,
-    ema55: 101,
-    ema89: 100,
-    ema100: 99,
-    positiveEmaStack: true,
-    priceAboveEmaStack: true,
-    atr14: 3,
-    atrDistanceFromEma21: withinOneAtrOfEma21 ? 0.67 : 2.33,
-    withinOneAtrOfEma21,
-    percentAboveEma21: withinOneAtrOfEma21 ? 1.94 : 6.8,
-    withinTwoPercentOfEma21: withinOneAtrOfEma21,
-    percentAboveEma50: withinOneAtrOfEma21 ? 3.45 : 8.37,
-    percentBelowEma8: withinOneAtrOfEma21 ? 0.96 : -5.77,
-    withinEmaPocket: withinOneAtrOfEma21,
-    compressionScore: squeezeState === "none" ? 60 : 85,
-    compressionStatus: squeezeState === "none" ? "Neutral" : "Bullish",
-    squeezeState,
-    detail: timeframe + " is bullish and " + (withinOneAtrOfEma21 ? "inside" : "outside") + " the EMA pocket."
-  };
-}
-
-function bearishContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTimeframeContext {
-  return {
-    timeframe,
-    bias: "bearish",
-    price: 96,
-    ema8: 97,
-    ema21: 98,
-    ema34: 99,
-    ema50: 99.5,
-    ema55: 100,
-    ema89: 101,
-    ema100: 102,
-    positiveEmaStack: false,
-    priceAboveEmaStack: false,
-    atr14: 3,
-    atrDistanceFromEma21: -0.67,
-    withinOneAtrOfEma21: false,
-    percentAboveEma21: -2.04,
-    withinTwoPercentOfEma21: false,
-    percentAboveEma50: -3.52,
-    percentBelowEma8: 1.03,
-    withinEmaPocket: false,
-    compressionScore: 20,
-    compressionStatus: "Bearish",
-    squeezeState: "none",
-    detail: timeframe + " is bearish."
-  };
-}
-
-function neutralContext(timeframe: LowerTimeframeContext["timeframe"]): LowerTimeframeContext {
-  return {
-    timeframe,
-    bias: "neutral",
-    price: 105,
-    ema8: 103,
-    ema21: 104,
-    ema34: 102,
-    ema50: 101.5,
-    ema55: 101,
-    ema89: 100,
-    ema100: 99,
-    positiveEmaStack: false,
-    priceAboveEmaStack: true,
-    atr14: 3,
-    atrDistanceFromEma21: 0.33,
-    withinOneAtrOfEma21: true,
-    percentAboveEma21: 0.96,
-    withinTwoPercentOfEma21: true,
-    percentAboveEma50: 3.45,
-    percentBelowEma8: -1.94,
-    withinEmaPocket: false,
-    compressionScore: 50,
-    compressionStatus: "Neutral",
-    squeezeState: "none",
-    detail: timeframe + " is neutral."
   };
 }
 

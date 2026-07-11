@@ -75,11 +75,13 @@ describe("FMP Institutional Edge", () => {
     });
   });
 
-  it("treats a raw percent-point expense ratio as its literal fraction value", () => {
-    expect(normalizeEtfInfo([{ assetsUnderManagement: 12_000_000_000, expenseRatio: 0.0009 }])).toMatchObject({
+  it("converts FMP's percent-point expense ratio into a fraction", () => {
+    // SPY-style cheap ETF: 0.09 percent points = 0.09% expense ratio.
+    expect(normalizeEtfInfo([{ assetsUnderManagement: 12_000_000_000, expenseRatio: 0.09 }])).toMatchObject({
       status: "Bullish"
     });
-    expect(normalizeEtfInfo([{ assetsUnderManagement: 12_000_000_000, expenseRatio: 0.09 }])).toMatchObject({
+    // Expensive ETF: 1.5 percent points = 1.5%, above the 1% threshold.
+    expect(normalizeEtfInfo([{ assetsUnderManagement: 12_000_000_000, expenseRatio: 1.5 }])).toMatchObject({
       status: "Bearish"
     });
   });

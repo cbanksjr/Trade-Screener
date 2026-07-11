@@ -1034,7 +1034,6 @@ function qualifyingResult(symbol: string, daily = indicator("low"), weekly = ind
     setupDirection: "long",
     indicators: daily,
     weeklyIndicators: weekly,
-    lowerTimeframes: undefined,
     squeezeStatusByTimeframe: [
       { timeframe: "30m", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "30m bullish." },
       { timeframe: "1h", squeezeState: "low", bias: "bullish", priceAboveEmaStack: true, positiveEmaStack: true, withinOneAtrOfEma21: true, compressionStatus: "Bullish", detail: "1h bullish." },

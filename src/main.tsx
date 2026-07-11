@@ -551,7 +551,7 @@ function Signal({ label, value, tone = "neutral" }: { label: string; value: stri
 
 function SqueezeDotStrip({ count, max = 6 }: { count: number | null; max?: number }) {
   if (count === null) return <span className="dot-empty">—</span>;
-  const filled = Math.max(1, Math.min(max, Math.round(count / 3)));
+  const filled = Math.max(0, Math.min(max, count));
   return <span className="dot-strip" role="img" aria-label={`${count} active squeeze dots`}>{Array.from({ length: max }).map((_, index) => <i key={index} className={`sq-dot${index < filled ? " on" : ""}`} />)}<small>{count}</small></span>;
 }
 

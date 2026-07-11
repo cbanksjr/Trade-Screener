@@ -207,21 +207,6 @@ async function fetchDailyHistory(symbol: string, lookbackDays: number): Promise<
   return normalizeSchwabHistory(data);
 }
 
-export async function fetchIntradayHistory(symbol: string, frequency = 15): Promise<Candle[]> {
-  const endDate = Date.now();
-  const startDate = endDate - 90 * 24 * 60 * 60 * 1000;
-  const data = await schwabGet<SchwabPriceHistoryResponse>("/pricehistory", {
-    symbol,
-    startDate,
-    endDate,
-    frequencyType: "minute",
-    frequency,
-    needExtendedHoursData: "false",
-    needPreviousClose: "false"
-  });
-  return normalizeSchwabHistory(data, { includeTime: true });
-}
-
 export async function fetchCallOptions(symbol: string, price: number): Promise<OptionContract[]> {
   return fetchDirectionalOptions(symbol, price, "CALL");
 }
@@ -680,16 +665,6 @@ function chunks<T>(values: T[], size: number): T[][] {
   return output;
 }
 
-function unavailableFundamentals(symbol: string, scanResult: ScanResult | undefined, warning: string): FundamentalAnalysis {
-  const analysis = mergeFundamentalAnalysis({
-    symbol,
-    scanResult,
-    warnings: [warning]
-  });
-  analysis.warnings = [warning];
-  return analysis;
-}
-
 function scanContext(result: ScanResult): FundamentalAnalysis["scanContext"] {
   return {
     grade: result.grade,
@@ -699,9 +674,6 @@ function scanContext(result: ScanResult): FundamentalAnalysis["scanContext"] {
     longCallDecision: result.longCallDecision,
     dailySqueeze: result.indicators.squeezeState,
     weeklySqueeze: result.weeklyIndicators?.squeezeState,
-    thirtyMinuteSqueeze: result.lowerTimeframes?.thirtyMinute.squeezeState,
-    oneHourSqueeze: result.lowerTimeframes?.oneHour.squeezeState,
-    fourHourSqueeze: result.lowerTimeframes?.fourHour.squeezeState,
     optionable: result.optionable,
     suggestedOptionCount: result.suggestedOptions.length
   };

@@ -12,7 +12,6 @@ import type {
   LayerEvaluation,
   LayerStatus,
   LongCallDecision,
-  LowerTimeframeConfluence,
   LowerTimeframeContext,
   OptionContract,
   ScanResult,
@@ -70,7 +69,6 @@ export function gradeSetup(input: {
   fundamentals?: Fundamentals;
   optionable: boolean;
   options: OptionContract[];
-  lowerTimeframes?: LowerTimeframeConfluence;
   lowerTimeframeWarnings?: string[];
   weeklyIndicators?: IndicatorSnapshot;
   weeklySqueezeWarning?: string;
@@ -189,7 +187,6 @@ export function gradeSetup(input: {
     maxScore: 5,
     indicators,
     weeklyIndicators: input.weeklyIndicators,
-    lowerTimeframes: input.lowerTimeframes,
     squeezeStatusByTimeframe: [
       toTimeframeStatus(dailyContext),
       toTimeframeStatus(weeklyContext)
@@ -569,15 +566,6 @@ function evaluateRelativeStrengthFactor(candles: Candle[], spyCandles?: Candle[]
   return factor("Relative Strength", "Bearish", "Underperforming SPY and QQQ over 20 periods.");
 }
 
-function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean {
-  return result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
-}
-
-function hasMissingDailyEmaStack(result: Pick<ScanResult, "squeezeStatusByTimeframe">): boolean {
-  const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
-  return daily?.positiveEmaStack === false;
-}
-
 function evaluatePriceStructure(context: LowerTimeframeContext): InstitutionalFactor {
   if (context.bias === "bullish" && context.dailyEntryQualificationMode === "strict") return factor("Daily Structure", "Bullish", "Daily fast trend is bullish and price is in the preferred A-entry zone.");
   if (hasPositiveFastTrend(context) && context.dailyEntryQualificationMode !== "none") return factor("Daily Structure", "Neutral", "Daily fast trend is bullish, but price is in an extended entry zone.");
@@ -942,13 +930,6 @@ function formatMoney(value: number): string {
   return "$" + value.toFixed(0);
 }
 
-function formatShares(value: number | undefined): string {
-  if (value === undefined) return "unavailable";
-  if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M shares";
-  if (value >= 1_000) return Math.round(value / 1_000) + "K shares";
-  return Math.round(value) + " shares";
-}
-
 export { resolveDailyEntryQualificationMode };
 
 export function resolveSqueezeMaturityMode(dailySqueezeDotCount: number): SqueezeMaturityMode {
@@ -965,10 +946,6 @@ function hasPositiveFastTrend(context: Pick<LowerTimeframeContext, "ema8" | "ema
     && context.ema8 > context.ema21
     && context.ema21 > context.ema34
     && context.price >= context.ema34;
-}
-
-function hasRelaxedMarketStructure(result: Pick<ScanResult, "layerEvaluations">): boolean {
-  return result.layerEvaluations?.some((item) => item.layer === "Squeeze Market Structure" && item.status === "Neutral") ?? false;
 }
 
 export function resolveWeeklyQualificationMode(indicators: IndicatorSnapshot, price: number): WeeklyQualificationMode {

@@ -208,10 +208,16 @@ export async function upsertWatchlistEntry(symbol: string, payload: unknown): Pr
 
 export async function getWatchlistEntries(): Promise<Array<{ symbol: string; addedAt: string; payload: unknown }>> {
   if (usePostgres) {
-    const rows = (await pgQuery<{ symbol: string; payload: string; added_at: string }>(
+    // pg parses TIMESTAMPTZ columns into Date objects; normalize to the ISO
+    // string the SQLite branch (TEXT column) returns.
+    const rows = (await pgQuery<{ symbol: string; payload: string; added_at: string | Date }>(
       "SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;"
     )).rows;
-    return rows.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: JSON.parse(row.payload) }));
+    return rows.map((row) => ({
+      symbol: row.symbol,
+      addedAt: typeof row.added_at === "string" ? row.added_at : row.added_at.toISOString(),
+      payload: JSON.parse(row.payload)
+    }));
   }
   const rows = getDb().prepare("SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;")
     .all() as { symbol: string; payload: string; added_at: string }[];

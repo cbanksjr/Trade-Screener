@@ -361,8 +361,10 @@ function stringValue(...values: unknown[]): string | undefined {
   return undefined;
 }
 
+// FMP's etf/info endpoint reports expenseRatio in percent points
+// (SPY = 0.09 meaning 0.09%); convert to a fraction for thresholds/display.
 function normalizeExpenseRatio(value: number | undefined): number | undefined {
-  return value;
+  return value === undefined ? undefined : value / 100;
 }
 
 function formatValue(value: number | undefined): string {

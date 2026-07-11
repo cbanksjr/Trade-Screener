@@ -1202,12 +1202,6 @@ function formatMoney(value: number): string {
   return "$" + value.toFixed(0);
 }
 
-function formatShares(value: number): string {
-  if (value >= 1_000_000) return (value / 1_000_000).toFixed(1) + "M shares";
-  if (value >= 1_000) return Math.round(value / 1_000) + "K shares";
-  return Math.round(value) + " shares";
-}
-
 function average(values: number[]): number {
   if (!values.length) return 0;
   return values.reduce((sum, value) => sum + value, 0) / values.length;

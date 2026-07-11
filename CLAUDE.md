@@ -17,7 +17,7 @@ Run a single test file or test case with vitest directly:
 
 ```bash
 npx vitest run server/scanner.test.ts
-npx vitest run server/scoring.test.ts -t "promotes a clean B setup"
+npx vitest run server/scoring.test.ts -t "applies the counter-trend discount and flag in a bearish regime"
 ```
 
 There are two separate TypeScript project configs (`tsconfig.client.json` covers `src/` + `shared/`, `tsconfig.server.json` covers `server/` + `shared/`) referenced from the root `tsconfig.json`. Frontend and backend are typechecked independently.
@@ -38,7 +38,7 @@ This is a single-tenant local/self-hosted app: an Express API (`server/`) that r
 4. Per symbol (bounded concurrency via `mapLimit`, `SCAN_CONCURRENCY = 4`): merge fundamentals from a source waterfall (Schwab → FMP → 20-day candle history → demo, tracked field-by-field in `Fundamentals.sources`), then call `gradeSetup()` in `scoring.ts` to produce the technical grade.
 5. Two optional enrichment layers run *after* the technical grade and only affect Take/Avoid + grade promotion, never invent a grade from nothing:
    - **FMP Institutional Edge** (`fmpInstitutionalEdge.ts`) — informational context only (financial scores, analyst grades, insider/ETF data). Never changes grade or Take/Avoid.
-   - **QuantData Institutional Positioning** (`quantData.ts`) — can promote a clean technical B to A (`gradeBeforeQuantData` → `finalGrade`, `institutionalPromotionApplied`) when enough of {bullish flow, supportive exposure, dark-pool accumulation, confirmed OI build, confirming IV Rank} line up with zero vetoes, and can cap/veto a setup to Avoid on hostile gamma walls or max-pain pin risk. It can never demote a setup below what the technical score already earned.
+   - **QuantData Institutional Positioning** (`quantData.ts`) — an execution overlay that never changes the technical grade (`finalGrade` always equals `gradeBeforeQuantData`, `institutionalPromotionApplied` is always false). It scores {bullish flow, supportive exposure, dark-pool accumulation, confirmed OI build, confirming IV Rank} into `institutionalPositioningScore`/`Status` and can confirm, caution, or veto a setup to Avoid via Take/Avoid (hostile gamma walls, max-pain pin risk), but never below what the technical score already earned.
 6. Results are sorted by setup score → grade → squeeze dot count, cached wholesale (`replaceScanResults`, full delete+reinsert, not a diff), and scan metadata (status, warnings, diagnostics, next refresh time) is written for the frontend to poll.
 
 `shouldIncludeResult()` is the single gate for what actually reaches the dashboard (universe pass, long direction, positive momentum, active daily squeeze, valid entry mode, grade A/B). `classifyFilteredResult()` back-derives *why* a result was filtered for the diagnostics panel — keep it in sync with `shouldIncludeResult()` and the layer/factor names in `shared/types.ts` when either changes.
@@ -50,7 +50,7 @@ This is a single-tenant local/self-hosted app: an Express API (`server/`) that r
 `scoring.ts` is pure and side-effect-free — it takes candles/fundamentals/options in and returns a `ScanResult` with grade, layer evaluations, and institutional factor scores. Key pieces it composes:
 
 - `indicators.ts` — EMA/SMA/ATR, the Squeeze Pro-style compression state machine (`squeezeState`, `activeSqueezeDotCount`: requires Bollinger Bands inside Keltner Channel), and the 20-period linear-regression-smoothed momentum histogram.
-- `entryZone.ts` — classifies daily price location relative to the EMA stack into `strict`/`broad`/`extended`/`none` entry qualification modes.
+- `entryZone.ts` — classifies daily price location relative to the EMA stack into `strict`/`extended`/`none` entry qualification modes.
 - `timeframes.ts` — aggregates daily candles into weekly (`aggregateDailyCandlesToWeeks`) for weekly context, which is bonus confirmation only and cannot reject or degrade a grade below what daily analysis earned (only bearish weekly still rejects).
 - Grade thresholds live as named constants (`A_SETUP_SCORE_THRESHOLD = 90`, `B_SETUP_SCORE_THRESHOLD = 70`) and every grade-capping reason is a named exported string constant (e.g. `BROAD_ENTRY_GRADE_CAP_REASON`) — reuse these constants rather than re-deriving the message text, since `scanner.ts`'s cache-normalization path matches against them.
 
@@ -70,7 +70,7 @@ The stock universe is always S&P 500 + Nasdaq 100 (no user-managed watchlist-as-
 
 ### Scheduling (`server/index.ts`)
 
-Two `node-cron` jobs, both pinned to `America/Chicago`: weekday 8:35am scan refresh, and a check on the last few days of each month that triggers a universe refresh on the actual last day. Client-triggered refresh also happens via `shouldAutoRefresh()`/`AUTO_REFRESH_MS` (15 min) when the dashboard is polled and Schwab is connected — Render's free tier can sleep, so cached results always render first and a background refresh kicks off opportunistically rather than relying solely on cron.
+Two `node-cron` jobs, both pinned to `America/Chicago`: a scan refresh every 15 minutes on weekdays from 8:30am to 3:00pm CT (`MARKET_REFRESH_CRON`/`isMarketRefreshWindow` in `shared/refreshSchedule.ts`), and a check on the last few days of each month that triggers a universe refresh on the actual last day (evaluated in `America/Chicago` via `isLastDayOfMonth`). Client-triggered refresh also happens via `shouldAutoRefresh()`/`AUTO_REFRESH_MS` (15 min) when the dashboard is polled and Schwab is connected — Render's free tier can sleep, so cached results always render first and a background refresh kicks off opportunistically rather than relying solely on cron.
 
 ### Frontend (`src/main.tsx`)
 
