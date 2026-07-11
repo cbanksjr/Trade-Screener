@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "./config";
-import { __resetSchwabTokenCacheForTest, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
+import { __resetSchwabTokenCacheForTest, fetchCallOptions, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
 import { getSetting, initDb, setSetting } from "./sqlite";
 
 describe("Schwab response normalizers", () => {
@@ -456,6 +456,24 @@ describe("Schwab request resilience", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
     __resetSchwabTokenCacheForTest();
+  });
+
+  it("bounds option-chain responses with the configured strike count", async () => {
+    await initDb();
+    await setSetting("schwabTokens", {
+      accessToken: "valid-token",
+      refreshToken: "refresh-token",
+      accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+    });
+    let requestedUrl = "";
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({ callExpDateMap: {} }), { status: 200 });
+    }));
+
+    await fetchCallOptions("AAPL", 200);
+
+    expect(new URL(requestedUrl).searchParams.get("strikeCount")).toBe(String(config.schwabOptionStrikeCount));
   });
 
   it("deduplicates concurrent token refreshes so only one refresh request is sent", async () => {

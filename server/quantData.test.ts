@@ -402,6 +402,19 @@ describe("QuantData Institutional Positioning", () => {
     expect(provider.remainingCalls()).toBe(0);
   });
 
+  it("does not retain oversized raw provider responses", async () => {
+    const provider = createQuantDataPositioningProvider({
+      apiKey: "test-key",
+      baseUrl: "https://api.example.test",
+      maxCalls: 1,
+      fetchImpl: async () => new Response(JSON.stringify({ data: { payload: "x".repeat(60_000) } }), { status: 200 })
+    });
+
+    await provider.rankSymbols(["AAPL"]);
+
+    expect(provider.cache().responses).toEqual({});
+  });
+
   it("warns when order-flow-consolidated rows have none of the recognized fields", async () => {
     const cache: QuantDataCache = { responses: {} };
     const provider = createQuantDataPositioningProvider({

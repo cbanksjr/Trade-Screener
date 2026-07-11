@@ -32,6 +32,8 @@ The scan uses Schwab for:
 - `/marketdata/v1/pricehistory` for daily OHLCV history and weekly context aggregated from daily candles
 - `/marketdata/v1/chains` for 14-180 DTE swing call chains with Greeks
 
+Option-chain responses are bounded to 20 strikes per expiration by default to keep full-universe scans within hosted memory limits. Override this with `SCHWAB_OPTION_STRIKE_COUNT` only when the service has enough memory for wider chains.
+
 Financial Modeling Prep can be used for index universe refreshes and as a cached fallback when Schwab omits core institutional fields. Add `FMP_API_KEY` to `.env` or deployment secrets. The app keeps Schwab as primary for market data, then uses FMP to refresh the default universe and fill missing beta, market cap, sector, and next earnings date. Fallback results are cached for 24 hours and live FMP calls are capped by `FMP_MAX_CALLS_PER_SCAN`, default `1000`, to protect API limits.
 
 FMP can also add a Starter-safe Institutional Edge context panel after a symbol already passes the core scan. It probes each optional endpoint with your API key, caches availability for `FMP_INSTITUTIONAL_EDGE_PROBE_TTL_HOURS` hours, and skips endpoints that return plan, permission, malformed entitlement, or rate-limit responses. FMP Institutional Edge is informational only; setup grade and Take/Avoid marks are driven by trading structure and QuantData positioning. Configure it with `FMP_INSTITUTIONAL_EDGE_ENABLED=true`, `FMP_STARTER_SAFE_MODE=true`, and `FMP_INSTITUTIONAL_EDGE_MAX_CALLS_PER_SCAN=250`.

@@ -35,7 +35,13 @@ export const config = {
   // read/refresh path before another /quotes call is made. Keeps rapid dashboard polls
   // from hammering the Schwab budget while still tracking the market between full scans.
   livePriceOverlayTtlSeconds: Number(process.env.LIVE_PRICE_OVERLAY_TTL_SECONDS ?? 60),
+  schwabOptionStrikeCount: positiveInteger(process.env.SCHWAB_OPTION_STRIKE_COUNT, 20),
   etfSymbols: process.env.ETF_SYMBOLS ?? "",
   appBasicAuthUsername: process.env.APP_BASIC_AUTH_USERNAME ?? "",
   appBasicAuthPassword: process.env.APP_BASIC_AUTH_PASSWORD ?? ""
 };
+
+function positiveInteger(value: string | undefined, fallback: number): number {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}

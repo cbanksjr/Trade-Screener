@@ -34,6 +34,7 @@ import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
 
 const SCAN_CONCURRENCY = 4;
+const MEMORY_LOG_INTERVAL = 50;
 const MAX_STORED_SCAN_WARNINGS = 50;
 const CATASTROPHIC_FAILURE_RATIO = 0.8;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
@@ -212,13 +213,18 @@ export async function runFullScan(): Promise<ScanResponse> {
   const watchlistEntries = await readWatchlist();
   const watchlistBySymbol = new Map(watchlistEntries.map((entry) => [entry.symbol, entry]));
   const results: ScanResult[] = [];
-  const evaluatedResults: ScanResult[] = [];
+  // Only watchlisted evaluations need to survive until persistence. Keeping a
+  // full ScanResult for every index constituent caused full scans to approach
+  // Render's heap limit even though most symbols were filtered out.
+  const watchlistEvaluatedResults: ScanResult[] = [];
   const scanWarnings = new Set<string>();
   let usedLive = false;
   let usedDemo = false;
+  let processedSymbols = 0;
   const etfSymbols = settings.etfSymbols;
   const etfSymbolSet = new Set(etfSymbols);
   let symbolsToScan = await resolveScanSymbols(settings);
+  logScanMemory("start", { universeSize: symbolsToScan.length });
   const stockSymbolsToScan = symbolsToScan.filter((symbol) => !etfSymbolSet.has(symbol));
   const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgDollarVolume);
   if (symbolsToScan.length < MIN_REFRESHED_SYMBOLS) {
@@ -257,10 +263,11 @@ export async function runFullScan(): Promise<ScanResponse> {
     scanWarnings.add("Automatic screening needs Schwab connected so it can scan the full S&P 500 + Nasdaq 100 + selected ETF universe with live market data.");
   }
 
-  const outcomes = await mapLimit(symbolsToScan, SCAN_CONCURRENCY, (symbol) => {
+  const evaluatedSymbols = new Set<string>();
+  await consumeLimit(symbolsToScan, SCAN_CONCURRENCY, async (symbol) => {
     const sector = sectorBySymbol[symbol];
     const assetType: AssetType = etfSymbolSet.has(symbol) ? "etf" : "stock";
-    return scanSymbol({
+    const outcome = await scanSymbol({
       symbol,
       assetType,
       settings,
@@ -276,10 +283,6 @@ export async function runFullScan(): Promise<ScanResponse> {
       fmp,
       scanRanAt
     });
-  });
-
-  const evaluatedSymbols = new Set<string>();
-  for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
     if (outcome.result) {
@@ -312,14 +315,18 @@ export async function runFullScan(): Promise<ScanResponse> {
       if (newlyDiscovered || keepTrackedUntilFire) {
         result = withSqueezeLifecycle(result, previous?.firstDetectedAt ?? watchlistEntry?.result.firstDetectedAt ?? previous?.lastUpdated ?? watchlistEntry?.addedAt ?? scanRanAt.toISOString());
       }
-      evaluatedResults.push(result);
+      if (watchlistEntry) watchlistEvaluatedResults.push(result);
       if (!priceMatchesCandles(result)) diagnostics.skipped.priceCandleMismatch += 1;
       else if (shouldIncludeResult(result) || keepTrackedUntilFire) results.push(result);
       else diagnostics.skipped[classifyFilteredResult(result)] += 1;
     } else if (!outcome.skipReason) diagnostics.skipped.other += 1;
     if (outcome.usedLive) usedLive = true;
     if (outcome.usedDemo) usedDemo = true;
-  }
+    processedSymbols += 1;
+    if (processedSymbols % MEMORY_LOG_INTERVAL === 0) {
+      logScanMemory("progress", { processedSymbols, universeSize: symbolsToScan.length, retainedResults: results.length });
+    }
+  });
 
   const resultSymbols = new Set(results.map((result) => result.symbol));
   const scannedSymbols = new Set(symbolsToScan);
@@ -349,6 +356,13 @@ export async function runFullScan(): Promise<ScanResponse> {
   if (fmp) await fmp.flush();
   if (fmpInstitutionalEdge) await fmpInstitutionalEdge.flush();
   if (quantDataPositioning) await quantDataPositioning.flush();
+  logScanMemory("complete", {
+    processedSymbols,
+    universeSize: symbolsToScan.length,
+    retainedResults: results.length,
+    watchlistEvaluations: watchlistEvaluatedResults.length,
+    durationMs: Date.now() - scanRanAt.getTime()
+  });
   return withScanMetadata({
     mode: usedLive && usedDemo ? "mixed" : usedLive ? "live" : "demo",
     results: results.sort(sortByDecision),
@@ -356,7 +370,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     warnings: [...scanWarnings].filter(shouldShowWarning),
     scanDiagnostics: diagnostics,
     evaluatedSymbols: [...evaluatedSymbols],
-    evaluatedResults
+    evaluatedResults: watchlistEvaluatedResults
   });
 }
 
@@ -503,6 +517,7 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
     });
   } catch (error) {
     const finishedAt = new Date().toISOString();
+    logScanMemory("failed", { message: readError(error, "Scan failed.") });
     await setScanMetadata({
       ...await readScanMetadata(),
       scanStatus: "failed",
@@ -1191,18 +1206,27 @@ function sourceLabel(source: FundamentalFieldSources[keyof FundamentalFieldSourc
   return "fundamental";
 }
 
-async function mapLimit<T, R>(items: T[], limit: number, worker: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
+async function consumeLimit<T>(items: T[], limit: number, worker: (item: T) => Promise<void>): Promise<void> {
   let nextIndex = 0;
   const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
     while (nextIndex < items.length) {
       const index = nextIndex;
       nextIndex += 1;
-      results[index] = await worker(items[index]);
+      await worker(items[index]);
     }
   });
   await Promise.all(workers);
-  return results;
+}
+
+function logScanMemory(event: "start" | "progress" | "complete" | "failed", details: Record<string, number | string> = {}): void {
+  const memory = process.memoryUsage();
+  console.info(JSON.stringify({
+    event: `scan.${event}`,
+    ...details,
+    heapUsedMb: Math.round(memory.heapUsed / 1024 / 1024),
+    heapTotalMb: Math.round(memory.heapTotal / 1024 / 1024),
+    rssMb: Math.round(memory.rss / 1024 / 1024)
+  }));
 }
 
 function formatMoney(value: number): string {

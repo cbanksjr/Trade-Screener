@@ -219,6 +219,7 @@ async function fetchDirectionalOptions(symbol: string, price: number, contractTy
     contractType,
     strategy: "SINGLE",
     includeUnderlyingQuote: "false",
+    strikeCount: config.schwabOptionStrikeCount,
     fromDate,
     toDate
   });

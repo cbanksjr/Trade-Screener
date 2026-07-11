@@ -25,6 +25,7 @@ type EndpointCacheEntry = {
 };
 
 export type FmpInstitutionalEdgeCache = {
+  version?: 2;
   availability: Partial<Record<EndpointId, EndpointAvailability>>;
   responses: Record<string, Partial<Record<EndpointId, EndpointCacheEntry>>>;
 };
@@ -35,7 +36,8 @@ export type FmpInstitutionalEdgeResult = {
   usedLive: boolean;
 };
 
-const CACHE_KEY = "fmpInstitutionalEdgeCache";
+const CACHE_KEY = "fmpInstitutionalEdgeCompactCacheV2";
+const MAX_CACHE_ENTRY_BYTES = 50_000;
 const DEFAULT_EDGE: InstitutionalEdgeSummary = {
   status: "Neutral",
   score: 0,
@@ -47,7 +49,7 @@ const RESPONSE_TTL_MS = 24 * 60 * 60 * 1000;
 
 export async function createFmpInstitutionalEdgeScanProvider(): Promise<ReturnType<typeof createFmpInstitutionalEdgeProvider> | undefined> {
   if (!config.fmpInstitutionalEdgeEnabled || !config.fmpApiKey) return undefined;
-  const cache = await getSetting<FmpInstitutionalEdgeCache>(CACHE_KEY, { availability: {}, responses: {} });
+  const cache = await getSetting<FmpInstitutionalEdgeCache>(CACHE_KEY, { version: 2, availability: {}, responses: {} });
   const provider = createFmpInstitutionalEdgeProvider({
     apiKey: config.fmpApiKey,
     baseUrl: config.fmpBaseUrl,
@@ -77,8 +79,9 @@ export function createFmpInstitutionalEdgeProvider(input: {
   let remainingCalls = input.maxCalls;
   let dirty = false;
   const cache: FmpInstitutionalEdgeCache = {
+    version: 2,
     availability: { ...(input.cache?.availability ?? {}) },
-    responses: { ...(input.cache?.responses ?? {}) }
+    responses: pruneResponseCache(input.cache?.responses ?? {})
   };
   const fetchImpl = input.fetchImpl ?? fetch;
   const now = input.now ?? (() => new Date());
@@ -166,11 +169,13 @@ export function createFmpInstitutionalEdgeProvider(input: {
     if (warning) return { warnings: [`FMP ${path}: ${warning}`], usedLive: true };
 
     markAvailability(endpoint, true);
-    cache.responses[symbol] = {
-      ...(cache.responses[symbol] ?? {}),
-      [endpoint]: { updatedAt: now().toISOString(), data }
-    };
-    dirty = true;
+    if (estimatedJsonBytes(data) <= MAX_CACHE_ENTRY_BYTES) {
+      cache.responses[symbol] = {
+        ...(cache.responses[symbol] ?? {}),
+        [endpoint]: { updatedAt: now().toISOString(), data }
+      };
+      dirty = true;
+    }
     return { data, warnings: [], usedLive: true };
   }
 
@@ -188,6 +193,23 @@ export function createFmpInstitutionalEdgeProvider(input: {
       // Overridden by createFmpInstitutionalEdgeScanProvider where persistent settings are available.
     }
   };
+}
+
+function estimatedJsonBytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value));
+  } catch {
+    return Infinity;
+  }
+}
+
+function pruneResponseCache(responses: FmpInstitutionalEdgeCache["responses"]): FmpInstitutionalEdgeCache["responses"] {
+  const output: FmpInstitutionalEdgeCache["responses"] = {};
+  for (const [symbol, entries] of Object.entries(responses)) {
+    const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => entry && estimatedJsonBytes(entry.data) <= MAX_CACHE_ENTRY_BYTES));
+    if (Object.keys(kept).length) output[symbol] = kept;
+  }
+  return output;
 }
 
 export function normalizeFinancialScores(payload: unknown): InstitutionalEdgeFactor | undefined {

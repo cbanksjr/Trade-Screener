@@ -29,6 +29,7 @@ type EndpointCacheEntry = {
 };
 
 export type QuantDataCache = {
+  version?: 2;
   responses: Record<string, Partial<Record<string, EndpointCacheEntry>>>;
 };
 
@@ -87,7 +88,10 @@ type IvRankEvaluation = {
   flags: string[];
 };
 
-const CACHE_KEY = "quantDataCache";
+// V2 deliberately does not read the legacy key, whose raw provider responses
+// could grow large enough to exhaust the Render instance while being parsed.
+const CACHE_KEY = "quantDataCompactCacheV2";
+const MAX_CACHE_ENTRY_BYTES = 50_000;
 const ENDPOINT_PATHS: Record<EndpointId, string> = {
   "net-drift": "/v1/options/tool/net-drift",
   "order-flow-consolidated": "/v1/options/tool/order-flow/consolidated",
@@ -122,7 +126,7 @@ const DEFAULT_POSITIONING: InstitutionalPositioningSummary = {
 
 export async function createQuantDataPositioningScanProvider(): Promise<ReturnType<typeof createQuantDataPositioningProvider> | undefined> {
   if (!config.quantDataEnabled || !config.quantDataApiKey) return undefined;
-  const cache = await getSetting<QuantDataCache>(CACHE_KEY, { responses: {} });
+  const cache = await getSetting<QuantDataCache>(CACHE_KEY, { version: 2, responses: {} });
   const provider = createQuantDataPositioningProvider({
     apiKey: config.quantDataApiKey,
     baseUrl: config.quantDataBaseUrl,
@@ -149,7 +153,7 @@ export function createQuantDataPositioningProvider(input: {
 }) {
   let remainingCalls = input.maxCalls;
   let dirty = false;
-  const cache: QuantDataCache = { responses: { ...(input.cache?.responses ?? {}) } };
+  const cache: QuantDataCache = { version: 2, responses: pruneCache(input.cache?.responses ?? {}) };
   const fetchImpl = input.fetchImpl ?? fetch;
   const now = input.now ?? (() => new Date());
   const cacheTtlMs = input.cacheTtlMs ?? 15 * 60 * 1000;
@@ -267,11 +271,15 @@ export function createQuantDataPositioningProvider(input: {
     } catch {
       return { warnings: [`QuantData ${endpoint} returned malformed JSON; skipped.`], usedLive: true };
     }
-    cache.responses[symbol] = {
-      ...(cache.responses[symbol] ?? {}),
-      [cacheKey]: { updatedAt: now().toISOString(), data }
-    };
-    dirty = true;
+    // Cache only bounded payloads. Large flow/exposure bodies are useful for
+    // this evaluation but must become collectible immediately afterward.
+    if (estimatedJsonBytes(data) <= MAX_CACHE_ENTRY_BYTES) {
+      cache.responses[symbol] = {
+        ...(cache.responses[symbol] ?? {}),
+        [cacheKey]: { updatedAt: now().toISOString(), data }
+      };
+      dirty = true;
+    }
     return { data, warnings: [], usedLive: true };
   }
 
@@ -301,6 +309,23 @@ export function createQuantDataPositioningProvider(input: {
       // Overridden by createQuantDataPositioningScanProvider where persistent settings are available.
     }
   };
+}
+
+function estimatedJsonBytes(value: unknown): number {
+  try {
+    return Buffer.byteLength(JSON.stringify(value));
+  } catch {
+    return Infinity;
+  }
+}
+
+function pruneCache(responses: QuantDataCache["responses"]): QuantDataCache["responses"] {
+  const output: QuantDataCache["responses"] = {};
+  for (const [symbol, entries] of Object.entries(responses)) {
+    const kept = Object.fromEntries(Object.entries(entries).filter(([, entry]) => entry && estimatedJsonBytes(entry.data) <= MAX_CACHE_ENTRY_BYTES));
+    if (Object.keys(kept).length) output[symbol] = kept;
+  }
+  return output;
 }
 
 export function previousTradingSessionDate(from: Date): string {
