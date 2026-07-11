@@ -83,7 +83,7 @@ function buildContext(timeframe: AnalysisTimeframe, candles: Candle[]): LowerTim
   const percentBelowEma8 = indicators.ema8 > 0 ? ((indicators.ema8 - price) / indicators.ema8) * 100 : Number.NEGATIVE_INFINITY;
   const dailyEntryQualificationMode = resolveDailyEntryQualificationMode(indicators, price);
   const withinEmaPocket = dailyEntryQualificationMode === "strict";
-  const priceAboveEmaStack = price >= indicators.ema34;
+  const priceAboveEmaStack = isPriceAboveEmaStack(price, indicators.ema34);
   const compressionScore = compressionQualityScore(indicators, priceAboveEmaStack);
   const compressionStatus = compressionLayerStatus(compressionScore, indicators.squeezeState);
   const bias = lowerTimeframeBias(positiveEmaStack, priceAboveEmaStack);
@@ -128,6 +128,13 @@ function lowerTimeframeBias(positiveEmaStack: boolean, priceAboveEmaStack: boole
   if (positiveEmaStack && priceAboveEmaStack) return "bullish";
   if (!positiveEmaStack && !priceAboveEmaStack) return "bearish";
   return "neutral";
+}
+
+// The 34 EMA is the lowest price level the engine still treats as in-trend
+// (entryZone.ts disqualifies below it; hasPositiveFastTrend uses the same
+// floor). Every priceAboveEmaStack computation must share this definition.
+export function isPriceAboveEmaStack(price: number, ema34: number): boolean {
+  return price >= ema34;
 }
 
 export function hasPositiveEmaStack(indicators: {

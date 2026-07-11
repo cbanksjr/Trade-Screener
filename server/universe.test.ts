@@ -110,6 +110,16 @@ describe("default universe refresh helpers", () => {
     expect(isLastDayOfMonth(new Date("2026-05-31T12:00:00Z"))).toBe(true);
     expect(isLastDayOfMonth(new Date("2026-05-30T12:00:00Z"))).toBe(false);
   });
+
+  it("evaluates the last day in America/Chicago even when UTC has rolled into the next day", () => {
+    // Feb 28 2026 18:10 CST is Mar 1 00:10 UTC — still the last day of February in Chicago.
+    expect(isLastDayOfMonth(new Date("2026-03-01T00:10:00Z"))).toBe(true);
+    // May 30 2026 18:10 CDT is May 31 UTC — not yet the last day in Chicago.
+    expect(isLastDayOfMonth(new Date("2026-05-30T23:10:00Z"))).toBe(false);
+    // Leap year: Feb 28 2028 is not the last day.
+    expect(isLastDayOfMonth(new Date("2028-02-28T18:00:00-06:00"))).toBe(false);
+    expect(isLastDayOfMonth(new Date("2028-02-29T18:00:00-06:00"))).toBe(true);
+  });
 });
 
 function jsonResponse(payload: unknown, status = 200): Response {

@@ -656,6 +656,7 @@ async function scanSymbol(input: {
         macroRegime: input.macroRegime,
         sector,
         sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
+        minPrice: settings.minPrice,
         minMarketCap: settings.minMarketCap,
         minBeta: settings.minBeta,
         minAvgDollarVolume: settings.minAvgDollarVolume,
@@ -882,7 +883,7 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     macroRegimeQqq: result.macroRegimeQqq,
     macroRegimeSpy: result.macroRegimeSpy,
     effectiveMacroRegime: result.effectiveMacroRegime,
-    alertMessage: normalizeAlertMessage(result, dotCount),
+    alertMessage: normalizeAlertMessage(result, longCallDecision, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
       return {
@@ -1012,9 +1013,9 @@ function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {
   }
 }
 
-function normalizeAlertMessage(result: ScanResult, dotCount: number | undefined): string {
+function normalizeAlertMessage(result: ScanResult, decision: ScanResult["longCallDecision"], dotCount: number | undefined): string {
   const dotText = dotCount === undefined ? "Daily squeeze dots need a fresh scan" : dotCount + " active Daily squeeze dots";
-  return result.symbol + " " + result.longCallDecision + " at $" + result.price.toFixed(2) + "; " + dotText + ". Watch for controlled consolidation before expansion.";
+  return result.symbol + " " + decision + " at $" + result.price.toFixed(2) + "; " + dotText + ". Watch for controlled consolidation before expansion.";
 }
 
 function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>>): { indicators?: ReturnType<typeof latestIndicators>; warning?: string } {
@@ -1229,8 +1230,8 @@ function shouldShowWarning(warning: string): boolean {
   const routineSkips = [
     "Schwab did not return a quote; skipped.",
     "skipped because Schwab quote price",
-    "skipped because ETF average dollar volume",
-    "skipped because average share volume"
+    "skipped because average dollar volume is below",
+    "market cap is below"
   ];
   if (internalMessages.some((message) => warning.includes(message))) return false;
   return !routineSkips.some((message) => warning.includes(message));

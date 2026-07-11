@@ -171,10 +171,13 @@ function assertCompleteUniverse<T extends { symbols: string[] }>(universe: T): T
   return universe;
 }
 
-export function isLastDayOfMonth(date = new Date()): boolean {
-  const tomorrow = new Date(date);
-  tomorrow.setDate(date.getDate() + 1);
-  return tomorrow.getMonth() !== date.getMonth();
+// The monthly refresh cron in index.ts fires in America/Chicago, so the
+// last-day check must use the same timezone regardless of server locale.
+export function isLastDayOfMonth(date = new Date(), timeZone = "America/Chicago"): boolean {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone, year: "numeric", month: "numeric", day: "numeric" }).formatToParts(date);
+  const read = (type: string) => Number(parts.find((part) => part.type === type)?.value);
+  const daysInMonth = new Date(read("year"), read("month"), 0).getDate();
+  return read("day") === daysInMonth;
 }
 
 function normalizeSymbols(symbols: string[]): string[] {

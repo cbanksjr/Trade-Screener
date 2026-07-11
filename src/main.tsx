@@ -264,6 +264,18 @@ function App() {
       setSelected(visibleEntries[0].result.symbol);
     }
   }, [selected, visibleEntries]);
+  const searchInputRef = React.useRef<HTMLInputElement>(null);
+  React.useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      event.preventDefault();
+      searchInputRef.current?.focus();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
   const sourceResults = sourceEntries.map((entry) => entry.result);
   const active = sourceResults.find((item) => item.symbol === selected) ?? sourceResults[0];
   const isWatchlisted = active ? watchlist.some((entry) => entry.symbol === active.symbol) : false;
@@ -292,7 +304,7 @@ function App() {
           <div className="title-group"><span>Analyst workbench</span><h1>Trade Screener</h1></div>
           <label className="search-box">
             <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
+            <input ref={searchInputRef} value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
               if (event.key !== "Enter") return;
               const exact = sourceResults.find((item) => item.symbol === query.trim().toUpperCase());
               if (exact) setSelected(exact.symbol);
