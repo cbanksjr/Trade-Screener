@@ -841,11 +841,11 @@ describe("layer decision engine", () => {
     expect(result.longCallDecision).toBe("Avoid");
   });
 
-  it("allows preferred entries from the 34 EMA through the 8 EMA", () => {
+  it("allows preferred entries from the 21 EMA through one ATR above it", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
-    const lowerPocketPrice = indicators.ema34;
-    const upperPocketPrice = indicators.ema8;
+    const lowerPocketPrice = indicators.ema21;
+    const upperPocketPrice = indicators.ema21 + indicators.atr14;
     const resultAtLowerPocket = gradeSetup({
       symbol: "ABOVE21",
       candles,
@@ -876,9 +876,12 @@ describe("layer decision engine", () => {
     expect(resultAtLowerPocket.dailyEntryQualificationMode).toBe("strict");
     expect(resultAtUpperPocket.dailyEntryQualificationMode).toBe("strict");
     expect(resultAtLowerPocket.suggestedEntryArea).toContain("preferred zone");
+    expect(resultAtLowerPocket.suggestedEntryArea).toContain(`$${indicators.ema21.toFixed(2)}`);
+    expect(resultAtLowerPocket.stockStopPrice).toBe(Math.round(indicators.ema34 * 100) / 100);
+    expect(resultAtLowerPocket.invalidationLevel).toContain("below the 34 EMA");
   });
 
-  it("qualifies the inclusive 21 EMA-to-8 EMA boundaries as preferred entries", () => {
+  it("qualifies the inclusive 21 EMA-to-one-ATR boundaries as preferred entries", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const atEma21 = gradeSetup({
@@ -892,12 +895,12 @@ describe("layer decision engine", () => {
       ...institutionalSetupContext()
     });
     const atEma8 = gradeSetup({
-      symbol: "ATEMA8",
+      symbol: "ATONEATR",
       candles,
-      currentPrice: indicators.ema8,
-      fundamentals: strongFundamentals("ATEMA8"),
+      currentPrice: indicators.ema21 + indicators.atr14,
+      fundamentals: strongFundamentals("ATONEATR"),
       optionable: true,
-      options: demoOptions("ATEMA8", indicators.ema8),
+      options: demoOptions("ATONEATR", indicators.ema21 + indicators.atr14),
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
@@ -910,7 +913,7 @@ describe("layer decision engine", () => {
     }
   });
 
-  it("allows controlled extension above the preferred zone but rejects below the 34 EMA or beyond 1.5 ATR", () => {
+  it("allows controlled extension above the preferred zone but rejects below the 21 EMA or beyond 1.5 ATR", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const resultFor = (symbol: string, price: number) => gradeSetup({
@@ -923,8 +926,8 @@ describe("layer decision engine", () => {
       weeklyIndicators: weeklyIndicator("bullish"),
       ...institutionalSetupContext()
     });
-    const below = resultFor("BELOW34", indicators.ema34 * 0.9999);
-    const extendedPrice = Math.max(indicators.ema8 * 1.0001, indicators.ema21 + indicators.atr14 * 1.1);
+    const below = resultFor("BELOW21", indicators.ema21 * 0.9999);
+    const extendedPrice = indicators.ema21 + indicators.atr14 * 1.1;
     const extended = resultFor("EXTENDED", extendedPrice);
     const overextended = resultFor("OVEREXTENDED", indicators.ema21 + indicators.atr14 * 1.51);
 
