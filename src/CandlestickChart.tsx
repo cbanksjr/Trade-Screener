@@ -43,14 +43,10 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
 
   React.useEffect(() => {
     const container = containerRef.current;
-    const validCandles = candles.filter((candle) => (
+    const visibleCandles = candles.filter((candle) => (
       Number.isFinite(candle.open) && Number.isFinite(candle.high) && Number.isFinite(candle.low) && Number.isFinite(candle.close)
-    ));
-    if (!container || validCandles.length < 2) return;
-
-    const visibleCandles = validCandles.slice(-60);
-    const ema8Data = emaSeries(visibleCandles, 8);
-    const ema21Data = emaSeries(visibleCandles, 21);
+    )).slice(-60);
+    if (!container || visibleCandles.length < 2) return;
 
     const dark = theme === "dark";
     const chart = createChart(container, {
@@ -103,23 +99,14 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
       close: candle.close,
     })) as CandlestickData<Time>[]);
 
-    const ema8 = chart.addSeries(LineSeries, {
+    const ema = chart.addSeries(LineSeries, {
       color: dark ? "#62a7ff" : "#2563eb",
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
       crosshairMarkerVisible: false,
     });
-    ema8.setData(ema8Data);
-
-    const ema21 = chart.addSeries(LineSeries, {
-      color: dark ? "#fbbf24" : "#d97706",
-      lineWidth: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    });
-    ema21.setData(ema21Data);
+    ema.setData(emaSeries(visibleCandles, 8));
 
     const entry = parseEntryPrice(entryArea);
     if (entry !== null) candleSeries.createPriceLine({ price: entry, color: dark ? "#49d7c2" : "#0f8d7d", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" });
@@ -128,7 +115,6 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     if (typeof target2 === "number") candleSeries.createPriceLine({ price: target2, color: dark ? "#7dd3fc" : "#1678a8", lineWidth: 1, lineStyle: 2, axisLabelVisible: false, title: "T2" });
 
     chart.timeScale().fitContent();
-
     return () => chart.remove();
   }, [candles, entryArea, stopPrice, symbol, target1, target2, theme]);
 
@@ -136,5 +122,5 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     return <div className="chart-empty">Price history is unavailable for this setup.</div>;
   }
 
-  return <div className="candlestick-chart" ref={containerRef} role="img" aria-label={`${symbol} daily candlestick chart with 8 EMA, 21 EMA, and trade levels`} />;
+  return <div className="candlestick-chart" ref={containerRef} role="img" aria-label={`${symbol} daily candlestick chart with EMA and trade levels`} />;
 }

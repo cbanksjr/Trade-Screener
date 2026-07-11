@@ -4,8 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
-import type { SchwabQuote } from "./schwab";
+import { __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
@@ -638,7 +637,6 @@ describe("background scan refresh", () => {
     const legacy: ScanResult = {
       ...qualifyingResult("DOTS"),
       candles,
-      price: candles[candles.length - 1].close,
       compressionQualityScore: 95,
       maxScore: 100,
       dailySqueezeDotCount: undefined,
@@ -656,19 +654,6 @@ describe("background scan refresh", () => {
     expect(result.compressionQualityScore).toBe(expectedDots);
     expect(result.maxScore).toBe(5);
     expect(result.layerEvaluations[0].detail).toContain(expectedDots + " consecutive active squeeze dots");
-  }));
-
-  it("drops a cached result whose header price no longer matches its candle scale", async () => withDbRestore(async () => {
-    const candles = activeDailySqueezeCandles();
-    const lastClose = candles[candles.length - 1].close;
-    const mismatched: ScanResult = { ...qualifyingResult("BADSCALE"), candles, price: lastClose * 0.6 };
-    const consistent: ScanResult = { ...qualifyingResult("GOODSCALE"), candles, price: lastClose };
-    await replaceScanResults([mismatched, consistent]);
-
-    const symbols = (await readDisplayResults()).map((result) => result.symbol);
-
-    expect(symbols).toContain("GOODSCALE");
-    expect(symbols).not.toContain("BADSCALE");
   }));
 
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
@@ -910,61 +895,6 @@ async function settleBackgroundScan() {
   await new Promise((resolve) => setTimeout(resolve, 20));
 }
 
-describe("live price overlay", () => {
-  const quote = (symbol: string, price: number): SchwabQuote => ({ symbol, price });
-
-  it("replaces the frozen scan-time price with the fresh live quote", async () => {
-    __clearLivePriceCacheForTest();
-    const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
-    const overlaid = await overlayLiveQuotePrices(results, {
-      isLive: async () => true,
-      fetchQuotesFor: async (symbols) => new Map(symbols.map((s) => [s, quote(s, 142.27)])),
-      now: () => 1_000
-    });
-    expect(overlaid[0].price).toBe(142.27);
-    // Setup levels are untouched — only the live price changes.
-    expect(overlaid[0].target1).toBe(qualifyingResult("AAPL").target1);
-  });
-
-  it("is a no-op when live Schwab is unavailable", async () => {
-    __clearLivePriceCacheForTest();
-    let fetched = false;
-    const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
-    const overlaid = await overlayLiveQuotePrices(results, {
-      isLive: async () => false,
-      fetchQuotesFor: async (symbols) => { fetched = true; return new Map(symbols.map((s) => [s, quote(s, 999)])); },
-      now: () => 1_000
-    });
-    expect(fetched).toBe(false);
-    expect(overlaid[0].price).toBe(100);
-  });
-
-  it("reuses the cached quote within the TTL window and re-quotes after it lapses", async () => {
-    __clearLivePriceCacheForTest();
-    let calls = 0;
-    const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
-    const deps = (price: number, now: number) => ({
-      isLive: async () => true,
-      fetchQuotesFor: async (symbols: string[]) => { calls += 1; return new Map(symbols.map((s) => [s, quote(s, price)])); },
-      now: () => now
-    });
-
-    const first = await overlayLiveQuotePrices(results, deps(142.27, 0));
-    expect(first[0].price).toBe(142.27);
-    expect(calls).toBe(1);
-
-    // Within the 60s TTL: cache is reused, no second fetch, price unchanged.
-    const second = await overlayLiveQuotePrices(results, deps(150, 30_000));
-    expect(second[0].price).toBe(142.27);
-    expect(calls).toBe(1);
-
-    // After the TTL lapses: re-quote and pick up the new price.
-    const third = await overlayLiveQuotePrices(results, deps(150, 61_000));
-    expect(third[0].price).toBe(150);
-    expect(calls).toBe(2);
-  });
-});
-
 async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[], evaluatedResults: ScanResult[] = results): Promise<ScanResponse> {
   return {
     mode: "demo",
@@ -1002,7 +932,6 @@ function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: numb
       stockLiquidity: input.stockLiquidity ?? 0,
       marketCap: 0,
       candleHistory: 0,
-      priceCandleMismatch: 0,
       options: input.options ?? 0,
       spreadLiquidity: 0,
       marketStructure: 0,
@@ -1116,29 +1045,3 @@ function activeDailySqueezeCandles(): Candle[] {
   }
   return candles;
 }
-
-function candleAt(close: number): Candle {
-  return { date: "2026-07-09", open: close, high: close + 1, low: close - 1, close, volume: 1_000_000 };
-}
-
-describe("priceMatchesCandles", () => {
-  it("rejects a live quote price stapled to demo/stale candles on a different scale", () => {
-    const result = { ...qualifyingResult("ABNB"), price: 148.04, candles: [candleAt(240), candleAt(245.3)] };
-    expect(priceMatchesCandles(result)).toBe(false);
-  });
-
-  it("accepts a price equal to the last candle close", () => {
-    const result = { ...qualifyingResult("ABNB"), price: 245.3, candles: [candleAt(240), candleAt(245.3)] };
-    expect(priceMatchesCandles(result)).toBe(true);
-  });
-
-  it("tolerates a small intraday gap between the live quote and the last daily close", () => {
-    const result = { ...qualifyingResult("ABNB"), price: 152, candles: [candleAt(148), candleAt(150)] };
-    expect(priceMatchesCandles(result)).toBe(true);
-  });
-
-  it("does not reject a result with no candles (nothing to compare against)", () => {
-    const result = { ...qualifyingResult("ABNB"), price: 148, candles: [] };
-    expect(priceMatchesCandles(result)).toBe(true);
-  });
-});

@@ -31,10 +31,6 @@ export const config = {
   quantDataEnabled: (process.env.QUANTDATA_ENABLED ?? "true") !== "false",
   quantDataMaxCallsPerScan: Number(process.env.QUANTDATA_MAX_CALLS_PER_SCAN ?? 300),
   quantDataCacheTtlMinutes: Number(process.env.QUANTDATA_CACHE_TTL_MINUTES ?? 15),
-  // How long a batch of live Schwab quotes is reused to refresh displayed prices on the
-  // read/refresh path before another /quotes call is made. Keeps rapid dashboard polls
-  // from hammering the Schwab budget while still tracking the market between full scans.
-  livePriceOverlayTtlSeconds: Number(process.env.LIVE_PRICE_OVERLAY_TTL_SECONDS ?? 60),
   etfSymbols: process.env.ETF_SYMBOLS ?? "",
   appBasicAuthUsername: process.env.APP_BASIC_AUTH_USERNAME ?? "",
   appBasicAuthPassword: process.env.APP_BASIC_AUTH_PASSWORD ?? ""

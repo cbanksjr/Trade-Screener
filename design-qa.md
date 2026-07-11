@@ -10,7 +10,7 @@
 
 ## Comparison result
 
-The implementation preserves the approved prototype's compact three-zone workbench: shortlist, selected setup, and decision evidence. Hierarchy, density, semantic colors, borders, spacing, typography, and icon treatment align with the source. The chart intentionally improves on the prototype by using real OHLC candlesticks, wicks, 8 EMA and 21 EMA overlays, price axes, and labeled entry, stop, and target levels from live scan data.
+The implementation preserves the approved prototype's compact three-zone workbench: shortlist, selected setup, and decision evidence. Hierarchy, density, semantic colors, borders, spacing, typography, and icon treatment align with the source. The chart intentionally improves on the prototype by using real OHLC candlesticks, wicks, an 8 EMA, price axes, and labeled entry, stop, and target levels from live scan data.
 
 ## Checks
 

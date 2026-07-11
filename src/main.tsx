@@ -160,27 +160,6 @@ function App() {
     };
   }, [brokerStatus?.ok, loading, nextRefreshAt, scanStatus]);
 
-  // While the market is open, poll the lightweight read endpoints so the displayed price
-  // tracks the broker's live quote. The server overlays a fresh Schwab price on every read
-  // (guarded by its own short TTL cache), so this is a read-only refresh — it never triggers
-  // a rescan. Outside market hours it stays idle, and the last price shown on load already
-  // reflects the most recent close via the same overlay.
-  React.useEffect(() => {
-    if (!brokerStatus?.ok) return;
-    const pollLivePrices = () => {
-      if (document.visibilityState !== "visible" || loading || scanStatus === "running") return;
-      if (!isMarketRefreshWindow()) return;
-      void api.results().then((data) => applyScanResponse(data)).catch(() => undefined);
-      if (view === "watchlist") void api.watchlist().then(setWatchlist).catch(() => undefined);
-    };
-    const interval = window.setInterval(pollLivePrices, 45_000);
-    document.addEventListener("visibilitychange", pollLivePrices);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", pollLivePrices);
-    };
-  }, [brokerStatus?.ok, loading, scanStatus, view]);
-
   function applyScanResponse(data: Partial<ScanResponse>) {
     const nextResults = sortResultsByGrade(data.results ?? []);
     setResults(nextResults);
@@ -424,7 +403,7 @@ function FocusPanel({ result, theme, isWatchlisted, watchlistBusy, onToggleWatch
       <section className="chart-section">
         <div className="section-heading compact">
           <div><span>Price structure</span><h3>Daily candlestick chart</h3></div>
-          <div className="chart-legend"><span><i className="ema-color" />8 EMA</span><span><i className="ema21-color" />21 EMA</span><span><i className="entry-color" />Entry</span><span><i className="risk-color" />Stop</span></div>
+          <div className="chart-legend"><span><i className="ema-color" />8 EMA</span><span><i className="entry-color" />Entry</span><span><i className="risk-color" />Stop</span></div>
         </div>
         <CandlestickChart candles={result.candles} entryArea={result.suggestedEntryArea} stopPrice={result.stockStopPrice} target1={result.target1} target2={result.target2} symbol={result.symbol} theme={theme} />
       </section>
