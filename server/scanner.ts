@@ -313,7 +313,8 @@ export async function runFullScan(): Promise<ScanResponse> {
         result = withSqueezeLifecycle(result, previous?.firstDetectedAt ?? watchlistEntry?.result.firstDetectedAt ?? previous?.lastUpdated ?? watchlistEntry?.addedAt ?? scanRanAt.toISOString());
       }
       evaluatedResults.push(result);
-      if (shouldIncludeResult(result) || keepTrackedUntilFire) results.push(result);
+      if (!priceMatchesCandles(result)) diagnostics.skipped.priceCandleMismatch += 1;
+      else if (shouldIncludeResult(result) || keepTrackedUntilFire) results.push(result);
       else diagnostics.skipped[classifyFilteredResult(result)] += 1;
     } else if (!outcome.skipReason) diagnostics.skipped.other += 1;
     if (outcome.usedLive) usedLive = true;
@@ -324,6 +325,13 @@ export async function runFullScan(): Promise<ScanResponse> {
   const scannedSymbols = new Set(symbolsToScan);
   for (const previous of previousResults) {
     if (!scannedSymbols.has(previous.symbol) || evaluatedSymbols.has(previous.symbol) || resultSymbols.has(previous.symbol)) continue;
+    // Never re-emit a stale payload whose header price no longer matches its
+    // candle scale (e.g. a legacy live-quote-over-demo-candles row); its chart
+    // and trade plan would be meaningless.
+    if (!priceMatchesCandles(previous)) {
+      diagnostics.skipped.priceCandleMismatch += 1;
+      continue;
+    }
     // A provider/data gap cannot prove that a tracked squeeze fired. Keep the
     // last known active payload until a later scan evaluates its squeeze state.
     results.push(previous);
@@ -360,7 +368,7 @@ export async function resolveScanSymbols(inputSettings?: Settings): Promise<stri
 export async function readDisplayResults(): Promise<ScanResult[]> {
   return (await getCachedResults())
     .map((result) => normalizeCachedResult(result as ScanResult))
-    .filter((result): result is ScanResult => shouldIncludeResult(result));
+    .filter((result): result is ScanResult => priceMatchesCandles(result) && shouldIncludeResult(result));
 }
 
 export async function readWatchlist(): Promise<WatchlistEntry[]> {
@@ -713,6 +721,21 @@ async function scanSymbol(input: {
   }
 }
 
+// A result's header price (result.price, from the live quote) and its chart /
+// trade-plan levels (derived from result.candles) must share a scale. A large
+// divergence means the candles are stale or demo relative to the quote, so the
+// chart and trade plan are meaningless. 15% is far above any intraday
+// quote-vs-last-daily-close gap yet far below a demo/stale mismatch (~65%).
+const PRICE_CANDLE_MAX_DIVERGENCE = 0.15;
+export function priceMatchesCandles(result: ScanResult): boolean {
+  const last = result.candles?.[result.candles.length - 1]?.close;
+  // With no candle (or price) to compare against, this guard can't prove a
+  // scale mismatch, so it doesn't drop the result on that basis — real results
+  // always carry candles, so this only spares edge rows a false rejection.
+  if (!last || !result.price) return true;
+  return Math.abs(result.price - last) / last <= PRICE_CANDLE_MAX_DIVERGENCE;
+}
+
 function shouldIncludeResult(result: ScanResult): boolean {
   if (result.setupDirection !== "long" || !isActiveTrackedSqueeze(result)) return false;
   if (result.squeezeLifecycleStatus) return true;
@@ -778,6 +801,7 @@ function createScanDiagnostics(scannedSymbols: number, minAvgDollarVolume: numbe
       stockLiquidity: 0,
       marketCap: 0,
       candleHistory: 0,
+      priceCandleMismatch: 0,
       options: 0,
       spreadLiquidity: 0,
       marketStructure: 0,

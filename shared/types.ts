@@ -396,6 +396,7 @@ export type ScanDiagnosticCounts = {
   stockLiquidity: number;
   marketCap: number;
   candleHistory: number;
+  priceCandleMismatch: number;
   options: number;
   spreadLiquidity: number;
   marketStructure: number;

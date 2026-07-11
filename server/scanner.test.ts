@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import type { SchwabQuote } from "./schwab";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
@@ -638,6 +638,7 @@ describe("background scan refresh", () => {
     const legacy: ScanResult = {
       ...qualifyingResult("DOTS"),
       candles,
+      price: candles[candles.length - 1].close,
       compressionQualityScore: 95,
       maxScore: 100,
       dailySqueezeDotCount: undefined,
@@ -655,6 +656,19 @@ describe("background scan refresh", () => {
     expect(result.compressionQualityScore).toBe(expectedDots);
     expect(result.maxScore).toBe(5);
     expect(result.layerEvaluations[0].detail).toContain(expectedDots + " consecutive active squeeze dots");
+  }));
+
+  it("drops a cached result whose header price no longer matches its candle scale", async () => withDbRestore(async () => {
+    const candles = activeDailySqueezeCandles();
+    const lastClose = candles[candles.length - 1].close;
+    const mismatched: ScanResult = { ...qualifyingResult("BADSCALE"), candles, price: lastClose * 0.6 };
+    const consistent: ScanResult = { ...qualifyingResult("GOODSCALE"), candles, price: lastClose };
+    await replaceScanResults([mismatched, consistent]);
+
+    const symbols = (await readDisplayResults()).map((result) => result.symbol);
+
+    expect(symbols).toContain("GOODSCALE");
+    expect(symbols).not.toContain("BADSCALE");
   }));
 
   it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
@@ -988,6 +1002,7 @@ function fakeDiagnostics(input: { scannedSymbols: number; qualifiedResults: numb
       stockLiquidity: input.stockLiquidity ?? 0,
       marketCap: 0,
       candleHistory: 0,
+      priceCandleMismatch: 0,
       options: input.options ?? 0,
       spreadLiquidity: 0,
       marketStructure: 0,
@@ -1101,3 +1116,29 @@ function activeDailySqueezeCandles(): Candle[] {
   }
   return candles;
 }
+
+function candleAt(close: number): Candle {
+  return { date: "2026-07-09", open: close, high: close + 1, low: close - 1, close, volume: 1_000_000 };
+}
+
+describe("priceMatchesCandles", () => {
+  it("rejects a live quote price stapled to demo/stale candles on a different scale", () => {
+    const result = { ...qualifyingResult("ABNB"), price: 148.04, candles: [candleAt(240), candleAt(245.3)] };
+    expect(priceMatchesCandles(result)).toBe(false);
+  });
+
+  it("accepts a price equal to the last candle close", () => {
+    const result = { ...qualifyingResult("ABNB"), price: 245.3, candles: [candleAt(240), candleAt(245.3)] };
+    expect(priceMatchesCandles(result)).toBe(true);
+  });
+
+  it("tolerates a small intraday gap between the live quote and the last daily close", () => {
+    const result = { ...qualifyingResult("ABNB"), price: 152, candles: [candleAt(148), candleAt(150)] };
+    expect(priceMatchesCandles(result)).toBe(true);
+  });
+
+  it("does not reject a result with no candles (nothing to compare against)", () => {
+    const result = { ...qualifyingResult("ABNB"), price: 148, candles: [] };
+    expect(priceMatchesCandles(result)).toBe(true);
+  });
+});
