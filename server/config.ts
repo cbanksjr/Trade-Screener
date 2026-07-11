@@ -31,7 +31,5 @@ export const config = {
   quantDataEnabled: (process.env.QUANTDATA_ENABLED ?? "true") !== "false",
   quantDataMaxCallsPerScan: Number(process.env.QUANTDATA_MAX_CALLS_PER_SCAN ?? 300),
   quantDataCacheTtlMinutes: Number(process.env.QUANTDATA_CACHE_TTL_MINUTES ?? 15),
-  etfSymbols: process.env.ETF_SYMBOLS ?? "",
-  appBasicAuthUsername: process.env.APP_BASIC_AUTH_USERNAME ?? "",
-  appBasicAuthPassword: process.env.APP_BASIC_AUTH_PASSWORD ?? ""
+  etfSymbols: process.env.ETF_SYMBOLS ?? ""
 };

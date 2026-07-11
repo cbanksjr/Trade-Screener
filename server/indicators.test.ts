@@ -11,9 +11,9 @@ import {
   squeezeMomentumSeries,
   squeezeState
 } from "./indicators";
-import type { MacroRegimeContext } from "./macroRegime";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
+  BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
   RELAXED_TREND_GRADE_CAP_REASON,
@@ -745,7 +745,7 @@ describe("layer decision engine", () => {
     expect(volatilityFit?.detail).toContain("momentum");
   });
 
-  it("caps bearish macro A setups to B without vetoing the trade mark", () => {
+  it("keeps bearish SPY or QQQ structure out of setup grade but marks trade Avoid", () => {
     const candles = activeDailySqueezeCandles();
     const indicators = latestIndicators(candles);
     const price = preferredEntryPrice(indicators);
@@ -760,16 +760,15 @@ describe("layer decision engine", () => {
       sector: "Information Technology",
       sectorCandles: candles,
       spyCandles: bearishMarketCandles(),
-      qqqCandles: bearishMarketCandles(),
-      macroRegime: bearishMacroRegime()
+      qqqCandles: bearishMarketCandles()
     });
 
     expect(result.layerEvaluations.find((layer) => layer.layer === "Macro Regime")?.status).toBe("Bearish");
-    expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(result.tradeMark).toBe("Take");
-    expect(result.grade).toBe("B");
-    expect(result.tradeMarkReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
-    expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.longCallDecision).toBe("Avoid");
+    expect(result.tradeMark).toBe("Avoid");
+    expect(result.grade).toBe("A");
+    expect(result.tradeMarkReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
+    expect(result.gradeCapReasons).not.toContain(BEARISH_MACRO_GRADE_CAP_REASON);
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
 
     const enriched = applyInstitutionalEdge(result, {
@@ -779,8 +778,8 @@ describe("layer decision engine", () => {
       factors: [],
       warnings: []
     });
-    expect(enriched.longCallDecision).toBe("Moderate Long Call Candidate");
-    expect(enriched.grade).toBe("B");
+    expect(enriched.longCallDecision).toBe("Avoid");
+    expect(enriched.grade).toBe("A");
   });
 
   it("ignores lower-timeframe squeeze for grading and reasons", () => {
@@ -906,6 +905,7 @@ describe("layer decision engine", () => {
       expect(result.dailyEntryQualificationMode).toBe("strict");
       expect(result.longCallDecision).toBe("Strong Long Call Candidate");
       expect(result.grade).toBe("A");
+      expect(result.gradeCapReasons).not.toContain(BROAD_ENTRY_GRADE_CAP_REASON);
       expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
     }
   });
@@ -1240,17 +1240,6 @@ function bearishMarketCandles(): Candle[] {
       volume: 25_000_000
     };
   });
-}
-
-function bearishMacroRegime(): MacroRegimeContext {
-  return {
-    spy: { trend: "bearish", regime: "bearish", detail: "SPY trend is bearish." },
-    qqq: { trend: "bearish", regime: "bearish", detail: "QQQ trend is bearish." },
-    vix: { level: 18, regime: "rising", detail: "VIX at 18.00 is between 15 and 25 (rising)." },
-    effectiveRegime: "bearish",
-    detail: "SPY regime bearish (bearish trend); QQQ regime bearish (bearish trend); VIX rising; effective regime bearish.",
-    warnings: []
-  };
 }
 
 function intradayCandles(direction: "up" | "down", days = 90): Candle[] {

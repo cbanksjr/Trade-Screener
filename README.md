@@ -11,9 +11,9 @@ npm run dev
 
 Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
-The Dashboard displays developing and ready compression setups with a separate `Take` or `Avoid` trade mark. `A` means a setup score of `90-100`; `B` means `70-89`; a five-dot squeeze that currently scores below B can remain visible as a tracked `C`/`Avoid` setup so contextual weakness does not hide the compression before it fires. Weekly squeeze is shown as bonus context only and Weekly EMA structure does not boost, cap, filter, or degrade the setup grade. Hostile overlays such as bearish macro, bearish institutional positioning, or unusable option context mark the trade `Avoid` without changing the setup grade.
+The Dashboard displays qualified `A` or `B` compression setups with a separate `Take` or `Avoid` trade mark. `A` means a setup score of `90-100`; `B` means `70-89`. Weekly squeeze is shown as bonus context only and Weekly EMA structure does not boost, cap, filter, or degrade the setup grade. Hostile overlays such as bearish macro, bearish institutional positioning, or unusable option context mark the trade `Avoid` without changing the setup grade.
 
-The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. While connected, automatic refreshes run at most every 15 minutes on weekdays from 8:30 a.m. through 3:00 p.m. America/Chicago. The browser only requests due refreshes while the dashboard is visible, and the server schedule only runs while the service is awake. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
+The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. The app keeps results fresh with a 15-minute background refresh cadence while connected. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
 ```bash
 SCHWAB_APP_KEY=your_app_key_here
@@ -36,7 +36,7 @@ Financial Modeling Prep can be used for index universe refreshes and as a cached
 
 FMP can also add a Starter-safe Institutional Edge context panel after a symbol already passes the core scan. It probes each optional endpoint with your API key, caches availability for `FMP_INSTITUTIONAL_EDGE_PROBE_TTL_HOURS` hours, and skips endpoints that return plan, permission, malformed entitlement, or rate-limit responses. FMP Institutional Edge is informational only; setup grade and Take/Avoid marks are driven by trading structure and QuantData positioning. Configure it with `FMP_INSTITUTIONAL_EDGE_ENABLED=true`, `FMP_STARTER_SAFE_MODE=true`, and `FMP_INSTITUTIONAL_EDGE_MAX_CALLS_PER_SCAN=250`.
 
-QuantData adds the live Institutional Positioning layer after the base scan and optional FMP context pass. It uses prior-session options net drift/order flow, exposure by strike (dealer gamma walls), dark-pool levels, max pain (expiration pin risk), call open-interest change, and IV Rank (cross-checked against the technical Compression Quality factor) to mark each candidate as `confirmed`, `neutral`, `capped`, or `vetoed`. Bullish positioning can confirm a clean setup, while bearish flow, hostile call-wall exposure, distribution-like dark-pool data, or near-expiration max-pain pin risk can mark a setup as Avoid. Net Drift/Order Flow only reads as `confirmed` when it is corroborated by a genuine overnight call open-interest build, so same-day noise can't count as institutional conviction on its own. Institutional positioning affects only the `Take`/`Avoid` mark; it never promotes, demotes, hides, or removes the technical setup. QuantData also ranks the scan universe once per scan using Gainers-Losers to prioritize per-symbol QuantData spend toward names with real same-day movement first (a scan-ordering signal, not a scoring factor). Configure it with `QUANTDATA_API_KEY`, `QUANTDATA_BASE_URL=https://api.quantdata.us`, `QUANTDATA_ENABLED=true`, `QUANTDATA_MAX_CALLS_PER_SCAN=300`, and `QUANTDATA_CACHE_TTL_MINUTES=15`.
+QuantData adds the live Institutional Positioning layer after the base scan and optional FMP context pass. It uses prior-session options net drift/order flow, exposure by strike (dealer gamma walls), dark-pool levels, max pain (expiration pin risk), call open-interest change, and IV Rank (cross-checked against the technical Compression Quality factor) to mark each candidate as `confirmed`, `neutral`, `capped`, or `vetoed`. Bullish positioning can confirm a clean setup, while bearish flow, hostile call-wall exposure, distribution-like dark-pool data, or near-expiration max-pain pin risk can mark an A/B setup as Avoid. Net Drift/Order Flow only reads as `confirmed` when it is corroborated by a genuine overnight call open-interest build, so same-day noise can't count as institutional conviction on its own. When a clean technical B setup has QuantData confluence — at least 3 of {bullish flow, supportive/squeeze-prone exposure, dark-pool accumulation, confirmed OI build, confirming IV Rank} and zero vetoes (hostile gamma wall or max-pain pin risk) — it can be promoted to A (`gradeBeforeQuantData` → `finalGrade`); promotion never demotes a setup below what the technical score already earned. QuantData also ranks the scan universe once per scan using Gainers-Losers to prioritize per-symbol QuantData spend toward names with real same-day movement (a scan-ordering signal, not a scoring factor). Configure it with `QUANTDATA_API_KEY`, `QUANTDATA_BASE_URL=https://api.quantdata.us`, `QUANTDATA_ENABLED=true`, `QUANTDATA_MAX_CALLS_PER_SCAN=300`, and `QUANTDATA_CACHE_TTL_MINUTES=15`.
 
 The scanner includes a curated ETF list by default: `SPY`, `QQQ`, `DIA`, `IWM`, `SMH`, `XLK`, `XLF`, `XLV`, `XLE`, `XLY`, `XLI`, `XLC`, `XLP`, `XLU`, `XLB`, and `XLRE`. To override that list, set `ETF_SYMBOLS` to a comma-separated list such as `ETF_SYMBOLS=SPY,QQQ,SMH`.
 
@@ -44,7 +44,7 @@ The scanner includes a curated ETF list by default: `SPY`, `QQQ`, `DIA`, `IWM`, 
 
 For a hosted private deployment, use **Supabase Free Postgres** for persistence and a **Render Free Web Service** for the app. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted deployments should use Supabase so scan results, Schwab OAuth tokens, and cached universe data survive redeploys.
 
-Render Free web services can sleep after inactivity. The app is built around that tradeoff: cached results load first after wake-up, and fresh scans run when you open the app or click **Run Scan**. The scheduled 15-minute refresh is restricted to the regular weekday market window and only runs while Render is awake or a visible dashboard requests a due refresh. This caps the app's automatic keep-awake time near 150 hours in a typical month, well below one Render Free service's current 750-hour workspace allowance. Scan-result rows and provider caches are replaced/upserted rather than appended, limiting Supabase database growth.
+Render Free web services can sleep after inactivity. The app is built around that tradeoff: cached results load first after wake-up, and fresh scans run when you open the app or click **Run Scan**. The scheduled 15-minute refresh only runs while the Render service is awake.
 
 Recommended Supabase + Render setup:
 
@@ -63,7 +63,6 @@ Recommended Supabase + Render setup:
   - `SCHWAB_CALLBACK_URL=https://trade-screener-auyv.onrender.com/api/schwab/callback`
   - `SCHWAB_APP_KEY` and `SCHWAB_APP_SECRET`
   - `FMP_API_KEY`
-  - Optional private access gate: `APP_BASIC_AUTH_USERNAME` and `APP_BASIC_AUTH_PASSWORD`
 
 Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB_CALLBACK_URL`. Render provides public HTTPS, so the app disables its local self-signed HTTPS server in production.
 
@@ -86,7 +85,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - A setups require the full bullish 8/21/34/55/89 EMA stack and the preferred 21-to-8 EMA entry pocket
 - B setups may use the expanded trend path when the Daily 8 EMA is above the 21 EMA and price is between the 21 EMA and 1.5 ATR above it
 - Selected timeframes: daily and weekly
-- At least 2 consecutive active Daily squeeze dots before expansion; 2-4 dots can qualify as a developing B setup, while 5+ dots establish a ready setup that remains visible until the squeeze fires
+- At least 2 consecutive active Daily squeeze dots before expansion; 2-4 dots qualify as a developing B setup, while 5+ dots are eligible for A
 - Daily 20-period Squeeze histogram must be strictly above zero; both cyan (positive and rising) and blue (positive but falling) qualify
 - Daily price between the 34 EMA and 8 EMA, or within 1 ATR above the 21 EMA, is eligible for the preferred A-entry zone; controlled extension up to 1.5 ATR above the 21 EMA remains valid but contributes fewer setup points
 - Daily squeeze-dot count and a histogram above zero are compression gates; ATR contraction, Bollinger Band contraction, candle-range contraction, and whether positive momentum is improving remain context
@@ -96,7 +95,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Independent layer statuses for market structure, institutional context, options context, macro regime, and Daily squeeze dots
 - Institutional setup score from 0-100 across weighted setup factors: Daily structure, Daily squeeze momentum, compression quality, relative strength, sector strength, and catalyst safety
 - Optional FMP Institutional Edge context uses Starter-accessible endpoint probing for financial scores, analyst grades/targets, insider data, and ETF data when available; unavailable endpoints are skipped neutrally and FMP context does not affect grading
-- Optional QuantData Institutional Positioning overlay uses live options flow, options exposure (dealer gamma walls), dark-pool levels, max-pain pin risk, call open-interest change, and an IV Rank cross-check against Compression Quality strictly as a `Take`/`Avoid` confirmation/caution/veto layer; it never changes the technical grade or controls setup visibility
+- Optional QuantData Institutional Positioning overlay uses live options flow, options exposure (dealer gamma walls), dark-pool levels, max-pain pin risk, call open-interest change, and an IV Rank cross-check against Compression Quality as a confirmation/cap/veto layer rather than a simple point bonus; it can also promote a clean technical B setup to A when at least 3 of these factors confirm and none veto (`gradeBeforeQuantData`/`finalGrade`), but it never demotes a setup below what the technical score already earned
 - Optional QuantData universe-level Gainers-Losers ranking reorders (does not filter) the per-scan symbol list once per scan so QuantData's per-symbol call budget is spent on names with real same-day movement first; it is a scan-ordering signal, not a scoring factor
 - Sector strength uses S&P 500 GICS sector data when available, maps sectors to ETF proxies such as XLK/XLF/XLV, and compares that sector ETF against SPY
 - ETF strength compares the ETF directly against SPY over the same 20-period window
@@ -105,8 +104,6 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - Liquid 14-180 DTE swing call candidates, with 14-90 DTE preferred, delta around 0.35-0.75, spread no wider than 15%, preferred spread at or below 10%, and at least 100 open interest or 25 contracts of volume
 
 The automatic index universe is treated as prequalified if Schwab and FMP both omit market cap. If either provider supplies market cap below the configured threshold, the symbol is rejected.
-
-Once a setup appears, the scanner records its squeeze lifecycle and keeps it in the results while the Daily squeeze remains active, even if momentum, entry location, setup score, or overlays later weaken. Manually saved setups follow the same rule: their payload and `Take`/`Avoid` mark continue to refresh, and they are removed automatically only after a later successful scan confirms the squeeze has released/ended (or when the user removes them). Provider-wide scan failures preserve the previous result cache and watchlist instead of replacing them with an empty snapshot.
 
 Momentum follows the 20-period Squeeze histogram pipeline: price is measured against the average of the 20-bar high/low midpoint and 20-bar average close, then smoothed with a 20-bar least-squares linear regression curve. `momentumImproving` compares the current histogram bar with the immediately previous bar. Histogram state is reported as cyan, blue, red, or yellow from its sign and direction.
 

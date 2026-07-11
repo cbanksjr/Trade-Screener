@@ -201,10 +201,10 @@ describe("FMP Institutional Edge", () => {
     expect(result.gradeCapReasons ?? []).not.toContain("Weekly chart qualifies by 21 EMA proximity but does not have the full bullish EMA stack.");
   });
 
-  it("does not promote an extended daily entry above B", () => {
+  it("does not promote a broad daily entry above B", () => {
     const result = applyInstitutionalEdge({
       ...baseResult(88, "B"),
-      dailyEntryQualificationMode: "extended"
+      dailyEntryQualificationMode: "broad"
     }, edge("Bullish", 5));
 
     expect(result.setupScore).toBe(88);

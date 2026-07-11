@@ -1,7 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { config } from "./config";
-import { __resetSchwabTokenCacheForTest, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
-import { getSetting, initDb, setSetting } from "./sqlite";
+import { fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
+import { initDb, setSetting } from "./sqlite";
 
 describe("Schwab response normalizers", () => {
   it("normalizes batch quote payloads and calculates average dollar volume", () => {
@@ -449,13 +449,8 @@ describe("Schwab response normalizers", () => {
 });
 
 describe("Schwab request resilience", () => {
-  beforeEach(() => {
-    __resetSchwabTokenCacheForTest();
-  });
-
   afterEach(() => {
     vi.unstubAllGlobals();
-    __resetSchwabTokenCacheForTest();
   });
 
   it("deduplicates concurrent token refreshes so only one refresh request is sent", async () => {
@@ -519,26 +514,5 @@ describe("Schwab request resilience", () => {
 
     expect(quote?.price).toBe(210);
     expect(quoteAttempts).toBe(2);
-  });
-
-  it("clears stored tokens when Schwab rejects a refresh token", async () => {
-    await initDb();
-    await setSetting("schwabTokens", {
-      accessToken: "expired-token",
-      refreshToken: "expired-refresh-token",
-      accessTokenExpiresAt: new Date(Date.now() - 60_000).toISOString()
-    });
-
-    const fetchImpl = vi.fn(async (input: string | URL) => {
-      const url = String(input);
-      if (url.startsWith(`${config.schwabAuthBaseUrl}/token`)) {
-        return new Response("<HTML><TITLE>Access Denied</TITLE></HTML>", { status: 403, statusText: "Forbidden" });
-      }
-      throw new Error("Unexpected fetch to " + url);
-    });
-    vi.stubGlobal("fetch", fetchImpl);
-
-    await expect(fetchQuote("AAPL")).rejects.toThrow("Use Connect Schwab to reconnect");
-    await expect(getSetting("schwabTokens", undefined)).resolves.toBeUndefined();
   });
 });

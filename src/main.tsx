@@ -3,104 +3,98 @@ import ReactDOM from "react-dom/client";
 import {
   Activity,
   BarChart3,
-  Bell,
-  Bookmark,
+  CalendarClock,
   CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleHelp,
-  Filter,
   Gauge,
   LayoutDashboard,
+  ListFilter,
   Moon,
   Play,
-  RefreshCw,
   Search,
-  Settings as SettingsIcon,
   ShieldCheck,
   SlidersHorizontal,
   Sun,
-  TrendingUp,
   WalletCards,
-  XCircle,
+  XCircle
 } from "lucide-react";
-import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
-import { isMarketRefreshWindow, isRefreshDue } from "../shared/refreshSchedule";
-import { CandlestickChart } from "./CandlestickChart";
+import type { BrokerStatus, Candle, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import "./styles.css";
 
 const api = {
   async results(): Promise<Partial<ScanResponse>> {
-    return apiJson("/api/results");
+    const response = await fetch("/api/results");
+    return response.json();
   },
   async scan(): Promise<ScanResponse> {
-    return apiJson("/api/scan", { method: "POST" });
+    const response = await fetch("/api/scan", { method: "POST" });
+    return response.json();
   },
   async scanStatus(): Promise<ScanResponse> {
-    return apiJson("/api/scan/status");
+    const response = await fetch("/api/scan/status");
+    return response.json();
   },
   async brokerStatus(): Promise<BrokerStatus> {
-    return apiJson("/api/schwab/status");
+    const response = await fetch("/api/schwab/status");
+    return response.json();
   },
   async connectSchwab(): Promise<{ loginUrl: string }> {
-    return apiJson("/api/schwab/login");
+    const response = await fetch("/api/schwab/login");
+    return response.json();
   },
   async watchlist(): Promise<WatchlistEntry[]> {
-    return apiJson("/api/watchlist");
+    const response = await fetch("/api/watchlist");
+    return response.json();
   },
   async removeFromWatchlist(symbol: string): Promise<WatchlistEntry[]> {
-    return apiJson("/api/watchlist/" + encodeURIComponent(symbol), { method: "DELETE" });
+    const response = await fetch("/api/watchlist/" + encodeURIComponent(symbol), { method: "DELETE" });
+    return response.json();
   },
   async addToWatchlist(symbol: string): Promise<WatchlistEntry[]> {
-    return apiJson("/api/watchlist", {
+    const response = await fetch("/api/watchlist", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ symbol }),
+      body: JSON.stringify({ symbol })
     });
+    return response.json();
   },
 };
 
-async function apiJson<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
-  const data = await response.json().catch(() => ({})) as { error?: string };
-  if (!response.ok) throw new Error(data.error ?? "Request failed with status " + response.status + ".");
-  return data as T;
-}
-
 const GRADE_ORDER = ["A", "B", "C"] as const;
-const FILTERS = ["all", "take", "avoid", "grade-a"] as const;
 type ThemeMode = "light" | "dark";
 type ViewMode = "scanner" | "watchlist";
-type ResultFilter = typeof FILTERS[number];
-
-function initialTheme(): ThemeMode {
-  const saved = localStorage.getItem("theme");
-  if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-}
 
 function App() {
   const [results, setResults] = React.useState<ScanResult[]>([]);
   const [settings, setSettings] = React.useState<Settings | null>(null);
-  const [selected, setSelected] = React.useState("");
-  const [query, setQuery] = React.useState("");
-  const deferredQuery = React.useDeferredValue(query);
-  const [filter, setFilter] = React.useState<ResultFilter>("all");
+  const [selected, setSelected] = React.useState<string>("");
   const [loading, setLoading] = React.useState(false);
   const [message, setMessage] = React.useState("");
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
-  const [scanStatus, setScanStatus] = React.useState("idle");
-  const [lastScanFinishedAt, setLastScanFinishedAt] = React.useState<string>();
-  const [nextRefreshAt, setNextRefreshAt] = React.useState<string>();
-  const [theme, setTheme] = React.useState<ThemeMode>(initialTheme);
+  const [scanStatus, setScanStatus] = React.useState<string>("idle");
+  const [theme, setTheme] = React.useState<ThemeMode>(() => localStorage.getItem("theme") === "dark" ? "dark" : "light");
   const [view, setView] = React.useState<ViewMode>("scanner");
   const [watchlist, setWatchlist] = React.useState<WatchlistEntry[]>([]);
-  const [watchlistBusy, setWatchlistBusy] = React.useState(false);
-  const automaticRefreshPending = React.useRef(false);
+
+  function refreshWatchlist() {
+    api.watchlist().then(setWatchlist).catch(() => undefined);
+  }
+
+  async function removeWatchlistSymbol(symbol: string) {
+    const next = await api.removeFromWatchlist(symbol);
+    setWatchlist(next);
+  }
+
+  async function addWatchlistSymbol(symbol: string) {
+    const next = await api.addToWatchlist(symbol);
+    setWatchlist(next);
+  }
+
+  React.useEffect(() => {
+    refreshWatchlist();
+  }, []);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
-    document.documentElement.style.colorScheme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
 
@@ -108,32 +102,38 @@ function App() {
     const params = new URLSearchParams(window.location.search);
     const schwabResult = params.get("schwab");
     const schwabMessage = params.get("message");
+
     if (schwabResult === "connected") setMessage("Schwab connected. You can run a live scan now.");
     if (schwabResult === "error" && schwabMessage) console.warn("Schwab connection did not complete:", schwabMessage);
     if (schwabResult) window.history.replaceState({}, document.title, window.location.pathname);
 
-    const resultsRequest = api.results();
-    const brokerRequest = api.brokerStatus();
-    const watchlistRequest = api.watchlist();
-    void Promise.allSettled([resultsRequest, brokerRequest, watchlistRequest]).then(([resultsOutcome, brokerOutcome, watchlistOutcome]) => {
-      if (resultsOutcome.status === "fulfilled") applyScanResponse(resultsOutcome.value);
-      else setMessage(resultsOutcome.reason instanceof Error ? resultsOutcome.reason.message : "Failed to load scan results.");
-
-      if (brokerOutcome.status === "fulfilled") {
-        setBrokerStatus(brokerOutcome.value);
-        if (resultsOutcome.status === "fulfilled" && brokerOutcome.value.ok && shouldRefresh(resultsOutcome.value)) void startRefresh(false);
-      } else {
-        setBrokerStatus({ configured: false, baseUrl: "", ok: false, checkedAt: new Date().toISOString(), message: "Unable to check Schwab status." });
-      }
-
-      if (watchlistOutcome.status === "fulfilled") setWatchlist(watchlistOutcome.value);
+    api.results().then((data) => {
+      applyScanResponse(data);
+      api.brokerStatus().then((status) => {
+        setBrokerStatus(status);
+        if (status.ok && shouldRefresh(data)) void startRefresh(false);
+      }).catch(() => {
+        setBrokerStatus({
+          configured: false,
+          baseUrl: "",
+          ok: false,
+          checkedAt: new Date().toISOString(),
+          message: "Unable to check Schwab status."
+        });
+      });
+    }).catch((error) => {
+      setMessage(error instanceof Error ? error.message : "Failed to load scan results.");
     });
+
   }, []);
+
+  const active = results.find((item) => item.symbol === selected) ?? results[0];
+  const activeWatchlistEntry = watchlist.find((entry) => entry.symbol === selected) ?? watchlist[0];
 
   React.useEffect(() => {
     if (!loading && scanStatus !== "running") return;
     const interval = window.setInterval(() => {
-      void api.scanStatus().then((data) => {
+      api.scanStatus().then((data) => {
         applyScanResponse(data);
         if (!data.isRefreshing) setLoading(false);
       }).catch(() => setLoading(false));
@@ -141,40 +141,20 @@ function App() {
     return () => window.clearInterval(interval);
   }, [loading, scanStatus]);
 
-  React.useEffect(() => {
-    if (!brokerStatus?.ok) return;
-    const checkForDueRefresh = () => {
-      if (document.visibilityState !== "visible" || loading || scanStatus === "running") return;
-      if (!isMarketRefreshWindow() || !isRefreshDue(nextRefreshAt)) return;
-      if (automaticRefreshPending.current) return;
-      automaticRefreshPending.current = true;
-      void startRefresh(false).finally(() => {
-        automaticRefreshPending.current = false;
-      });
-    };
-    const interval = window.setInterval(checkForDueRefresh, 60_000);
-    document.addEventListener("visibilitychange", checkForDueRefresh);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", checkForDueRefresh);
-    };
-  }, [brokerStatus?.ok, loading, nextRefreshAt, scanStatus]);
-
   function applyScanResponse(data: Partial<ScanResponse>) {
     const nextResults = sortResultsByGrade(data.results ?? []);
     setResults(nextResults);
     if (data.settings) setSettings(data.settings);
-    if (data.lastScanFinishedAt) setLastScanFinishedAt(data.lastScanFinishedAt);
-    if (data.nextRefreshAt) setNextRefreshAt(data.nextRefreshAt);
     setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
-    if (!data.isRefreshing) void api.watchlist().then(setWatchlist).catch(() => undefined);
+    if (!data.isRefreshing) refreshWatchlist();
   }
 
   function shouldRefresh(data: Partial<ScanResponse>) {
     if (data.isRefreshing) return false;
-    if (!data.results?.length || !data.nextRefreshAt) return true;
+    if (!data.results?.length) return true;
+    if (!data.nextRefreshAt) return true;
     return new Date(data.nextRefreshAt).getTime() <= Date.now();
   }
 
@@ -182,7 +162,7 @@ function App() {
     const data = await api.scan();
     applyScanResponse(data);
     if (showMessage && !data.isRefreshing) setMessage("Results are already current.");
-    void api.brokerStatus().then(setBrokerStatus).catch(() => undefined);
+    api.brokerStatus().then(setBrokerStatus).catch(() => undefined);
   }
 
   async function runScan() {
@@ -201,343 +181,139 @@ function App() {
     window.location.href = response.loginUrl;
   }
 
-  async function toggleWatchlist(symbol: string) {
-    if (watchlistBusy) return;
-    setWatchlistBusy(true);
-    try {
-      const exists = watchlist.some((entry) => entry.symbol === symbol);
-      const next = exists ? await api.removeFromWatchlist(symbol) : await api.addToWatchlist(symbol);
-      setWatchlist(next);
-      if (view === "watchlist" && exists) setSelected(next[0]?.symbol ?? "");
-    } finally {
-      setWatchlistBusy(false);
-    }
-  }
-
-  function changeView(nextView: ViewMode) {
-    setView(nextView);
-    setFilter("all");
-    setQuery("");
-    const nextSymbol = nextView === "scanner" ? results[0]?.symbol : watchlist[0]?.symbol;
-    if (nextSymbol) setSelected(nextSymbol);
-  }
-
-  const passingCount = results.reduce((count, item) => count + (item.passesUniverse ? 1 : 0), 0);
-  const takeCount = results.reduce((count, item) => count + (tradeMark(item) === "Take" ? 1 : 0), 0);
-  const gradeACount = results.reduce((count, item) => count + (item.grade === "A" ? 1 : 0), 0);
-  const avoidCount = results.length - takeCount;
-  const sourceEntries = React.useMemo(
-    () => view === "scanner"
-      ? results.map((result) => ({ result }))
-      : watchlist.map((entry) => ({ result: entry.result, addedAt: entry.addedAt })),
-    [results, view, watchlist],
-  );
-  const normalizedQuery = deferredQuery.trim().toUpperCase();
-  const visibleEntries = React.useMemo(() => sourceEntries.filter(({ result }) => {
-    const matchesQuery = !normalizedQuery || result.symbol.includes(normalizedQuery) || result.companyName?.toUpperCase().includes(normalizedQuery);
-    const matchesFilter = filter === "all" || (filter === "take" && tradeMark(result) === "Take") || (filter === "avoid" && tradeMark(result) === "Avoid") || (filter === "grade-a" && result.grade === "A");
-    return matchesQuery && matchesFilter;
-  }), [filter, normalizedQuery, sourceEntries]);
-  React.useEffect(() => {
-    if (visibleEntries.length && !visibleEntries.some(({ result }) => result.symbol === selected)) {
-      setSelected(visibleEntries[0].result.symbol);
-    }
-  }, [selected, visibleEntries]);
-  const sourceResults = sourceEntries.map((entry) => entry.result);
-  const active = sourceResults.find((item) => item.symbol === selected) ?? sourceResults[0];
-  const isWatchlisted = active ? watchlist.some((entry) => entry.symbol === active.symbol) : false;
+  const passingCount = results.filter((item) => item.passesUniverse).length;
+  const takeCount = results.filter((item) => tradeMark(item) === "Take").length;
+  const gradeACount = results.filter((item) => item.grade.startsWith("A")).length;
+  const avoidCount = results.filter((item) => tradeMark(item) === "Avoid").length;
 
   return (
     <main className="app-shell">
       <aside className="side-rail" aria-label="Primary navigation">
-        <div className="brand-mark"><TrendingUp size={18} /><strong>TS</strong></div>
-        <nav>
-          <RailButton label="Scanner" active={view === "scanner"} onClick={() => changeView("scanner")}><LayoutDashboard size={18} /></RailButton>
-          <RailButton label="Watchlist" active={view === "watchlist"} onClick={() => changeView("watchlist")}><Bookmark size={18} /></RailButton>
-          <RailButton label="Alerts"><Bell size={18} /></RailButton>
-          <RailButton label="Analytics"><BarChart3 size={18} /></RailButton>
-        </nav>
-        <div className="rail-bottom">
-          <RailButton label={theme === "dark" ? "Use light mode" : "Use dark mode"} onClick={() => setTheme(theme === "dark" ? "light" : "dark")}>
-            {theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}
-          </RailButton>
-          <RailButton label="Settings"><SettingsIcon size={18} /></RailButton>
-          <RailButton label="Help"><CircleHelp size={18} /></RailButton>
+        <div className="brand-mark">
+          <BarChart3 size={21} />
+          <span>TS</span>
         </div>
+        <nav>
+          <button className={"nav-item " + (view === "scanner" ? "active" : "")} title="Scanner" onClick={() => setView("scanner")}><LayoutDashboard size={18} /></button>
+          <button className={"nav-item " + (view === "watchlist" ? "active" : "")} title="Watchlists" onClick={() => setView("watchlist")}><WalletCards size={18} /></button>
+        </nav>
       </aside>
 
-      <section className="app-main">
+      <section className="app-content">
         <header className="topbar">
-          <div className="title-group"><span>Analyst workbench</span><h1>Trade Screener</h1></div>
-          <label className="search-box">
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={(event) => {
-              if (event.key !== "Enter") return;
-              const exact = sourceResults.find((item) => item.symbol === query.trim().toUpperCase());
-              if (exact) setSelected(exact.symbol);
-            }} placeholder="Search symbol" aria-label="Search symbol" />
-            <kbd>/</kbd>
-          </label>
-          <div className="top-status">
-            <BrokerBadge brokerStatus={brokerStatus} settings={settings} onConnect={connectSchwab} />
-            <span className="freshness"><RefreshCw size={13} className={loading ? "spin" : ""} />{lastUpdatedLabel(lastScanFinishedAt, loading)}</span>
+          <div className="title-block">
+            <span className="eyebrow">Analyst Workbench</span>
+            <h1>Trade Screener</h1>
+            <p>S&amp;P 500, Nasdaq 100, and ETF compression setups with institutional context.</p>
           </div>
-          <button className="theme-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>
-            {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}<span>{theme === "dark" ? "Light" : "Dark"}</span>
-          </button>
-          <button className="scan-button" onClick={runScan} disabled={loading}>
-            {loading ? <RefreshCw size={16} className="spin" /> : <Play size={16} />}{loading ? "Refreshing" : "Run Scan"}
-          </button>
+          <div className="command-bar" role="search">
+            <Search size={16} />
+            <input value={selected} onChange={(event) => setSelected(event.target.value.toUpperCase())} placeholder="Search symbol" aria-label="Search symbol" />
+            <span>/</span>
+          </div>
+          <div className="top-actions">
+            <button className="icon-button theme-toggle" onClick={() => setTheme(theme === "light" ? "dark" : "light")} aria-label="Toggle color mode">
+              {theme === "light" ? <Moon size={18} /> : <Sun size={18} />}
+              <span className="theme-toggle-label">{theme === "light" ? "Dark mode" : "Light mode"}</span>
+            </button>
+            <BrokerBadge brokerStatus={brokerStatus} settings={settings} onConnect={connectSchwab} />
+            <button className="primary" onClick={runScan} disabled={loading}>
+              <Play size={18} />
+              {loading ? "Scanning..." : "Run Scan"}
+            </button>
+          </div>
         </header>
 
-        <section className="summary-bar" aria-label="Scan summary">
-          <span><ShieldCheck size={15} />{scanStatusLabel(scanStatus, loading)}</span><i />
-          <span><strong>{passingCount}</strong> passing</span>
-          <span className="take-text"><strong>{takeCount}</strong> Take</span>
-          <span className="a-text"><strong>{gradeACount}</strong> A setups</span>
-          <span className="avoid-text"><strong>{avoidCount}</strong> Avoid</span>
-          <span className="summary-note">S&amp;P 500 · Nasdaq 100 · ETFs</span>
+        <section className="control-strip" aria-label="Scan controls">
+          <ToolbarChip icon={<SlidersHorizontal size={15} />} label="Mode" value="Auto Scan" />
+          <ToolbarChip icon={<ListFilter size={15} />} label="Universe" value={`${results.length || "No"} symbols`} />
+          <ToolbarChip icon={<CalendarClock size={15} />} label="Session" value={loading || scanStatus === "running" ? "Refreshing" : scanStatus} />
+          <ToolbarChip icon={<ShieldCheck size={15} />} label="Broker" value={brokerStatus?.ok ? "Connected" : "Needs setup"} />
         </section>
 
-        {message ? <div className="notice" role="status">{message}<button onClick={() => setMessage("")} aria-label="Dismiss message"><XCircle size={15} /></button></div> : null}
-
-        <section className="workspace">
-          <CandidatePanel
-            entries={visibleEntries}
-            view={view}
-            filter={filter}
-            onFilter={setFilter}
-            activeSymbol={active?.symbol}
-            onSelect={setSelected}
-            loading={loading && results.length === 0}
-            counts={{ all: sourceEntries.length, take: view === "scanner" ? takeCount : sourceResults.filter((item) => tradeMark(item) === "Take").length, avoid: view === "scanner" ? avoidCount : sourceResults.filter((item) => tradeMark(item) === "Avoid").length, gradeA: view === "scanner" ? gradeACount : sourceResults.filter((item) => item.grade === "A").length }}
-          />
-          {active ? (
-            <>
-              <FocusPanel result={active} theme={theme} isWatchlisted={isWatchlisted} watchlistBusy={watchlistBusy} onToggleWatchlist={() => void toggleWatchlist(active.symbol)} />
-              <EvidencePanel result={active} />
-            </>
-          ) : <EmptyState view={view} runScan={runScan} />}
+        <section className="status-strip">
+          <Stat icon={<Activity />} label="Scan Status" value={loading || scanStatus === "running" ? "REFRESHING" : scanStatus.toUpperCase()} tone="blue" />
+          <Stat icon={<Gauge />} label="A Setups" value={String(gradeACount)} count={gradeACount} tone="good" />
+          <Stat icon={<CheckCircle2 />} label="Actionable" value={String(takeCount)} count={takeCount} tone="good" />
+          <Stat icon={<XCircle />} label="Avoid" value={String(avoidCount)} count={avoidCount} tone="risk" />
+          <Stat icon={<BarChart3 />} label="Passing Universe" value={`${passingCount}/${results.length}`} tone="neutral" />
+          <Stat icon={<WalletCards />} label="Watchlist" value={String(watchlist.length)} count={watchlist.length} tone="good" />
         </section>
+
+        {message && <div className="notice">{message}</div>}
+
+        {view === "watchlist" ? (
+          <section className="workspace">
+            <div className="panel list-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Watchlist</h2>
+                  <span>Symbols you've added from the scanner</span>
+                </div>
+                <span>{watchlist.length} symbol{watchlist.length === 1 ? "" : "s"}</span>
+              </div>
+              <div className="result-table scroll-list" role="table" aria-label="Watchlist">
+                <div className="result-header" role="row">
+                  <span>Symbol</span>
+                  <span>Grade</span>
+                  <span>Score</span>
+                  <span>Added</span>
+                  <span>Dots</span>
+                  <span>Remove</span>
+                </div>
+                {watchlist.length === 0
+                  ? <p className="empty-copy">No symbols on the watchlist yet. Run a scan to populate it.</p>
+                  : watchlist.map((entry) => (
+                      <WatchlistRow entry={entry} activeSymbol={activeWatchlistEntry?.symbol} onSelect={setSelected} onRemove={removeWatchlistSymbol} key={entry.symbol} />
+                    ))}
+              </div>
+            </div>
+
+            <div className="detail">
+              {watchlist.length ? <TickerDetail result={activeWatchlistEntry?.result} /> : <EmptyState runScan={runScan} />}
+            </div>
+          </section>
+        ) : (
+          <section className="workspace">
+            <div className="panel list-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>Scan Results</h2>
+                  <span>Ranked by setup score, grade, and squeeze quality</span>
+                </div>
+                <span>{new Date().toLocaleDateString()}</span>
+              </div>
+              <div className="result-table scroll-list" role="table" aria-label="Scan results">
+                <div className="result-header" role="row">
+                  <span>Symbol</span>
+                  <span>Grade</span>
+                  <span>Score</span>
+                  <span>Entry</span>
+                  <span>Dots</span>
+                  <span>Mark</span>
+                </div>
+                {loading && results.length === 0
+                  ? <ResultSkeleton />
+                  : results.map((result) => (
+                      <ResultRow result={result} activeSymbol={active?.symbol} onSelect={setSelected} key={result.symbol} />
+                    ))}
+              </div>
+            </div>
+
+            <div className="detail">
+              {active ? (
+                <TickerDetail
+                  result={active}
+                  onAddToWatchlist={addWatchlistSymbol}
+                  isWatchlisted={watchlist.some((entry) => entry.symbol === active.symbol)}
+                />
+              ) : <EmptyState runScan={runScan} />}
+            </div>
+          </section>
+        )}
       </section>
     </main>
   );
-}
-
-function RailButton({ label, active, onClick, children }: { label: string; active?: boolean; onClick?: () => void; children: React.ReactNode }) {
-  return <button className={`rail-button${active ? " active" : ""}`} aria-label={label} title={label} onClick={onClick}>{children}</button>;
-}
-
-function CandidatePanel({ entries, view, filter, onFilter, activeSymbol, onSelect, loading, counts }: {
-  entries: Array<{ result: ScanResult; addedAt?: string }>;
-  view: ViewMode;
-  filter: ResultFilter;
-  onFilter: (filter: ResultFilter) => void;
-  activeSymbol?: string;
-  onSelect: (symbol: string) => void;
-  loading: boolean;
-  counts: { all: number; take: number; avoid: number; gradeA: number };
-}) {
-  return (
-    <aside className="candidates-panel">
-      <div className="section-heading">
-        <div><span>{view === "scanner" ? "Shortlist" : "Saved setups"}</span><h2>{view === "scanner" ? "Candidates" : "Watchlist"} <em>{counts.all}</em></h2></div>
-        <button className="icon-action" aria-label="Filter candidates"><Filter size={16} /></button>
-      </div>
-      <div className="filter-tabs" role="tablist" aria-label="Candidate filters">
-        <FilterTab label="All" count={counts.all} value="all" active={filter === "all"} onFilter={onFilter} />
-        <FilterTab label="Take" count={counts.take} value="take" active={filter === "take"} onFilter={onFilter} />
-        <FilterTab label="Avoid" count={counts.avoid} value="avoid" active={filter === "avoid"} onFilter={onFilter} />
-        <FilterTab label="A setups" count={counts.gradeA} value="grade-a" active={filter === "grade-a"} onFilter={onFilter} />
-      </div>
-      <div className="candidate-labels"><span>Symbol</span><span>Grade</span><span>Squeeze</span><span>Mark</span></div>
-      <div className="candidate-list">
-        {loading ? <ResultSkeleton /> : entries.map(({ result, addedAt }) => (
-          <CandidateRow result={result} addedAt={addedAt} active={result.symbol === activeSymbol} onSelect={onSelect} key={result.symbol} />
-        ))}
-        {!loading && !entries.length ? <div className="no-results">{view === "watchlist" ? "No saved setups match this filter." : "No candidates match this filter."}</div> : null}
-      </div>
-      <footer><SlidersHorizontal size={13} />Sorted by setup score <span>{entries.length} shown</span></footer>
-    </aside>
-  );
-}
-
-function FilterTab({ label, count, value, active, onFilter }: { label: string; count: number; value: ResultFilter; active: boolean; onFilter: (filter: ResultFilter) => void }) {
-  return <button className={active ? "active" : ""} onClick={() => onFilter(value)} role="tab" aria-selected={active}>{label}<small>{count}</small></button>;
-}
-
-const CandidateRow = React.memo(function CandidateRow({ result, addedAt, active, onSelect }: { result: ScanResult; addedAt?: string; active: boolean; onSelect: (symbol: string) => void }) {
-  return (
-    <button className={`candidate-row${active ? " selected" : ""}`} onClick={() => onSelect(result.symbol)} aria-pressed={active}>
-      <span className="ticker"><strong>{result.symbol}{result.assetType === "etf" ? <em>ETF</em> : null}</strong><small>{money(result.price)}{addedAt ? ` · saved ${shortDate(addedAt)}` : ""}</small></span>
-      <span className={`grade grade-${result.grade.toLowerCase()}`}>{result.grade}<small>{Math.round(result.setupScore)}</small></span>
-      <SqueezeDotStrip count={dailySqueezeDotCount(result)} />
-      <span className={`decision decision-${tradeMark(result).toLowerCase()}`}>{tradeMark(result)}</span>
-    </button>
-  );
-});
-
-function FocusPanel({ result, theme, isWatchlisted, watchlistBusy, onToggleWatchlist }: { result: ScanResult; theme: ThemeMode; isWatchlisted: boolean; watchlistBusy: boolean; onToggleWatchlist: () => void }) {
-  const mark = tradeMark(result);
-  const contract = result.recommendedOptionContract ?? result.suggestedOptions[0];
-  return (
-    <section className="focus-panel">
-      <div className="setup-header">
-        <div className="setup-identity">
-          <span className={`grade-badge grade-${result.grade.toLowerCase()}`}>{result.grade}</span>
-          <div><span>Selected setup</span><h2>{result.symbol} <small>{money(result.price)}</small></h2><p>{result.companyName ?? result.entryRecommendationType}</p></div>
-        </div>
-        <div className="score-lockup"><span>Setup score</span><strong>{Math.round(result.setupScore)}<small>/100</small></strong></div>
-        <div className={`mark-lockup mark-${mark.toLowerCase()}`}><span>Trade mark</span><strong>{mark}</strong></div>
-        <button className={`watch-button${isWatchlisted ? " active" : ""}`} onClick={onToggleWatchlist} disabled={watchlistBusy} aria-pressed={isWatchlisted}>
-          <Bookmark size={16} fill={isWatchlisted ? "currentColor" : "none"} />{isWatchlisted ? "Saved" : "Watch"}
-        </button>
-      </div>
-
-      <div className={`decision-banner banner-${mark.toLowerCase()}`}>
-        {mark === "Take" ? <CheckCircle2 size={17} /> : <XCircle size={17} />}
-        <div><strong>{result.entryRecommendationType}</strong><span>{tradeMarkReasons(result)[0]}</span></div>
-        <small>{displayStatus(result.setupScoreStatus)} setup</small>
-      </div>
-
-      <section className="chart-section">
-        <div className="section-heading compact">
-          <div><span>Price structure</span><h3>Daily candlestick chart</h3></div>
-          <div className="chart-legend"><span><i className="ema-color" />8 EMA</span><span><i className="entry-color" />Entry</span><span><i className="risk-color" />Stop</span></div>
-        </div>
-        <CandlestickChart candles={result.candles} entryArea={result.suggestedEntryArea} stopPrice={result.stockStopPrice} target1={result.target1} target2={result.target2} symbol={result.symbol} theme={theme} />
-      </section>
-
-      <section className="trade-plan">
-        <div className="section-heading compact"><div><span>Execution</span><h3>Trade plan</h3></div><small>{result.recommendedDte ?? "14–180 DTE swing"}</small></div>
-        <div className="plan-steps">
-          <PlanStep number="1" label="Entry area" value={result.suggestedEntryArea} detail={result.entryRecommendationType} />
-          <ChevronRight />
-          <PlanStep number="2" label="Invalidation" value={result.invalidationLevel} detail={moneyOrUnavailable(result.stockStopPrice)} risk />
-          <ChevronRight />
-          <PlanStep number="3" label="Target 1" value={moneyOrUnavailable(result.target1)} detail="First scale-out" />
-          <ChevronRight />
-          <PlanStep number="4" label="Target 2" value={moneyOrUnavailable(result.target2)} detail="Measured upside" />
-        </div>
-      </section>
-
-      {contract ? (
-        <section className="contract-row">
-          <div className="contract-icon"><Gauge size={18} /></div>
-          <div><span>Recommended call</span><strong>{result.symbol} · {contract.strike}{contract.optionType === "call" ? "C" : "P"} · {dateOrUnavailable(contract.expirationDate)}</strong></div>
-          <ContractMetric label="Bid / Ask" value={`$${contract.bid.toFixed(2)} / $${contract.ask.toFixed(2)}`} />
-          <ContractMetric label="Delta" value={contract.delta?.toFixed(2) ?? "Unavailable"} />
-          <ContractMetric label="Open interest" value={formatNumber(contract.openInterest, { maximumFractionDigits: 0 })} />
-          <ContractMetric label="Spread" value={`${contract.spreadPct.toFixed(1)}%`} good={contract.spreadPct <= 10} />
-          <span className="contract-score">{Math.round(contract.score)}</span>
-        </section>
-      ) : <div className="contract-empty">No liquid contract met the configured swing criteria.</div>}
-    </section>
-  );
-}
-
-function PlanStep({ number, label, value, detail, risk }: { number: string; label: string; value: string; detail: string; risk?: boolean }) {
-  return <div className={risk ? "risk-step" : ""}><i>{number}</i><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>;
-}
-
-function ContractMetric({ label, value, good }: { label: string; value: string; good?: boolean }) {
-  return <div><span>{label}</span><strong className={good ? "good-text" : ""}>{value}</strong></div>;
-}
-
-function EvidencePanel({ result }: { result: ScanResult }) {
-  const [openSections, setOpenSections] = React.useState<Record<string, boolean>>({ technical: true, positioning: true });
-  const mark = tradeMark(result);
-  const gradeReason = result.gradeCapReasons?.join(" ") || (result.grade === "A" ? "The technical setup scored at least 90 with A-quality structure." : `The technical setup scored ${Math.round(result.setupScore)}, below the 90-point A threshold.`);
-  const layerBullishCount = result.layerEvaluations.filter((layer) => displayStatus(layer.status) === "Bullish").length;
-  const cautionCount = result.layerEvaluations.length - layerBullishCount + (result.daysUntilNextEarnings !== undefined && result.daysUntilNextEarnings < 30 ? 1 : 0);
-
-  function toggle(section: string) {
-    setOpenSections((current) => ({ ...current, [section]: !current[section] }));
-  }
-
-  return (
-    <aside className="evidence-panel">
-      <div className="section-heading evidence-heading"><div><span>Decision evidence</span><h2>Why {result.grade} · Why {mark}</h2></div><Activity size={18} /></div>
-      <div className={`why-block why-${mark.toLowerCase()}`}><div><strong>Why grade {result.grade}</strong><small>Technical setup</small></div><p>{gradeReason}</p></div>
-      <div className={`why-block why-${mark.toLowerCase()}`}><div><strong>Why {mark}</strong><small>Independent trade mark</small></div><p>{tradeMarkReasons(result).join(" ")}</p></div>
-
-      <EvidenceSection title="Technical score" meta={setupScoreLabel(result)} open={Boolean(openSections.technical)} onToggle={() => toggle("technical")}>
-        {result.institutionalFactors.length ? <div className="factor-list">{result.institutionalFactors.map((factor) => <FactorRow result={result} factor={factor} key={factor.name} />)}</div> : <p className="empty-copy">Run a scan to populate setup factors.</p>}
-      </EvidenceSection>
-
-      <EvidenceSection title="Institutional positioning" meta={`${positioningScoreLabel(result)} · ${positioningStatusLabel(result.institutionalPositioningStatus)}`} open={Boolean(openSections.positioning)} onToggle={() => toggle("positioning")}>
-        <div className="signal-grid">
-          <Signal label="Options flow" value={signalLabel(result.optionsFlowSignal)} tone={signalTone(result.optionsFlowSignal)} />
-          <Signal label="Exposure" value={signalLabel(result.optionsExposureSignal)} tone={signalTone(result.optionsExposureSignal)} />
-          <Signal label="Dark pool" value={signalLabel(result.darkPoolSignal)} tone={signalTone(result.darkPoolSignal)} />
-          <Signal label="OI change" value={signalLabel(result.openInterestChangeSignal)} tone={signalTone(result.openInterestChangeSignal)} />
-          <Signal label="IV rank" value={signalLabel(result.ivRankSignal)} tone={signalTone(result.ivRankSignal)} />
-          <Signal label="Max pain" value={signalLabel(result.maxPainSignal)} tone={signalTone(result.maxPainSignal)} />
-        </div>
-        {result.institutionalPositioningReason ? <p className="section-note">{result.institutionalPositioningReason}</p> : null}
-        {result.flags?.length ? <div className="flag-list">{result.flags.map((flag) => <span key={flag}>{flag}</span>)}</div> : null}
-      </EvidenceSection>
-
-      <EvidenceSection title="Layer status" meta={`${layerBullishCount}/${result.layerEvaluations.length} bullish`} open={Boolean(openSections.layers)} onToggle={() => toggle("layers")}>
-        <ul className="layer-list">{result.layerEvaluations.map((layer) => (
-          <li key={layer.layer}>{displayStatus(layer.status) === "Bullish" ? <CheckCircle2 size={14} /> : <XCircle size={14} />}<span><strong>{layerLabel(layer.layer)}</strong><small>{layerDetail(result, layer)}</small></span><b className={statusClass(layer.status)}>{displayStatus(layer.status)}</b></li>
-        ))}</ul>
-      </EvidenceSection>
-
-      <EvidenceSection title="More context" meta={`${Math.max(0, cautionCount)} cautions`} open={Boolean(openSections.context)} onToggle={() => toggle("context")}>
-        <div className="context-grid">
-          <Signal label="Weekly squeeze" value={timeframeSqueeze(result, "weekly")} />
-          <Signal label="Next earnings" value={nextEarningsLabel(result)} tone={result.daysUntilNextEarnings !== undefined && result.daysUntilNextEarnings < 30 ? "warn" : "neutral"} />
-          <Signal label="ATR (14)" value={formatNumber(result.indicators.atr14, { maximumFractionDigits: 2 })} />
-          <Signal label="Today volume" value={shareVolumeLabel(result.currentVolume)} />
-          <Signal label="Momentum" value={momentumLabel(result)} />
-          <Signal label="Daily dots" value={dailySqueezeDotLabel(result)} />
-        </div>
-        {result.institutionalEdgeFactors?.length ? <div className="edge-list"><strong>Institutional Edge · context only</strong>{result.institutionalEdgeFactors.map((factor) => <span key={factor.name}>{factor.name}<b className={statusClass(factor.status)}>{displayStatus(factor.status)}</b></span>)}</div> : null}
-        {result.alertMessage ? <p className="section-note">{result.alertMessage}</p> : null}
-      </EvidenceSection>
-
-      <div className="method-note"><SlidersHorizontal size={14} /><p><strong>Grade and mark are separate.</strong> Institutional overlays can confirm, cap, or veto—but never demote the technical setup grade.</p></div>
-    </aside>
-  );
-}
-
-function EvidenceSection({ title, meta, open, onToggle, children }: { title: string; meta: string; open: boolean; onToggle: () => void; children: React.ReactNode }) {
-  return <section className={`evidence-section${open ? " open" : ""}`}><button onClick={onToggle} aria-expanded={open}><span>{title}<small>{meta}</small></span>{open ? <ChevronDown size={16} /> : <ChevronRight size={16} />}</button>{open ? <div className="evidence-content">{children}</div> : null}</section>;
-}
-
-function FactorRow({ result, factor }: { result: ScanResult; factor: ScanResult["institutionalFactors"][number] }) {
-  const max = maxFactorContribution(result.institutionalFactors);
-  const percent = Math.max(0, Math.min(100, (factor.contribution / max) * 100));
-  return <div className="factor-row"><span>{factor.name}</span><div title={factor.detail}><i className={statusClass(factor.status)} style={{ width: `${percent}%` }} /></div><strong>{formatNumber(factor.contribution, { maximumFractionDigits: 1 })}</strong></div>;
-}
-
-function Signal({ label, value, tone = "neutral" }: { label: string; value: string; tone?: "neutral" | "warn" | "risk" | "good" }) {
-  return <div className="signal"><span>{label}</span><strong className={`signal-${tone}`}>{value}</strong></div>;
-}
-
-function SqueezeDotStrip({ count, max = 6 }: { count: number | null; max?: number }) {
-  if (count === null) return <span className="dot-empty">—</span>;
-  const filled = Math.max(1, Math.min(max, Math.round(count / 3)));
-  return <span className="dot-strip" role="img" aria-label={`${count} active squeeze dots`}>{Array.from({ length: max }).map((_, index) => <i key={index} className={`sq-dot${index < filled ? " on" : ""}`} />)}<small>{count}</small></span>;
-}
-
-function BrokerBadge({ brokerStatus, settings, onConnect }: { brokerStatus: BrokerStatus | null; settings: Settings | null; onConnect: () => void }) {
-  const needsLogin = brokerStatus?.needsLogin && settings?.hasBrokerCredentials;
-  return <button className={`broker-badge${brokerStatus?.ok ? " connected" : ""}`} onClick={needsLogin ? onConnect : undefined} disabled={!needsLogin}><span />{brokerStatus?.ok ? "Connected" : needsLogin ? "Connect Schwab" : "Setup needed"}</button>;
-}
-
-function DemoFundamentalsBadge({ sources }: { sources?: FundamentalFieldSources }) {
-  const demoFields = Object.entries(sources ?? {}).filter(([, source]) => source === "demo").map(([field]) => field);
-  return demoFields.length ? <span className="demo-badge" title={`Mock data used for: ${demoFields.join(", ")}`}>Mock data</span> : null;
-}
-
-function ResultSkeleton() {
-  return <>{Array.from({ length: 8 }).map((_, index) => <div className="candidate-row skeleton-row" key={index} aria-hidden="true"><span className="skeleton-bar" /><span className="skeleton-bar" /><span className="skeleton-bar" /><span className="skeleton-bar" /></div>)}</>;
-}
-
-function EmptyState({ view, runScan }: { view: ViewMode; runScan: () => void }) {
-  return <section className="empty-state"><WalletCards size={26} /><h2>{view === "watchlist" ? "Your watchlist is empty" : "No scan results yet"}</h2><p>{view === "watchlist" ? "Save a setup from the scanner to keep it here." : "Run a scan to rank current compression setups."}</p>{view === "scanner" ? <button className="scan-button" onClick={runScan}><Play size={16} />Run Scan</button> : null}</section>;
 }
 
 function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
@@ -553,23 +329,439 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   });
 }
 
-function scanStatusLabel(status: string, loading: boolean): string {
-  if (loading || status === "running") return "Scan refreshing";
-  if (status === "complete") return "Scan complete";
-  if (status === "failed") return "Scan failed";
-  return "Cached results";
+function ToolbarChip({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
+  return (
+    <div className="toolbar-chip">
+      {icon}
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
 }
 
-function lastUpdatedLabel(value: string | undefined, loading: boolean): string {
-  if (loading) return "Refreshing in background";
-  if (!value) return "Cached results";
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? `Updated ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : "Cached results";
+function Stat({ icon, label, value, count, tone = "neutral" }: { icon: React.ReactNode; label: string; value: string; count?: number; tone?: "good" | "risk" | "blue" | "neutral" }) {
+  const animated = useAnimatedNumber(count ?? 0);
+  return (
+    <div className={"stat stat-" + tone}>
+      {icon}
+      <span>{label}</span>
+      <strong>{count === undefined ? value : String(Math.round(animated))}</strong>
+    </div>
+  );
 }
 
-function shortDate(value: string): string {
-  const date = new Date(value);
-  return Number.isFinite(date.getTime()) ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : value;
+function DemoFundamentalsBadge({ sources }: { sources?: FundamentalFieldSources }) {
+  const demoFields = Object.entries(sources ?? {})
+    .filter(([, source]) => source === "demo")
+    .map(([field]) => field);
+  if (!demoFields.length) return null;
+  return (
+    <span className="asset-badge demo-badge" title={"Mock data used for: " + demoFields.join(", ")}>
+      Mock Data
+    </span>
+  );
+}
+
+function BrokerBadge({ brokerStatus, settings, onConnect }: {
+  brokerStatus: BrokerStatus | null;
+  settings: Settings | null;
+  onConnect: () => void;
+}) {
+  const needsLogin = brokerStatus?.needsLogin && settings?.hasBrokerCredentials;
+  return (
+    <button className={"broker-badge " + (brokerStatus?.ok ? "connected" : "")} onClick={needsLogin ? onConnect : undefined} disabled={!needsLogin}>
+      <span />
+      {brokerStatus?.ok ? "Connected" : needsLogin ? "Connect Schwab" : "Setup Needed"}
+    </button>
+  );
+}
+
+function ResultRow({ result, activeSymbol, onSelect }: {
+  result: ScanResult;
+  activeSymbol?: string;
+  onSelect: (symbol: string) => void;
+}) {
+  return (
+    <div className={"result-row " + (result.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(result.symbol)} onKeyDown={(event) => {
+      if (event.key === "Enter" || event.key === " ") onSelect(result.symbol);
+    }} role="button" tabIndex={0}>
+      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small></span>
+      <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
+      <b>{setupScoreLabel(result)}</b>
+      <span>{result.entryRecommendationType}</span>
+      <span><SqueezeDotStrip count={dailySqueezeDotCount(result)} /></span>
+      <span className={"decision " + (tradeMark(result) === "Take" ? "take" : "avoid")}>{tradeMark(result)}</span>
+    </div>
+  );
+}
+
+function WatchlistRow({ entry, activeSymbol, onSelect, onRemove }: {
+  entry: WatchlistEntry;
+  activeSymbol?: string;
+  onSelect: (symbol: string) => void;
+  onRemove: (symbol: string) => void;
+}) {
+  const result = entry.result;
+  return (
+    <div className={"result-row " + (entry.symbol === activeSymbol ? "active" : "")} onClick={() => onSelect(entry.symbol)} onKeyDown={(event) => {
+      if (event.key === "Enter" || event.key === " ") onSelect(entry.symbol);
+    }} role="button" tabIndex={0}>
+      <span className="symbol-wrap"><strong>{result.symbol}</strong>{result.assetType === "etf" ? <em>ETF</em> : null}<small>{money(result.price)}</small></span>
+      <span className={"grade grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
+      <b>{setupScoreLabel(result)}</b>
+      <span>{addedAtLabel(entry.addedAt)}</span>
+      <span><SqueezeDotStrip count={dailySqueezeDotCount(result)} /></span>
+      <button className="icon-button" title={"Remove " + entry.symbol + " from watchlist"} onClick={(event) => { event.stopPropagation(); onRemove(entry.symbol); }}>
+        <XCircle size={16} />
+      </button>
+    </div>
+  );
+}
+
+function addedAtLabel(value: string): string {
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleDateString() : "Unknown";
+}
+
+function TickerDetail({ result, onAddToWatchlist, isWatchlisted }: {
+  result: ScanResult;
+  onAddToWatchlist?: (symbol: string) => void;
+  isWatchlisted?: boolean;
+}) {
+  return (
+    <>
+      <section className="panel hero-panel">
+        <div className="hero-identity">
+          <span className={"grade large grade-" + result.grade.replace("+", "plus")}>{result.grade}</span>
+          <div>
+            <span className="eyebrow">Selected Setup</span>
+            <h2>{result.symbol} {result.assetType === "etf" ? <span className="asset-badge">ETF</span> : null} <DemoFundamentalsBadge sources={result.fundamentalSources} /></h2>
+            <p>{setupTradeLabel(result)} · {money(result.price)} · {result.entryRecommendationType}</p>
+            {onAddToWatchlist ? (
+              <button className="primary watchlist-button" onClick={() => onAddToWatchlist(result.symbol)} disabled={isWatchlisted}>
+                <WalletCards size={16} />
+                {isWatchlisted ? "On Watchlist" : "Add to Watchlist"}
+              </button>
+            ) : null}
+          </div>
+        </div>
+        {(typeof result.setupScore === "number" || result.candles?.length) ? (
+          <div className="hero-viz">
+            {typeof result.setupScore === "number" ? <RadialGauge value={result.setupScore} label="Setup Score" /> : null}
+            {result.candles?.length ? (
+              <div className="hero-spark">
+                <span className="eyebrow">Price Trend</span>
+                <Sparkline candles={result.candles} width={340} height={72} />
+                <small>{result.candles.length}-bar close</small>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="summary-grid compact-metrics">
+          <Metric label="Setup Score" value={setupScoreLabel(result)} />
+          <Metric label="Next Earnings" value={nextEarningsLabel(result)} />
+          <Metric label="Momentum" value={momentumLabel(result)} />
+          <Metric label="Daily Sqz" value={timeframeSqueeze(result, "daily")} />
+          <Metric label="Weekly Sqz" value={timeframeSqueeze(result, "weekly")} />
+          <Metric label="Daily Dots" value={dailySqueezeDotLabel(result)} />
+          <Metric label="Today Vol" value={shareVolumeLabel(result.currentVolume)} />
+          <Metric label="ATR" value={formatNumber(result.indicators.atr14)} />
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>Grade Rationale</h2>
+            <span>Technical setup with institutional overlays</span>
+          </div>
+          <span>{setupScoreLabel(result)} · {displayStatus(result.setupScoreStatus)}</span>
+        </div>
+        {result.gradeCapReasons?.length ? (
+          <div className="grade-cap">
+            <strong>Why this setup is {result.grade}</strong>
+            <span>{result.gradeCapReasons.join(" ")}</span>
+          </div>
+        ) : null}
+        <div className={"grade-cap " + (tradeMark(result) === "Take" ? "take-mark" : "avoid-mark")}>
+          <strong>Trade Mark: {tradeMark(result)}</strong>
+          <span>{tradeMarkReasons(result).join(" ")}</span>
+        </div>
+        {result.institutionalPositioningStatus ? (
+          <div className="edge-section">
+            <div className="panel-head compact">
+              <div>
+                <h3>Institutional Positioning</h3>
+                <span>{positioningStatusLabel(result.institutionalPositioningStatus)} · {positioningScoreLabel(result)}</span>
+              </div>
+            </div>
+            <div className="summary-grid">
+              <Metric label="Options Flow" value={signalLabel(result.optionsFlowSignal)} />
+              <Metric label="Options Exposure" value={signalLabel(result.optionsExposureSignal)} />
+              <Metric label="Dark Pool" value={signalLabel(result.darkPoolSignal)} />
+              <Metric label="Max Pain" value={signalLabel(result.maxPainSignal)} />
+              <Metric label="OI Change" value={signalLabel(result.openInterestChangeSignal)} />
+              <Metric label="IV Rank" value={signalLabel(result.ivRankSignal)} />
+              <Metric label="Grade" value={result.grade} />
+            </div>
+            {result.institutionalPromotionApplied ? (
+              <div className="grade-cap take-mark">
+                <strong>Grade Promoted</strong>
+                <span>QuantData confluence promoted this setup from {result.gradeBeforeQuantData} to {result.finalGrade}.</span>
+              </div>
+            ) : null}
+            {result.flags?.length ? (
+              <div className="flag-list">
+                {result.flags.map((flag) => <span key={flag}>{flag}</span>)}
+              </div>
+            ) : null}
+            {result.institutionalPositioningReason ? <p className="edge-note">{result.institutionalPositioningReason}</p> : null}
+          </div>
+        ) : null}
+        {result.institutionalFactors?.length ? (
+          <div className="factor-grid">
+            {result.institutionalFactors.map((factor) => (
+              <div className="factor-card" key={factor.name}>
+                <span className={"status-pill " + statusClass(factor.status)}>{displayStatus(factor.status)}</span>
+                <strong>{factor.name}</strong>
+                <small>{factor.detail}</small>
+                <div className="factor-foot">
+                  <BarMeter value={Math.max(0, factor.contribution)} max={maxFactorContribution(result.institutionalFactors)} />
+                  <b>{formatNumber(factor.contribution, { maximumFractionDigits: 1 })} pts</b>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="empty-copy">Run scan for setup score.</p>
+        )}
+        {(result.institutionalEdgeFactors?.length || result.institutionalEdgeWarnings?.length) ? (
+          <div className="edge-section">
+            <div className="panel-head compact">
+              <div>
+                <h3>Institutional Edge</h3>
+                <span>{displayStatus(result.institutionalEdgeStatus)} · Context only</span>
+              </div>
+            </div>
+            {result.institutionalEdgeFactors?.length ? (
+              <div className="factor-grid">
+                {result.institutionalEdgeFactors.map((factor) => (
+                  <div className="factor-card" key={factor.name}>
+                    <span className={"status-pill " + statusClass(factor.status)}>{displayStatus(factor.status)}</span>
+                    <strong>{factor.name}</strong>
+                    <small>{factor.detail}</small>
+                    <b>Info</b>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {result.institutionalEdgeWarnings?.length ? (
+              <p className="edge-note">{result.institutionalEdgeWarnings.join(" ")}</p>
+            ) : null}
+          </div>
+        ) : null}
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>Layer Status</h2>
+            <span>Independent evaluation</span>
+          </div>
+        </div>
+        <div className="rules">
+          {result.layerEvaluations.map((layer) => (
+            <div className="rule" key={layer.layer}>
+              {displayStatus(layer.status) === "Avoid" ? <XCircle className="bad" /> : <CheckCircle2 className={statusClass(layer.status)} />}
+              <span>
+                <strong>{layerLabel(layer.layer)}: {displayStatus(layer.status)}</strong>
+                <small>{layerDetail(result, layer)}</small>
+              </span>
+              <b className={"status-pill " + statusClass(layer.status)}>{displayStatus(layer.status)}</b>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>Trade Plan</h2>
+            <span>Entry, invalidation, and targets</span>
+          </div>
+          <span>{result.entryRecommendationType}</span>
+        </div>
+        <div className="summary-grid">
+          <Metric label="Entry Area" value={result.suggestedEntryArea} />
+          <Metric label="Invalidation" value={result.invalidationLevel} />
+          <Metric label="Stock Stop" value={moneyOrUnavailable(result.stockStopPrice)} />
+          <Metric label="Target 1" value={moneyOrUnavailable(result.target1)} />
+          <Metric label="Target 2" value={moneyOrUnavailable(result.target2)} />
+          <Metric label="Alert" value={result.alertMessage} />
+        </div>
+      </section>
+
+      <section className="panel">
+        <div className="panel-head">
+          <div>
+            <h2>Recommended Contract</h2>
+            <span>14-180 DTE swing calls</span>
+          </div>
+        </div>
+        <div className="contracts">
+          {result.suggestedOptions.map((contract) => (
+            <div className="contract" key={contract.symbol}>
+              <strong>{contract.strike}{contract.optionType === "call" ? "C" : "P"} · {dateOrUnavailable(contract.expirationDate)}</strong>
+              <span>Bid/Ask ${contract.bid.toFixed(2)} / ${contract.ask.toFixed(2)}</span>
+              <span>DTE {contract.dte ?? "n/a"} · Delta {contract.delta?.toFixed(2) ?? "n/a"} · OI {contract.openInterest} · Vol {contract.volume} · Spread {contract.spreadPct.toFixed(1)}%</span>
+              <b>{Math.round(contract.score)}</b>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  );
+}
+
+function Metric({ label, value }: { label: string; value: string }) {
+  return <div className="metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function useAnimatedNumber(target: number, duration = 700): number {
+  const [display, setDisplay] = React.useState(target);
+  const fromRef = React.useRef(target);
+  React.useEffect(() => {
+    const reduce = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const from = fromRef.current;
+    if (reduce || from === target || !Number.isFinite(target)) {
+      setDisplay(target);
+      fromRef.current = target;
+      return;
+    }
+    let raf = 0;
+    const start = performance.now();
+    const tick = (now: number) => {
+      const t = Math.min(1, (now - start) / duration);
+      const eased = 1 - Math.pow(1 - t, 3);
+      setDisplay(from + (target - from) * eased);
+      if (t < 1) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        fromRef.current = target;
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target, duration]);
+  return display;
+}
+
+function Sparkline({ candles, width = 96, height = 28 }: { candles?: Candle[]; width?: number; height?: number }) {
+  const gradientId = React.useId();
+  const series = (candles ?? []).map((candle) => candle.close).filter((value) => Number.isFinite(value)).slice(-48);
+  if (series.length < 2) return <span className="spark-empty" aria-hidden="true" />;
+  const min = Math.min(...series);
+  const max = Math.max(...series);
+  const span = max - min || 1;
+  const stepX = width / (series.length - 1);
+  const points = series.map((value, index) => [index * stepX, height - ((value - min) / span) * height] as const);
+  const line = points.map(([x, y]) => `${x.toFixed(2)},${y.toFixed(2)}`).join(" ");
+  const area = `M0,${height} ${points.map(([x, y]) => `L${x.toFixed(2)},${y.toFixed(2)}`).join(" ")} L${width},${height} Z`;
+  const up = series[series.length - 1] >= series[0];
+  const stroke = up ? "var(--spark-up)" : "var(--spark-down)";
+  return (
+    <svg className="sparkline" viewBox={`0 0 ${width} ${height}`} width={width} height={height} preserveAspectRatio="none" role="img" aria-label={up ? "price trend up" : "price trend down"}>
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity="0.24" />
+          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gradientId})`} stroke="none" />
+      <polyline points={line} fill="none" stroke={stroke} strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function RadialGauge({ value, label, size = 118 }: { value: number; label?: string; size?: number }) {
+  const clamped = Math.max(0, Math.min(100, Number.isFinite(value) ? value : 0));
+  const animated = useAnimatedNumber(clamped, 900);
+  const stroke = 9;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+  const dash = (Math.max(0, Math.min(100, animated)) / 100) * circumference;
+  const color = clamped >= 67 ? "var(--accent)" : clamped >= 34 ? "var(--warning)" : "var(--danger)";
+  const center = size / 2;
+  return (
+    <div className="gauge" style={{ width: size, height: size }}>
+      <svg viewBox={`0 0 ${size} ${size}`} width={size} height={size} role="img" aria-label={`${label ?? "Score"} ${Math.round(clamped)} of 100`}>
+        <circle cx={center} cy={center} r={radius} fill="none" stroke="var(--gauge-track)" strokeWidth={stroke} />
+        <circle cx={center} cy={center} r={radius} fill="none" stroke={color} strokeWidth={stroke} strokeLinecap="round" strokeDasharray={`${dash.toFixed(2)} ${circumference.toFixed(2)}`} transform={`rotate(-90 ${center} ${center})`} />
+      </svg>
+      <div className="gauge-center">
+        <strong>{Math.round(animated)}</strong>
+        {label ? <span>{label}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function SqueezeDotStrip({ count, max = 5 }: { count: number | null; max?: number }) {
+  if (count === null) return <span className="dot-empty">Run scan</span>;
+  const filled = Math.max(0, Math.min(max, count));
+  return (
+    <span className="dot-strip" role="img" aria-label={`${count} active squeeze dots`}>
+      {Array.from({ length: max }).map((_, index) => (
+        <i key={index} className={"sq-dot" + (index < filled ? " on" : "")} />
+      ))}
+      <small>{count}</small>
+    </span>
+  );
+}
+
+function BarMeter({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? Math.max(0, Math.min(100, (value / max) * 100)) : 0;
+  const tone = pct >= 66 ? "good" : pct >= 33 ? "warn" : "low";
+  return (
+    <span className={"bar-meter bar-" + tone} role="img" aria-label={`${value} of ${max}`}>
+      <i style={{ width: pct.toFixed(1) + "%" }} />
+    </span>
+  );
+}
+
+function maxFactorContribution(factors: ScanResult["institutionalFactors"]): number {
+  return Math.max(1, ...factors.map((factor) => Math.max(0, factor.contribution)));
+}
+
+function ResultSkeleton() {
+  return (
+    <>
+      {Array.from({ length: 7 }).map((_, index) => (
+        <div className="result-row skeleton-row" key={index} aria-hidden="true">
+          <span className="skeleton-bar" style={{ width: "70%" }} />
+          <span className="skeleton-bar" style={{ width: "60%" }} />
+          <span className="skeleton-bar" style={{ width: "50%" }} />
+          <span className="skeleton-bar" style={{ width: "80%" }} />
+          <span className="skeleton-bar" style={{ width: "55%" }} />
+          <span className="skeleton-bar" style={{ width: "45%" }} />
+        </div>
+      ))}
+    </>
+  );
+}
+
+function EmptyState({ runScan }: { runScan: () => void }) {
+  return <button className="empty" onClick={runScan}>Run the first scan</button>;
+}
+
+function timeframeLabel(value: string | undefined): string {
+  if (!value) return "Unavailable";
+  return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
+function timeframeSqueeze(result: ScanResult, timeframe: string): string {
+  const status = result.squeezeStatusByTimeframe.find((item) => item.timeframe === timeframe);
+  return status ? String(status.squeezeState) + " / " + timeframeLabel(status.bias) : "Unavailable";
 }
 
 function dailySqueezeDotCount(result: ScanResult): number | null {
@@ -580,7 +772,7 @@ function dailySqueezeDotCount(result: ScanResult): number | null {
 
 function dailySqueezeDotLabel(result: ScanResult): string {
   const dots = dailySqueezeDotCount(result);
-  return dots === null ? "Run scan" : `${dots} active`;
+  return dots === null ? "Run scan" : dots + " active";
 }
 
 function setupScoreValue(result: ScanResult): number {
@@ -588,7 +780,20 @@ function setupScoreValue(result: ScanResult): number {
 }
 
 function setupScoreLabel(result: ScanResult): string {
-  return typeof result.setupScore === "number" ? `${formatNumber(result.setupScore, { maximumFractionDigits: 0 })}/100` : "Run scan";
+  return typeof result.setupScore === "number" ? formatNumber(result.setupScore, { maximumFractionDigits: 0 }) + "/100" : "Run scan";
+}
+
+function nextEarningsLabel(result: ScanResult): string {
+  if (result.assetType === "etf") return "N/A";
+  if (!result.nextEarningsDate) return "Unavailable";
+  return result.nextEarningsDate + (typeof result.daysUntilNextEarnings === "number" ? " · " + result.daysUntilNextEarnings + "d" : "");
+}
+
+function shareVolumeLabel(value: number | undefined): string {
+  if (value === undefined) return "Unavailable";
+  if (value >= 1_000_000) return formatNumber(value / 1_000_000, { maximumFractionDigits: 1 }) + "M";
+  if (value >= 1_000) return formatNumber(value / 1_000, { maximumFractionDigits: 0 }) + "K";
+  return formatNumber(value, { maximumFractionDigits: 0 });
 }
 
 function tradeMark(result: ScanResult): "Take" | "Avoid" {
@@ -601,32 +806,13 @@ function tradeMarkReasons(result: ScanResult): string[] {
   return reasons.length ? reasons : tradeMark(result) === "Take" ? ["Setup is technically valid and no avoid overlay is active."] : ["One or more trade overlays recommends avoiding this setup."];
 }
 
-function timeframeLabel(value: string | undefined): string {
-  if (!value) return "Unavailable";
-  return value.charAt(0).toUpperCase() + value.slice(1);
-}
-
-function timeframeSqueeze(result: ScanResult, timeframe: string): string {
-  const status = result.squeezeStatusByTimeframe.find((item) => item.timeframe === timeframe);
-  return status ? `${status.squeezeState} · ${timeframeLabel(status.bias)}` : "Unavailable";
-}
-
-function nextEarningsLabel(result: ScanResult): string {
-  if (result.assetType === "etf") return "N/A · ETF";
-  if (!result.nextEarningsDate) return "Unavailable";
-  return result.nextEarningsDate + (typeof result.daysUntilNextEarnings === "number" ? ` · ${result.daysUntilNextEarnings}d` : "");
+function setupTradeLabel(result: ScanResult): string {
+  return result.grade + " Setup · " + tradeMark(result);
 }
 
 function momentumLabel(result: ScanResult): string {
   const color = result.indicators.momentumColor;
-  return formatNumber(result.indicators.momentum, { maximumFractionDigits: 2 }) + (color ? ` · ${timeframeLabel(color)}` : "");
-}
-
-function shareVolumeLabel(value: number | undefined): string {
-  if (value === undefined) return "Unavailable";
-  if (value >= 1_000_000) return `${formatNumber(value / 1_000_000, { maximumFractionDigits: 1 })}M`;
-  if (value >= 1_000) return `${formatNumber(value / 1_000, { maximumFractionDigits: 0 })}K`;
-  return formatNumber(value, { maximumFractionDigits: 0 });
+  return formatNumber(result.indicators.momentum) + (color ? " · " + color[0].toUpperCase() + color.slice(1) : "");
 }
 
 function displayStatus(status: LayerStatus | undefined): "Bullish" | "Neutral" | "Avoid" {
@@ -637,15 +823,8 @@ function statusClass(status: LayerStatus | undefined): string {
   return displayStatus(status) === "Bullish" ? "status-bullish" : displayStatus(status) === "Neutral" ? "status-neutral" : "status-avoid";
 }
 
-function signalTone(value: string | undefined): "neutral" | "warn" | "risk" | "good" {
-  if (!value || value === "neutral" || value === "no_data") return "neutral";
-  if (["bullish", "supportive", "squeeze_prone", "accumulation", "tailwind", "confirmed_build", "confirming"].includes(value)) return "good";
-  if (["bearish", "hostile", "distribution", "pin_risk", "contradicting"].includes(value)) return "risk";
-  return "warn";
-}
-
 function positioningScoreLabel(result: ScanResult): string {
-  return typeof result.institutionalPositioningScore === "number" ? `${formatNumber(result.institutionalPositioningScore, { maximumFractionDigits: 0 })}/100` : "No score";
+  return typeof result.institutionalPositioningScore === "number" ? formatNumber(result.institutionalPositioningScore, { maximumFractionDigits: 0 }) + "/100" : "No score";
 }
 
 function positioningStatusLabel(status: ScanResult["institutionalPositioningStatus"]): string {
@@ -668,18 +847,17 @@ function layerDetail(result: ScanResult, layer: { layer: string; detail: string;
   if (layer.layer !== "Compression Quality") return layer.detail;
   const dots = dailySqueezeDotCount(result);
   if (dots === null) return "Run scan for dot count.";
-  if (dots < 2) return `At least 2 active Daily squeeze dots are required; current count is ${dots}.`;
-  if (dots < 5) return `Daily squeeze is developing with ${dots} active dots.`;
-  return `Daily chart has ${dots} consecutive active squeeze dots.`;
-}
-
-function maxFactorContribution(factors: ScanResult["institutionalFactors"]): number {
-  return Math.max(1, ...factors.map((factor) => Math.max(0, factor.contribution)));
+  if (dots < 2) return "At least 2 consecutive active Daily squeeze dots are required; current count is " + dots + ".";
+  if (dots < 5) return "Daily squeeze is developing with " + dots + " active dots; compression contributes fewer setup points.";
+  return "Daily chart has " + dots + " consecutive active squeeze dots.";
 }
 
 function money(value: number): string {
   const hasFraction = Math.abs(value - Math.trunc(value)) > 0.000001;
-  return "$" + formatNumber(value, { minimumFractionDigits: hasFraction ? 2 : 0, maximumFractionDigits: hasFraction ? 2 : 0 });
+  return "$" + formatNumber(value, {
+    minimumFractionDigits: hasFraction ? 2 : 0,
+    maximumFractionDigits: hasFraction ? 2 : 0
+  });
 }
 
 function moneyOrUnavailable(value: number | null | undefined): string {
@@ -687,7 +865,10 @@ function moneyOrUnavailable(value: number | null | undefined): string {
 }
 
 function formatNumber(value: number, options: Intl.NumberFormatOptions = {}): string {
-  return value.toLocaleString(undefined, { maximumFractionDigits: 6, ...options });
+  return value.toLocaleString(undefined, {
+    maximumFractionDigits: 6,
+    ...options
+  });
 }
 
 function dateOrUnavailable(value: string | undefined): string {

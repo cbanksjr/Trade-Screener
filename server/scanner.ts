@@ -1,17 +1,16 @@
 import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
-import { AUTO_REFRESH_INTERVAL_MS } from "../shared/refreshSchedule";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { resolveEtfSymbols } from "./etfUniverse";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators, MIN_CANDLES_REQUIRED } from "./indicators";
-import { computeMacroRegimeContext, type MacroRegimeContext } from "./macroRegime";
 import { createQuantDataPositioningScanProvider } from "./quantData";
 import {
   A_SETUP_SCORE_THRESHOLD,
   BEARISH_MACRO_GRADE_CAP_REASON,
   B_SETUP_SCORE_THRESHOLD,
+  BROAD_ENTRY_GRADE_CAP_REASON,
   DEVELOPING_SQUEEZE_GRADE_CAP_REASON,
   EXTENDED_ENTRY_GRADE_CAP_REASON,
   RELAXED_TREND_GRADE_CAP_REASON,
@@ -19,7 +18,6 @@ import {
   WEEKLY_ATR_GRADE_CAP_REASON,
   applyInstitutionalEdge,
   applyInstitutionalPositioning,
-  applyMacroRegimeModifier,
   defaultSettings,
   gradeFromSetupScore,
   gradeSetup,
@@ -33,9 +31,8 @@ import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, rem
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
 
+const AUTO_REFRESH_MS = 15 * 60 * 1000;
 const SCAN_CONCURRENCY = 4;
-const MAX_STORED_SCAN_WARNINGS = 50;
-const CATASTROPHIC_FAILURE_RATIO = 0.8;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
 type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
@@ -52,13 +49,6 @@ const SECTOR_ETF_BY_GICS: Record<string, string> = {
   Utilities: "XLU"
 };
 let activeScan: Promise<void> | null = null;
-
-export class SettingsValidationError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "SettingsValidationError";
-  }
-}
 
 export async function readSettings(): Promise<Settings> {
   const stored = await getSetting<Partial<Settings>>("settings", {});
@@ -86,50 +76,17 @@ export async function readSettings(): Promise<Settings> {
 
 export async function writeSettings(input: Partial<Settings>): Promise<Settings> {
   const current = await readSettings();
-  const validated = validateSettingsInput(input);
   const next: Settings = {
     ...current,
-    minPrice: validated.minPrice ?? current.minPrice,
-    minBeta: validated.minBeta ?? current.minBeta,
-    minMarketCap: validated.minMarketCap ?? current.minMarketCap,
-    minAvgDollarVolume: validated.minAvgDollarVolume ?? current.minAvgDollarVolume,
-    useDemoDataWhenMissingApi: validated.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
-    etfSymbols: validated.etfSymbols ?? current.etfSymbols
+    minPrice: input.minPrice ?? current.minPrice,
+    minBeta: input.minBeta ?? current.minBeta,
+    minMarketCap: input.minMarketCap ?? current.minMarketCap,
+    minAvgDollarVolume: input.minAvgDollarVolume ?? current.minAvgDollarVolume,
+    useDemoDataWhenMissingApi: input.useDemoDataWhenMissingApi ?? current.useDemoDataWhenMissingApi,
+    etfSymbols: input.etfSymbols ? resolveEtfSymbols(input.etfSymbols) : current.etfSymbols
   };
   await setSetting("settings", next);
   return readSettings();
-}
-
-function validateSettingsInput(input: Partial<Settings>): Partial<Settings> {
-  const output: Partial<Settings> = {};
-  if ("minPrice" in input) output.minPrice = positiveNumber(input.minPrice, "minPrice", { minExclusive: 0, maxInclusive: 10_000 });
-  if ("minBeta" in input) output.minBeta = positiveNumber(input.minBeta, "minBeta", { minInclusive: 0, maxInclusive: 10 });
-  if ("minMarketCap" in input) output.minMarketCap = positiveNumber(input.minMarketCap, "minMarketCap", { minInclusive: 0, maxInclusive: 10_000_000_000_000 });
-  if ("minAvgDollarVolume" in input) output.minAvgDollarVolume = positiveNumber(input.minAvgDollarVolume, "minAvgDollarVolume", { minInclusive: 0, maxInclusive: 100_000_000_000 });
-  if ("useDemoDataWhenMissingApi" in input) {
-    if (typeof input.useDemoDataWhenMissingApi !== "boolean") throw new SettingsValidationError("useDemoDataWhenMissingApi must be a boolean.");
-    output.useDemoDataWhenMissingApi = input.useDemoDataWhenMissingApi;
-  }
-  if ("etfSymbols" in input) {
-    if (Array.isArray(input.etfSymbols) && input.etfSymbols.every((symbol) => typeof symbol === "string")) {
-      output.etfSymbols = resolveEtfSymbols(input.etfSymbols);
-    } else {
-      throw new SettingsValidationError("etfSymbols must be an array of ticker strings.");
-    }
-  }
-  return output;
-}
-
-function positiveNumber(
-  value: unknown,
-  field: string,
-  bounds: { minExclusive?: number; minInclusive?: number; maxInclusive: number }
-): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) throw new SettingsValidationError(field + " must be a finite number.");
-  if (bounds.minExclusive !== undefined && value <= bounds.minExclusive) throw new SettingsValidationError(field + " must be greater than " + bounds.minExclusive + ".");
-  if (bounds.minInclusive !== undefined && value < bounds.minInclusive) throw new SettingsValidationError(field + " must be at least " + bounds.minInclusive + ".");
-  if (value > bounds.maxInclusive) throw new SettingsValidationError(field + " must be at most " + bounds.maxInclusive + ".");
-  return value;
 }
 
 export async function runScan(): Promise<ScanResponse> {
@@ -139,21 +96,15 @@ export async function runScan(): Promise<ScanResponse> {
 export async function startScanRefresh(scanRunner: () => Promise<ScanResponse> = runFullScan): Promise<ScanResponse> {
   if (!activeScan) {
     const startedAt = new Date().toISOString();
-    const initialized = readScanMetadata().then((metadata) => setScanMetadata({
-      ...metadata,
+    await setScanMetadata({
+      ...await readScanMetadata(),
       scanStatus: "running",
       lastScanStartedAt: startedAt,
       isRefreshing: true
-    }));
-    // Claim the in-process lock before awaiting persistence so simultaneous
-    // browser and cron triggers cannot start duplicate full-universe scans.
-    activeScan = initialized
-      .then(() => executeScanRefresh(scanRunner, startedAt))
-      .catch(() => undefined)
-      .finally(() => {
-        activeScan = null;
-      });
-    await initialized;
+    });
+    activeScan = executeScanRefresh(scanRunner, startedAt).finally(() => {
+      activeScan = null;
+    });
   }
   return readCachedScanResponse();
 }
@@ -177,7 +128,6 @@ export async function readScanMetadata(): Promise<ScanMetadata> {
     scanStatus: stored.scanStatus ?? "idle",
     lastScanStartedAt: stored.lastScanStartedAt,
     lastScanFinishedAt: stored.lastScanFinishedAt,
-    lastScanFailedAt: stored.lastScanFailedAt,
     lastScanMode: stored.lastScanMode,
     lastScanWarnings: (stored.lastScanWarnings ?? []).filter(shouldShowWarning),
     scanDiagnostics: stored.scanDiagnostics,
@@ -207,12 +157,7 @@ export async function shouldAutoRefresh(): Promise<boolean> {
 export async function runFullScan(): Promise<ScanResponse> {
   const scanRanAt = new Date();
   const settings = await readSettings();
-  const previousResults = await readDisplayResults();
-  const previousBySymbol = new Map(previousResults.map((result) => [result.symbol, result]));
-  const watchlistEntries = await readWatchlist();
-  const watchlistBySymbol = new Map(watchlistEntries.map((entry) => [entry.symbol, entry]));
   const results: ScanResult[] = [];
-  const evaluatedResults: ScanResult[] = [];
   const scanWarnings = new Set<string>();
   let usedLive = false;
   let usedDemo = false;
@@ -226,15 +171,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   }
   const canUseLiveSchwab = hasSchwabCredentials() && await hasSchwabTokens();
   const quoteMap = canUseLiveSchwab ? await loadQuoteMap(symbolsToScan, scanWarnings) : new Map<string, SchwabQuote>();
-  const benchmarks = canUseLiveSchwab
-    ? await loadBenchmarks(scanWarnings)
-    : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ"), vixLevel: undefined };
-  const macroRegime: MacroRegimeContext = computeMacroRegimeContext({
-    spyCandles: benchmarks.spyCandles,
-    qqqCandles: benchmarks.qqqCandles,
-    vixLevel: benchmarks.vixLevel
-  });
-  macroRegime.warnings.forEach((warning) => scanWarnings.add(warning));
+  const benchmarks = canUseLiveSchwab ? await loadBenchmarks(scanWarnings) : { spyCandles: demoCandles("SPY"), qqqCandles: demoCandles("QQQ") };
   const sectorBySymbol = await getDefaultUniverseSectorMap();
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
@@ -268,7 +205,6 @@ export async function runFullScan(): Promise<ScanResponse> {
       quote: quoteMap.get(symbol),
       spyCandles: benchmarks.spyCandles,
       qqqCandles: benchmarks.qqqCandles,
-      macroRegime,
       sector,
       sectorCandles: sector ? sectorHistories.get(sector) : undefined,
       sectorHistories,
@@ -282,23 +218,15 @@ export async function runFullScan(): Promise<ScanResponse> {
   for (const outcome of outcomes) {
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
-    if (outcome.result) {
-      evaluatedSymbols.add(outcome.result.symbol);
-      const previous = previousBySymbol.get(outcome.result.symbol);
-      const watchlistEntry = watchlistBySymbol.get(outcome.result.symbol);
-      const wasTracked = Boolean(previous || watchlistEntry);
-      const keepTrackedUntilFire = wasTracked && isActiveTrackedSqueeze(outcome.result);
-      const newlyDiscovered = shouldIncludeResult(outcome.result);
+    if (outcome.result) evaluatedSymbols.add(outcome.result.symbol);
+    if (outcome.result && shouldIncludeResult(outcome.result)) {
       let result = outcome.result;
-      if (newlyDiscovered || keepTrackedUntilFire) result = applyMacroRegimeModifier(result, macroRegime);
       if (fmpInstitutionalEdge) {
-        if (newlyDiscovered || keepTrackedUntilFire) {
-          const edge = await fmpInstitutionalEdge.enrich(result.symbol, result.assetType, result.price);
-          if (edge.usedLive) usedLive = true;
-          result = applyInstitutionalEdge(result, edge.edge);
-        }
+        const edge = await fmpInstitutionalEdge.enrich(result.symbol, result.assetType, result.price);
+        if (edge.usedLive) usedLive = true;
+        result = applyInstitutionalEdge(result, edge.edge);
       }
-      if (quantDataPositioning && (newlyDiscovered || keepTrackedUntilFire)) {
+      if (quantDataPositioning) {
         const compressionActive = result.layerEvaluations.some((item) => item.layer === "Compression Quality" && item.status !== "Bearish");
         const positioning = await quantDataPositioning.enrich(result.symbol, result.price, {
           compressionActive,
@@ -309,25 +237,12 @@ export async function runFullScan(): Promise<ScanResponse> {
         positioning.warnings.forEach((warning) => scanWarnings.add(warning));
         result = applyInstitutionalPositioning(result, positioning.positioning);
       }
-      if (newlyDiscovered || keepTrackedUntilFire) {
-        result = withSqueezeLifecycle(result, previous?.firstDetectedAt ?? watchlistEntry?.result.firstDetectedAt ?? previous?.lastUpdated ?? watchlistEntry?.addedAt ?? scanRanAt.toISOString());
-      }
-      evaluatedResults.push(result);
-      if (shouldIncludeResult(result) || keepTrackedUntilFire) results.push(result);
+      if (shouldIncludeResult(result)) results.push(result);
       else diagnostics.skipped[classifyFilteredResult(result)] += 1;
-    } else if (!outcome.skipReason) diagnostics.skipped.other += 1;
+    } else if (outcome.result) diagnostics.skipped[classifyFilteredResult(outcome.result)] += 1;
+    else if (!outcome.skipReason) diagnostics.skipped.other += 1;
     if (outcome.usedLive) usedLive = true;
     if (outcome.usedDemo) usedDemo = true;
-  }
-
-  const resultSymbols = new Set(results.map((result) => result.symbol));
-  const scannedSymbols = new Set(symbolsToScan);
-  for (const previous of previousResults) {
-    if (!scannedSymbols.has(previous.symbol) || evaluatedSymbols.has(previous.symbol) || resultSymbols.has(previous.symbol)) continue;
-    // A provider/data gap cannot prove that a tracked squeeze fired. Keep the
-    // last known active payload until a later scan evaluates its squeeze state.
-    results.push(previous);
-    resultSymbols.add(previous.symbol);
   }
   diagnostics.qualifiedResults = results.length;
 
@@ -347,8 +262,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     settings,
     warnings: [...scanWarnings].filter(shouldShowWarning),
     scanDiagnostics: diagnostics,
-    evaluatedSymbols: [...evaluatedSymbols],
-    evaluatedResults
+    evaluatedSymbols: [...evaluatedSymbols]
   });
 }
 
@@ -383,21 +297,27 @@ export async function addToWatchlist(symbol: string): Promise<void> {
   await upsertWatchlistEntry(symbol, match);
 }
 
-async function syncWatchlistWithLatestResults(evaluatedResults: ScanResult[] = []): Promise<void> {
+async function syncWatchlistWithLatestResults(evaluatedSymbols?: string[]): Promise<void> {
   const entries = await getWatchlistEntries();
   if (!entries.length) return;
-  const resultBySymbol = new Map(evaluatedResults.map((result) => [result.symbol, result]));
+  const results = await readDisplayResults();
+  const resultBySymbol = new Map(results.map((result) => [result.symbol, result]));
+  const evaluated = new Set(evaluatedSymbols ?? []);
   for (const entry of entries) {
     const match = resultBySymbol.get(entry.symbol);
-    if (!match) continue;
-    if (isActiveTrackedSqueeze(match)) {
-      const previous = entry.payload as ScanResult;
-      await upsertWatchlistEntry(entry.symbol, withSqueezeLifecycle(match, previous.firstDetectedAt ?? entry.addedAt));
-    } else {
-      // Only a confirmed squeeze release/end or a manual action removes a saved setup.
+    if (match) {
+      if (isTakeResult(match)) await upsertWatchlistEntry(entry.symbol, match);
+      else await removeWatchlistEntry(entry.symbol);
+    } else if (evaluated.has(entry.symbol)) {
+      // Fully evaluated this run but didn't make the results — a genuine disqualification, not a data gap.
       await removeWatchlistEntry(entry.symbol);
     }
   }
+}
+
+function isTakeResult(result: ScanResult): boolean {
+  if (result.tradeMark) return result.tradeMark === "Take";
+  return result.longCallDecision !== "Avoid" && result.longCallDecision !== "Watchlist Candidate";
 }
 
 export async function __resetScanStateForTest() {
@@ -408,20 +328,17 @@ export async function __resetScanStateForTest() {
 async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, startedAt: string): Promise<void> {
   try {
     const response = await scanRunner();
-    const catastrophicReason = catastrophicScanReason(response);
-    if (catastrophicReason) throw new Error(catastrophicReason);
     await replaceScanResults(response.results);
-    await syncWatchlistWithLatestResults(response.evaluatedResults);
+    await syncWatchlistWithLatestResults(response.evaluatedSymbols);
     const finishedAt = new Date().toISOString();
     await setScanMetadata({
       scanStatus: "complete",
       lastScanStartedAt: startedAt,
       lastScanFinishedAt: finishedAt,
-      lastScanFailedAt: undefined,
       lastScanMode: response.mode,
-      lastScanWarnings: compactScanWarnings(response.warnings),
+      lastScanWarnings: response.warnings,
       scanDiagnostics: response.scanDiagnostics,
-      nextRefreshAt: new Date(new Date(startedAt).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
+      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
       isRefreshing: false
     });
   } catch (error) {
@@ -430,9 +347,9 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
       ...await readScanMetadata(),
       scanStatus: "failed",
       lastScanStartedAt: startedAt,
-      lastScanFailedAt: finishedAt,
+      lastScanFinishedAt: finishedAt,
       lastScanWarnings: [readError(error, "Scan failed.")].filter(shouldShowWarning),
-      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
+      nextRefreshAt: new Date(Date.now() + AUTO_REFRESH_MS).toISOString(),
       isRefreshing: false
     });
   }
@@ -446,7 +363,6 @@ async function scanSymbol(input: {
   quote?: SchwabQuote;
   spyCandles?: Awaited<ReturnType<typeof fetchHistory>>;
   qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>;
-  macroRegime?: MacroRegimeContext;
   sector?: string;
   sectorCandles?: Candle[];
   sectorHistories?: Map<string, Candle[]>;
@@ -462,7 +378,7 @@ async function scanSymbol(input: {
   let candlesSource: "schwab" | "demo" = "demo";
   let optionsSource: "schwab" | "demo" = "demo";
   let quote = input.quote;
-  const allowDemoFallback = settings.useDemoDataWhenMissingApi && !canUseLiveSchwab;
+  const allowDemoFallback = settings.useDemoDataWhenMissingApi && (!canUseLiveSchwab || Boolean(demoFundamental(symbol)));
 
   try {
     if (canUseLiveSchwab && !quote) {
@@ -494,7 +410,7 @@ async function scanSymbol(input: {
     }) : undefined;
     earlyFmp?.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
     if (earlyFmp?.usedLive) usedLive = true;
-    let fundamentals = mergeFundamentals(symbol, quote, earlyFmp?.data, { allowDemoFallback });
+    let fundamentals = mergeFundamentals(symbol, quote, earlyFmp?.data);
 
     if (assetType === "stock" && fundamentals.marketCap !== undefined && fundamentals.sources?.marketCap !== "demo" && fundamentals.marketCap < settings.minMarketCap) {
       warnings.push(symbol + ": skipped because " + sourceLabel(fundamentals.sources?.marketCap) + " market cap is below " + formatMoney(settings.minMarketCap) + ".");
@@ -554,7 +470,7 @@ async function scanSymbol(input: {
         ...contextFmp.data,
         nextEarningsDate: input.nextEarningsDate ?? contextFmp.data.nextEarningsDate,
         symbol
-      }, { allowDemoFallback });
+      });
     }
     if (input.nextEarningsDate && fundamentals.sources?.nextEarningsDate !== "fmp") {
       fundamentals = mergeFundamentals(symbol, quote, {
@@ -562,7 +478,7 @@ async function scanSymbol(input: {
         ...(contextFmp?.data ?? {}),
         nextEarningsDate: input.nextEarningsDate,
         symbol
-      }, { allowDemoFallback });
+      });
     }
     fundamentals = withCandleLiquidityFallback(fundamentals, candles);
 
@@ -582,7 +498,6 @@ async function scanSymbol(input: {
         weeklySqueezeWarning: weekly.warning,
         spyCandles: input.spyCandles,
         qqqCandles: input.qqqCandles,
-        macroRegime: input.macroRegime,
         sector,
         sectorCandles: sector ? input.sectorHistories?.get(sector) ?? input.sectorCandles : undefined,
         minMarketCap: settings.minMarketCap,
@@ -604,7 +519,7 @@ async function scanSymbol(input: {
           ...(contextFmp?.data ?? {}),
           nextEarningsDate: verifiedDate,
           symbol
-        }, { allowDemoFallback });
+        });
         fundamentals = withCandleLiquidityFallback(fundamentals, candles);
         result = buildResult(fundamentals);
       }
@@ -637,7 +552,6 @@ async function scanSymbol(input: {
       weeklySqueezeWarning: weekly.warning,
       spyCandles: input.spyCandles,
       qqqCandles: input.qqqCandles,
-      macroRegime: input.macroRegime,
       sector: input.sector,
       sectorCandles: input.sectorCandles,
       scanRanAt
@@ -651,39 +565,21 @@ async function scanSymbol(input: {
 }
 
 function shouldIncludeResult(result: ScanResult): boolean {
-  if (result.setupDirection !== "long" || !isActiveTrackedSqueeze(result)) return false;
-  if (result.squeezeLifecycleStatus) return true;
-  if (!result.passesUniverse) return false;
-  const dotCount = result.dailySqueezeDotCount ?? 0;
-  // Five active dots establish a trackable squeeze setup. Momentum, entry
-  // location, setup score, and institutional context still determine grade and
-  // Take/Avoid, but no longer hide the setup before it fires.
-  if (dotCount >= 5) return true;
-  return result.indicators.momentum > 0
-    && !hasBearishCompression(result)
+  return result.passesUniverse
+    && result.setupDirection === "long"
+    && result.indicators.momentum > 0
+    && dailySqueezeCriteriaPass(result)
     && result.dailyEntryQualificationMode !== "none"
     && (result.grade === "A" || result.grade === "B");
 }
 
-export function isActiveTrackedSqueeze(result: ScanResult): boolean {
+function dailySqueezeCriteriaPass(result: ScanResult): boolean {
   const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
   if (!isSqueezeActive(daily?.squeezeState === "unavailable" ? undefined : daily?.squeezeState)) return false;
   if (result.squeezeMaturityMode === "insufficient") return false;
   if (typeof result.dailySqueezeDotCount === "number" && result.dailySqueezeDotCount < 2) return false;
+  if (result.layerEvaluations?.some((item) => item.layer === "Compression Quality" && item.status === "Bearish")) return false;
   return true;
-}
-
-function hasBearishCompression(result: ScanResult): boolean {
-  return result.layerEvaluations?.some((item) => item.layer === "Compression Quality" && item.status === "Bearish") ?? false;
-}
-
-function withSqueezeLifecycle(result: ScanResult, firstDetectedAt: string): ScanResult {
-  const dotCount = result.dailySqueezeDotCount ?? 0;
-  return {
-    ...result,
-    squeezeLifecycleStatus: dotCount >= 5 ? "ready" : "developing",
-    firstDetectedAt: result.firstDetectedAt ?? firstDetectedAt
-  };
 }
 
 function hasBearishOrUnavailableWeeklyContext(result: ScanResult): boolean {
@@ -745,16 +641,16 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   const dailyEntryQualificationMode = resolveCachedDailyEntryQualificationMode(result);
   const squeezeMaturityMode = result.squeezeMaturityMode
     ?? (dotCount === undefined ? "mature" : resolveSqueezeMaturityMode(dotCount));
+  const bearishMacro = hasBearishMacro(result);
   const missingDailyEmaStack = hasMissingCachedDailyEmaStack(result);
   const capA = (result.institutionalFactors ?? []).some(
     (item) => (item.name === "Sector Strength" || item.name === "Catalyst Safety") && item.status === "Insufficient Data"
   );
-  const bearishMacro = result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
   let scoreGrade = gradeFromSetupScore(setupScore);
-  if ((capA || bearishMacro) && scoreGrade === "A") scoreGrade = "B";
-  const grade = scoreGrade;
+  if (capA && scoreGrade === "A") scoreGrade = "B";
+  const grade = result.institutionalPromotionApplied && result.finalGrade === "A" ? "A" : scoreGrade;
   const gradeCapReasons = mergeCachedGradeCapReasons(result, setupScore, dailyEntryQualificationMode, squeezeMaturityMode, missingDailyEmaStack);
-  const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore);
+  const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore, bearishMacro);
   const tradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const longCallDecision = cachedCompatibilityDecision(grade, tradeMark);
   const normalized: ScanResult = {
@@ -775,26 +671,11 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     dailyEntryQualificationMode,
     weeklyQualificationMode,
     squeezeMaturityMode,
-    squeezeLifecycleStatus: dotCount !== undefined && dotCount >= 2 && isCachedDailySqueezeActive(result)
-      ? result.squeezeLifecycleStatus ?? (dotCount >= 5 ? "ready" : "developing")
-      : undefined,
-    firstDetectedAt: dotCount !== undefined && dotCount >= 2 && isCachedDailySqueezeActive(result)
-      ? result.firstDetectedAt ?? result.lastUpdated
-      : result.firstDetectedAt,
     tradeMark,
     tradeMarkReasons,
     gradeCapReasons,
     strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
-    flags: (result.flags ?? []).filter((flag) => flag !== "QuantData Grade Promotion"),
-    gradeBeforeQuantData: result.institutionalPositioningStatus ? grade : result.gradeBeforeQuantData,
-    finalGrade: result.institutionalPositioningStatus ? grade : result.finalGrade,
-    institutionalPromotionApplied: false,
-    finalScore: typeof result.finalScore === "number" ? result.finalScore : setupScore,
-    macroModifierApplied: typeof result.macroModifierApplied === "number" ? result.macroModifierApplied : 1,
-    counterTrend: result.counterTrend ?? false,
-    macroRegimeQqq: result.macroRegimeQqq,
-    macroRegimeSpy: result.macroRegimeSpy,
-    effectiveMacroRegime: result.effectiveMacroRegime,
+    flags: result.flags ?? [],
     alertMessage: normalizeAlertMessage(result, dotCount),
     layerEvaluations: (result.layerEvaluations ?? []).map((layer) => {
       if (layer.layer !== "Compression Quality") return layer;
@@ -854,20 +735,20 @@ function mergeCachedGradeCapReasons(
 ): string[] {
   const reasons = removeWeeklyCachedGradeReasons(result.gradeCapReasons ?? cachedGradeCapReasons(result, setupScore))
     .filter((reason) => reason !== RELAXED_TREND_GRADE_CAP_REASON || missingDailyEmaStack)
-    .filter((reason) => reason !== "Options Market Context is neutral.");
+    .filter((reason) => reason !== BEARISH_MACRO_GRADE_CAP_REASON && reason !== "Options Market Context is neutral.");
+  if (dailyEntryQualificationMode === "broad" && !reasons.includes(BROAD_ENTRY_GRADE_CAP_REASON)) reasons.push(BROAD_ENTRY_GRADE_CAP_REASON);
   if (dailyEntryQualificationMode === "extended" && !reasons.includes(EXTENDED_ENTRY_GRADE_CAP_REASON)) reasons.push(EXTENDED_ENTRY_GRADE_CAP_REASON);
   if (squeezeMaturityMode === "developing" && !reasons.includes(DEVELOPING_SQUEEZE_GRADE_CAP_REASON)) reasons.push(DEVELOPING_SQUEEZE_GRADE_CAP_REASON);
   if (hasRelaxedMarketStructure(result) && missingDailyEmaStack && !reasons.includes(RELAXED_TREND_GRADE_CAP_REASON)) reasons.push(RELAXED_TREND_GRADE_CAP_REASON);
-  if (result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") && !reasons.includes(BEARISH_MACRO_GRADE_CAP_REASON)) reasons.push(BEARISH_MACRO_GRADE_CAP_REASON);
   return reasons;
 }
 
-function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], setupScore: number): string[] {
+function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], setupScore: number, bearishMacro: boolean): string[] {
   const reasons = (result.tradeMarkReasons ?? []).filter((reason) => reason !== "Institutional Edge is bearish.");
   if (grade === "C" || setupScore < B_SETUP_SCORE_THRESHOLD) addUnique(reasons, "Setup grade is C.");
+  if (bearishMacro) addUnique(reasons, BEARISH_MACRO_GRADE_CAP_REASON);
   if (result.institutionalPositioningStatus === "capped") addUnique(reasons, "Institutional positioning is not supportive.");
   if (result.institutionalPositioningStatus === "vetoed") addUnique(reasons, "Bearish Flow Veto");
-  removeItem(reasons, BEARISH_MACRO_GRADE_CAP_REASON);
   result.layerEvaluations?.filter((item) => (item.layer === "Squeeze Market Structure" || item.layer === "Compression Quality") && item.status === "Bearish")
     .forEach((item) => addUnique(reasons, item.detail));
   result.layerEvaluations?.filter((item) => item.layer === "Options Market Context" && item.status === "Bearish")
@@ -896,9 +777,8 @@ function addUnique(items: string[], value: string): void {
   if (!items.includes(value)) items.push(value);
 }
 
-function removeItem(items: string[], value: string): void {
-  const index = items.indexOf(value);
-  if (index >= 0) items.splice(index, 1);
+function hasBearishMacro(result: Pick<ScanResult, "layerEvaluations">): boolean {
+  return result.layerEvaluations?.some((item) => item.layer === "Macro Regime" && item.status === "Bearish") ?? false;
 }
 
 function hasRelaxedMarketStructure(result: Pick<ScanResult, "layerEvaluations">): boolean {
@@ -908,11 +788,6 @@ function hasRelaxedMarketStructure(result: Pick<ScanResult, "layerEvaluations">)
 function hasMissingCachedDailyEmaStack(result: Pick<ScanResult, "squeezeStatusByTimeframe">): boolean {
   const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
   return daily?.positiveEmaStack === false;
-}
-
-function isCachedDailySqueezeActive(result: Pick<ScanResult, "squeezeStatusByTimeframe">): boolean {
-  const daily = result.squeezeStatusByTimeframe?.find((item) => item.timeframe === "daily");
-  return isSqueezeActive(daily?.squeezeState === "unavailable" ? undefined : daily?.squeezeState);
 }
 
 function resolveDailySqueezeDotCount(result: ScanResult): number | undefined {
@@ -938,13 +813,13 @@ function weeklySqueezeFromDaily(candles: Awaited<ReturnType<typeof fetchHistory>
   }
 }
 
-async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics; evaluatedSymbols?: string[]; evaluatedResults?: ScanResult[] }): Promise<ScanResponse> {
+async function withScanMetadata(input: { mode: ScanMode; results: ScanResult[]; settings: Settings; warnings: string[]; scanDiagnostics?: ScanDiagnostics; evaluatedSymbols?: string[] }): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
   return mergeScanResponseMetadata(input, metadata, Boolean(activeScan));
 }
 
 export function mergeScanResponseMetadata(
-  input: Pick<ScanResponse, "mode" | "results" | "settings" | "warnings" | "scanDiagnostics" | "evaluatedSymbols" | "evaluatedResults">,
+  input: Pick<ScanResponse, "mode" | "results" | "settings" | "warnings" | "scanDiagnostics" | "evaluatedSymbols">,
   metadata: ScanMetadata,
   isRefreshing: boolean
 ): ScanResponse {
@@ -954,21 +829,6 @@ export function mergeScanResponseMetadata(
     scanStatus: isRefreshing ? "running" : metadata.scanStatus,
     isRefreshing
   };
-}
-
-export function catastrophicScanReason(response: Pick<ScanResponse, "scanDiagnostics">): string | undefined {
-  const diagnostics = response.scanDiagnostics;
-  if (!diagnostics || diagnostics.scannedSymbols <= 0) return undefined;
-  const providerFailures = diagnostics.skipped.quoteMissing + diagnostics.skipped.candleHistory;
-  if (providerFailures / diagnostics.scannedSymbols < CATASTROPHIC_FAILURE_RATIO) return undefined;
-  return "Scan failed safely: market-data providers could not fully evaluate " + providerFailures + " of " + diagnostics.scannedSymbols + " symbols. Previous results and watchlist entries were preserved.";
-}
-
-function compactScanWarnings(warnings: string[]): string[] {
-  if (warnings.length <= MAX_STORED_SCAN_WARNINGS) return warnings;
-  const visible = warnings.slice(0, MAX_STORED_SCAN_WARNINGS - 1);
-  visible.push((warnings.length - visible.length) + " additional scan warnings were omitted from persisted metadata.");
-  return visible;
 }
 
 function readError(error: unknown, fallback: string): string {
@@ -984,8 +844,8 @@ async function loadQuoteMap(symbols: string[], warnings: Set<string>): Promise<M
   }
 }
 
-async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>; vixLevel?: number }> {
-  const output: { spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>>; vixLevel?: number } = {};
+async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>> }> {
+  const output: { spyCandles?: Awaited<ReturnType<typeof fetchHistory>>; qqqCandles?: Awaited<ReturnType<typeof fetchHistory>> } = {};
   try {
     output.spyCandles = await fetchHistory("SPY");
   } catch (error) {
@@ -995,13 +855,6 @@ async function loadBenchmarks(warnings: Set<string>): Promise<{ spyCandles?: Awa
     output.qqqCandles = await fetchHistory("QQQ");
   } catch (error) {
     warnings.add(readError(error, "QQQ macro history request failed."));
-  }
-  try {
-    const vixQuote = await fetchQuote("$VIX");
-    if (vixQuote?.price !== undefined) output.vixLevel = vixQuote.price;
-    else warnings.add("VIX quote returned no price; volatility regime treated as low/neutral for this scan.");
-  } catch (error) {
-    warnings.add(readError(error, "VIX quote request failed; volatility regime treated as low/neutral for this scan."));
   }
   return output;
 }
@@ -1021,8 +874,8 @@ async function loadSectorHistories(warnings: Set<string>): Promise<Map<string, C
   return output;
 }
 
-export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: FmpFundamentals, options: { allowDemoFallback?: boolean } = {}): Fundamentals {
-  const demo = options.allowDemoFallback === false ? undefined : demoFundamental(symbol);
+export function mergeFundamentals(symbol: string, quote?: SchwabQuote, fmp?: FmpFundamentals): Fundamentals {
+  const demo = demoFundamental(symbol);
   const sources: FundamentalFieldSources = {};
   const beta = valueWithSource(quote?.beta, "schwab", fmp?.beta, "fmp", demo?.beta, "demo", sources, "beta");
   const marketCap = valueWithSource(quote?.marketCap, "schwab", fmp?.marketCap, "fmp", demo?.marketCap, "demo", sources, "marketCap");
