@@ -180,7 +180,7 @@ function App() {
       void api.results().then((data) => applyScanResponse(data)).catch(() => undefined);
       if (view === "watchlist") void api.watchlist().then(setWatchlist).catch(() => undefined);
     };
-    const interval = window.setInterval(pollLivePrices, 2 * 60_000);
+    const interval = window.setInterval(pollLivePrices, 45_000);
     document.addEventListener("visibilitychange", pollLivePrices);
     return () => {
       window.clearInterval(interval);
@@ -294,7 +294,7 @@ function App() {
       if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Failed to load candidate details.");
     });
     return () => controller.abort();
-  }, [selectedSummary?.symbol, selectedSummary?.lastUpdated, view]);
+  }, [selectedSummary?.symbol, selectedSummary?.price, selectedSummary?.lastUpdated, view]);
   const active = view === "watchlist"
     ? watchlist.find((entry) => entry.symbol === selectedSummary?.symbol)?.result ?? watchlist[0]?.result
     : selectedSummary ? resultDetails[selectedSummary.symbol] : undefined;

@@ -4,7 +4,6 @@ import { dirname, resolve } from "node:path";
 import http from "node:http";
 import https from "node:https";
 import cors from "cors";
-import compression from "compression";
 import express from "express";
 import cron from "node-cron";
 import { isMarketRefreshWindow, MARKET_REFRESH_CRON, MARKET_TIME_ZONE } from "../shared/refreshSchedule";
@@ -23,7 +22,6 @@ const app = express();
 // every client together.
 app.set("trust proxy", 1);
 app.use(cors({ origin: config.clientOrigin }));
-app.use(compression());
 app.use(express.json({ limit: "2mb" }));
 app.use(optionalBasicAuth);
 
