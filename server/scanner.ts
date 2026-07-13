@@ -1,5 +1,5 @@
-import type { AssetType, Candle, CandidateListResponse, CandidateSummary, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
-import { AUTO_REFRESH_INTERVAL_MS } from "../shared/refreshSchedule";
+import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import { AUTO_REFRESH_INTERVAL_MS, snapshotFreshness } from "../shared/refreshSchedule";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
 import { resolveEtfSymbols } from "./etfUniverse";
@@ -29,7 +29,7 @@ import {
   resolveWeeklyQualificationMode
 } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
-import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, hasCachedResults, removeWatchlistEntry, replaceScanSnapshot, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
 
@@ -39,6 +39,8 @@ const MAX_STORED_SCAN_WARNINGS = 50;
 const CATASTROPHIC_FAILURE_RATIO = 0.8;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
 type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
+type ScanSymbolOutcome = { result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason };
+export type ScanOutcomeResolution = "evaluated" | "conclusive-skip" | "transient-failure";
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
   "Communication Services": "XLC",
   "Consumer Discretionary": "XLY",
@@ -161,23 +163,14 @@ export async function startScanRefresh(scanRunner: () => Promise<ScanResponse> =
 
 export async function readCachedScanResponse(): Promise<ScanResponse> {
   const metadata = await readScanMetadata();
+  const freshness = snapshotFreshness(metadata.lastScanFinishedAt);
   return {
     mode: metadata.lastScanMode ?? "demo",
-    results: await overlayLiveQuotePrices(await readDisplayResults()),
+    results: await readDisplayResults(),
     settings: await readSettings(),
     warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
     ...metadata,
-    scanStatus: activeScan ? "running" : metadata.scanStatus,
-    isRefreshing: Boolean(activeScan)
-  };
-}
-
-export async function readScanStatusResponse(): Promise<Omit<ScanResponse, "results" | "settings">> {
-  const metadata = await readScanMetadata();
-  return {
-    mode: metadata.lastScanMode ?? "demo",
-    warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
-    ...metadata,
+    ...freshness,
     scanStatus: activeScan ? "running" : metadata.scanStatus,
     isRefreshing: Boolean(activeScan)
   };
@@ -185,8 +178,9 @@ export async function readScanStatusResponse(): Promise<Omit<ScanResponse, "resu
 
 export async function readScanMetadata(): Promise<ScanMetadata> {
   const stored = await getScanMetadata();
+  const storedStatus = stored.scanStatus === "running" && !activeScan ? "idle" : stored.scanStatus;
   return {
-    scanStatus: stored.scanStatus ?? "idle",
+    scanStatus: storedStatus ?? "idle",
     lastScanStartedAt: stored.lastScanStartedAt,
     lastScanFinishedAt: stored.lastScanFinishedAt,
     lastScanFailedAt: stored.lastScanFailedAt,
@@ -207,13 +201,11 @@ export async function recordUniverseWarning(message: string): Promise<void> {
 }
 
 export async function shouldAutoRefresh(): Promise<boolean> {
-  const cached = await readDisplayResults();
   const metadata = await readScanMetadata();
   if (activeScan) return false;
   if (!hasSchwabCredentials() || !await hasSchwabTokens()) return false;
-  if (!cached.length) return true;
-  if (!metadata.nextRefreshAt) return true;
-  return new Date(metadata.nextRefreshAt).getTime() <= Date.now();
+  if (!await hasCachedResults()) return true;
+  return snapshotFreshness(metadata.lastScanFinishedAt).snapshotState === "stale";
 }
 
 export async function runFullScan(): Promise<ScanResponse> {
@@ -232,6 +224,8 @@ export async function runFullScan(): Promise<ScanResponse> {
   let usedLive = false;
   let usedDemo = false;
   let processedSymbols = 0;
+  let transientlyRetainedResults = 0;
+  let discardedStaleDemoResults = 0;
   const etfSymbols = settings.etfSymbols;
   const etfSymbolSet = new Set(etfSymbols);
   let symbolsToScan = await resolveScanSymbols(settings);
@@ -294,10 +288,11 @@ export async function runFullScan(): Promise<ScanResponse> {
       fmp,
       scanRanAt
     });
+    const resolution = classifyScanOutcome(outcome);
+    if (resolution !== "transient-failure") evaluatedSymbols.add(symbol);
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
     if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
     if (outcome.result) {
-      evaluatedSymbols.add(outcome.result.symbol);
       const previous = previousBySymbol.get(outcome.result.symbol);
       const watchlistEntry = watchlistBySymbol.get(outcome.result.symbol);
       const wasTracked = Boolean(previous || watchlistEntry);
@@ -343,6 +338,13 @@ export async function runFullScan(): Promise<ScanResponse> {
   const scannedSymbols = new Set(symbolsToScan);
   for (const previous of previousResults) {
     if (!scannedSymbols.has(previous.symbol) || evaluatedSymbols.has(previous.symbol) || resultSymbols.has(previous.symbol)) continue;
+    // Demo rows are never valid evidence for a live scan. If the current live
+    // request hit a transient provider gap, discard the old simulation rather
+    // than presenting it as a live candidate.
+    if (!canRetainPreviousResult(previous, canUseLiveSchwab)) {
+      discardedStaleDemoResults += 1;
+      continue;
+    }
     // Never re-emit a stale payload whose header price no longer matches its
     // candle scale (e.g. a legacy live-quote-over-demo-candles row); its chart
     // and trade plan would be meaningless.
@@ -354,6 +356,7 @@ export async function runFullScan(): Promise<ScanResponse> {
     // last known active payload until a later scan evaluates its squeeze state.
     results.push(previous);
     resultSymbols.add(previous.symbol);
+    transientlyRetainedResults += 1;
   }
   diagnostics.qualifiedResults = results.length;
 
@@ -372,6 +375,8 @@ export async function runFullScan(): Promise<ScanResponse> {
     universeSize: symbolsToScan.length,
     retainedResults: results.length,
     watchlistEvaluations: watchlistEvaluatedResults.length,
+    transientlyRetainedResults,
+    discardedStaleDemoResults,
     durationMs: Date.now() - scanRanAt.getTime()
   });
   return withScanMetadata({
@@ -396,33 +401,9 @@ export async function readDisplayResults(): Promise<ScanResult[]> {
     .filter((result): result is ScanResult => priceMatchesCandles(result) && shouldIncludeResult(result));
 }
 
-export async function readCandidateListResponse(): Promise<CandidateListResponse> {
-  const response = await readCachedScanResponse();
-  return {
-    ...response,
-    // Mature C setups remain persisted and tracked, but the default scanner shortlist
-    // is intentionally limited to actionable technical grades.
-    results: response.results.filter((result) => result.grade !== "C").map(candidateSummary)
-  };
-}
-
-export async function readDisplayResult(symbol: string): Promise<ScanResult | undefined> {
-  const normalizedSymbol = symbol.trim().toUpperCase();
-  const match = (await readDisplayResults()).find((result) => result.symbol === normalizedSymbol);
-  if (!match) return undefined;
-  return (await overlayLiveQuotePrices([match]))[0];
-}
-
-function candidateSummary(result: ScanResult): CandidateSummary {
-  const { symbol, companyName, assetType, price, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated } = result;
-  return { symbol, companyName, assetType, price, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated };
-}
-
 export async function readWatchlist(): Promise<WatchlistEntry[]> {
   const entries = await getWatchlistEntries();
-  const results = await overlayLiveQuotePrices(
-    entries.map((entry) => normalizeCachedResult(entry.payload as ScanResult))
-  );
+  const results = entries.map((entry) => normalizeCachedResult(entry.payload as ScanResult));
   return entries.map((entry, index) => ({
     symbol: entry.symbol,
     addedAt: entry.addedAt,
@@ -534,10 +515,8 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
     const response = await scanRunner();
     const catastrophicReason = catastrophicScanReason(response);
     if (catastrophicReason) throw new Error(catastrophicReason);
-    await replaceScanResults(response.results);
-    await syncWatchlistWithLatestResults(response.evaluatedResults);
     const finishedAt = new Date().toISOString();
-    await setScanMetadata({
+    const completedMetadata: ScanMetadata = {
       scanStatus: "complete",
       lastScanStartedAt: startedAt,
       lastScanFinishedAt: finishedAt,
@@ -545,9 +524,15 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
       lastScanMode: response.mode,
       lastScanWarnings: compactScanWarnings(response.warnings),
       scanDiagnostics: response.scanDiagnostics,
-      nextRefreshAt: new Date(new Date(startedAt).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
+      nextRefreshAt: new Date(new Date(finishedAt).getTime() + AUTO_REFRESH_INTERVAL_MS).toISOString(),
       isRefreshing: false
-    });
+    };
+    await replaceScanSnapshot(response.results, completedMetadata);
+    try {
+      await syncWatchlistWithLatestResults(response.evaluatedResults);
+    } catch (error) {
+      console.warn("Scan snapshot committed, but watchlist synchronization failed:", readError(error, "Unknown watchlist error."));
+    }
   } catch (error) {
     const finishedAt = new Date().toISOString();
     logScanMemory("failed", { message: readError(error, "Scan failed.") });
@@ -578,7 +563,7 @@ async function scanSymbol(input: {
   nextEarningsDate?: string;
   fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
   scanRanAt?: Date;
-}): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason }> {
+}): Promise<ScanSymbolOutcome> {
   const { symbol, settings, canUseLiveSchwab, assetType } = input;
   const scanRanAt = input.scanRanAt ?? new Date();
   const warnings: string[] = [];
@@ -774,6 +759,18 @@ async function scanSymbol(input: {
     warnings.push(...fallback.warnings.map((warning) => symbol + ": " + warning));
     return { result: fallback, warnings, usedLive, usedDemo: true };
   }
+}
+
+export function classifyScanOutcome(outcome: Pick<ScanSymbolOutcome, "result" | "skipReason">): ScanOutcomeResolution {
+  if (outcome.result) return "evaluated";
+  if (outcome.skipReason === "price" || outcome.skipReason === "stockLiquidity" || outcome.skipReason === "marketCap") {
+    return "conclusive-skip";
+  }
+  return "transient-failure";
+}
+
+export function canRetainPreviousResult(previous: Pick<ScanResult, "dataSource">, liveScan: boolean): boolean {
+  return !(liveScan && previous.dataSource === "demo");
 }
 
 // A result's header price (result.price, from the live quote) and its chart /

@@ -9,7 +9,7 @@ npm install --cache .npm-cache
 npm run dev
 ```
 
-Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
+Open http://127.0.0.1:5173. The last completed scan is stored as an immutable database snapshot and loads immediately when available. Snapshots are labeled stale after 15 minutes; opening a stale dashboard starts one background refresh when Schwab is connected, while the saved snapshot stays visible until the replacement scan commits successfully. Click **Run Scan** to refresh manually.
 
 The Dashboard displays developing and ready compression setups with a separate `Take` or `Avoid` trade mark. `A` means a setup score of `90-100`; `B` means `70-89`; a five-dot squeeze that currently scores below B can remain visible as a tracked `C`/`Avoid` setup so contextual weakness does not hide the compression before it fires. Weekly squeeze is shown as bonus context only and Weekly EMA structure does not boost, cap, filter, or degrade the setup grade. Hostile overlays such as bearish macro, bearish institutional positioning, or unusable option context mark the trade `Avoid` without changing the setup grade.
 
@@ -46,7 +46,7 @@ The scanner includes a curated ETF list by default: `SPY`, `QQQ`, `DIA`, `IWM`, 
 
 For a hosted private deployment, use **Supabase Free Postgres** for persistence and a **Render Free Web Service** for the app. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted deployments should use Supabase so scan results, Schwab OAuth tokens, and cached universe data survive redeploys.
 
-Render Free web services can sleep after inactivity. The app is built around that tradeoff: cached results load first after wake-up, and fresh scans run when you open the app or click **Run Scan**. The scheduled 15-minute refresh is restricted to the regular weekday market window and only runs while Render is awake or a visible dashboard requests a due refresh. This caps the app's automatic keep-awake time near 150 hours in a typical month, well below one Render Free service's current 750-hour workspace allowance. Scan-result rows and provider caches are replaced/upserted rather than appended, limiting Supabase database growth.
+Render Free web services can sleep after inactivity. The app is built around that tradeoff: the exact last completed scan loads from Postgres after wake-up with no live-price mutation, and a stale snapshot starts one background refresh when Schwab is connected. Results and their completion metadata commit atomically, so a failed or interrupted scan cannot replace part of the saved dashboard. The scheduled 15-minute refresh is restricted to the regular weekday market window and only runs while Render is awake; opening a stale dashboard can also request a refresh. This caps automatic keep-awake time while preserving the last successful snapshot. Scan-result rows and provider caches are replaced/upserted rather than appended, limiting Supabase database growth.
 
 Recommended Supabase + Render setup:
 
