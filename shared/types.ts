@@ -303,6 +303,19 @@ export type ScanResult = {
   warnings: string[];
 };
 
+export type CandidateSummary = Pick<ScanResult,
+  | "symbol"
+  | "companyName"
+  | "assetType"
+  | "price"
+  | "passesUniverse"
+  | "grade"
+  | "tradeMark"
+  | "setupScore"
+  | "dailySqueezeDotCount"
+  | "lastUpdated"
+>;
+
 export type Settings = {
   minPrice: number;
   minBeta: number;
@@ -412,6 +425,10 @@ export type ScanResponse = ScanMetadata & {
   evaluatedSymbols?: string[];
   /** Internal refresh payload used to update tracked/watchlisted squeeze lifecycles even when a result is currently marked Avoid. */
   evaluatedResults?: ScanResult[];
+};
+
+export type CandidateListResponse = Omit<ScanResponse, "results" | "evaluatedResults"> & {
+  results: CandidateSummary[];
 };
 
 export type WatchlistEntry = {

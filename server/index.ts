@@ -8,7 +8,7 @@ import express from "express";
 import cron from "node-cron";
 import { isMarketRefreshWindow, MARKET_REFRESH_CRON, MARKET_TIME_ZONE } from "../shared/refreshSchedule";
 import { config } from "./config";
-import { addToWatchlist, readCachedScanResponse, readScanStatusResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings, SettingsValidationError } from "./scanner";
+import { addToWatchlist, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readScanStatusResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings, SettingsValidationError } from "./scanner";
 import { initDb } from "./sqlite";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -49,9 +49,19 @@ app.put("/api/settings", async (req, res, next) => {
 
 app.get("/api/results", async (_req, res, next) => {
   try {
-    const response = await readCachedScanResponse();
+    const response = await readCandidateListResponse();
     if (await shouldAutoRefresh()) void startScanRefresh();
     res.json(response);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/results/:symbol", async (req, res, next) => {
+  try {
+    const result = await readDisplayResult(String(req.params.symbol ?? ""));
+    if (!result) return res.status(404).json({ error: "Candidate not found." });
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -95,7 +105,8 @@ app.post("/api/scan", async (req, res, next) => {
       res.status(429).json({ error: "Too many scan requests. Wait a few minutes before starting another scan." });
       return;
     }
-    res.json(await runScan());
+    await runScan();
+    res.json(await readCandidateListResponse());
   } catch (error) {
     next(error);
   }

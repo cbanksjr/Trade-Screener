@@ -24,16 +24,19 @@ import {
   WalletCards,
   XCircle,
 } from "lucide-react";
-import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import type { BrokerStatus, CandidateListResponse, CandidateSummary, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import { isMarketRefreshWindow, isRefreshDue } from "../shared/refreshSchedule";
 import { CandlestickChart } from "./CandlestickChart";
 import "./styles.css";
 
 const api = {
-  async results(): Promise<Partial<ScanResponse>> {
+  async results(): Promise<Partial<CandidateListResponse>> {
     return apiJson("/api/results");
   },
-  async scan(): Promise<ScanResponse> {
+  async result(symbol: string): Promise<ScanResult> {
+    return apiJson("/api/results/" + encodeURIComponent(symbol));
+  },
+  async scan(): Promise<CandidateListResponse> {
     return apiJson("/api/scan", { method: "POST" });
   },
   async scanStatus(): Promise<ScanResponse> {
@@ -80,7 +83,8 @@ function initialTheme(): ThemeMode {
 }
 
 function App() {
-  const [results, setResults] = React.useState<ScanResult[]>([]);
+  const [results, setResults] = React.useState<CandidateSummary[]>([]);
+  const [resultDetails, setResultDetails] = React.useState<Record<string, ScanResult>>({});
   const [settings, setSettings] = React.useState<Settings | null>(null);
   const [selected, setSelected] = React.useState("");
   const [query, setQuery] = React.useState("");
@@ -184,8 +188,8 @@ function App() {
     };
   }, [brokerStatus?.ok, loading, scanStatus, view]);
 
-  function applyScanResponse(data: Partial<ScanResponse>) {
-    const nextResults = data.results ? sortResultsByGrade(data.results) : undefined;
+  function applyScanResponse(data: Partial<ScanResponse> | Partial<CandidateListResponse>) {
+    const nextResults = data.results ? sortResultsByGrade(data.results.filter((result) => result.grade !== "C")) : undefined;
     if (nextResults) setResults(nextResults);
     if (data.settings) setSettings(data.settings);
     if (data.lastScanFinishedAt) setLastScanFinishedAt(data.lastScanFinishedAt);
@@ -196,9 +200,9 @@ function App() {
     if (!data.isRefreshing) void api.watchlist().then(setWatchlist).catch(() => undefined);
   }
 
-  function shouldRefresh(data: Partial<ScanResponse>) {
+  function shouldRefresh(data: Partial<CandidateListResponse>) {
     if (data.isRefreshing) return false;
-    if (!data.results?.length || !data.nextRefreshAt) return true;
+    if (!data.nextRefreshAt) return true;
     return new Date(data.nextRefreshAt).getTime() <= Date.now();
   }
 
@@ -280,7 +284,20 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
   const sourceResults = sourceEntries.map((entry) => entry.result);
-  const active = sourceResults.find((item) => item.symbol === selected) ?? sourceResults[0];
+  const selectedSummary = sourceResults.find((item) => item.symbol === selected) ?? sourceResults[0];
+  React.useEffect(() => {
+    if (view !== "scanner" || !selectedSummary) return;
+    const controller = new AbortController();
+    void api.result(selectedSummary.symbol).then((result) => {
+      if (!controller.signal.aborted) setResultDetails((current) => ({ ...current, [result.symbol]: result }));
+    }).catch((error) => {
+      if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Failed to load candidate details.");
+    });
+    return () => controller.abort();
+  }, [selectedSummary?.symbol, selectedSummary?.price, selectedSummary?.lastUpdated, view]);
+  const active = view === "watchlist"
+    ? watchlist.find((entry) => entry.symbol === selectedSummary?.symbol)?.result ?? watchlist[0]?.result
+    : selectedSummary ? resultDetails[selectedSummary.symbol] : undefined;
   const isWatchlisted = active ? watchlist.some((entry) => entry.symbol === active.symbol) : false;
 
   return (
@@ -343,7 +360,7 @@ function App() {
             view={view}
             filter={filter}
             onFilter={setFilter}
-            activeSymbol={active?.symbol}
+            activeSymbol={selectedSummary?.symbol}
             onSelect={setSelected}
             loading={loading && results.length === 0}
             counts={{ all: sourceEntries.length, take: view === "scanner" ? takeCount : sourceResults.filter((item) => tradeMark(item) === "Take").length, avoid: view === "scanner" ? avoidCount : sourceResults.filter((item) => tradeMark(item) === "Avoid").length, gradeA: view === "scanner" ? gradeACount : sourceResults.filter((item) => item.grade === "A").length }}
@@ -352,6 +369,11 @@ function App() {
             <>
               <FocusPanel result={active} theme={theme} isWatchlisted={isWatchlisted} watchlistBusy={watchlistBusy} onToggleWatchlist={() => void toggleWatchlist(active.symbol)} />
               <EvidencePanel result={active} />
+            </>
+          ) : selectedSummary && view === "scanner" ? (
+            <>
+              <section className="focus-panel"><div className="no-results">Loading candidate details…</div></section>
+              <section className="evidence-panel"><div className="no-results">Loading decision evidence…</div></section>
             </>
           ) : <EmptyState view={view} runScan={runScan} />}
         </section>
@@ -365,7 +387,7 @@ function RailButton({ label, active, onClick, children }: { label: string; activ
 }
 
 function CandidatePanel({ entries, view, filter, onFilter, activeSymbol, onSelect, loading, counts }: {
-  entries: Array<{ result: ScanResult; addedAt?: string }>;
+  entries: Array<{ result: CandidateSummary; addedAt?: string }>;
   view: ViewMode;
   filter: ResultFilter;
   onFilter: (filter: ResultFilter) => void;
@@ -402,7 +424,7 @@ function FilterTab({ label, count, value, active, onFilter }: { label: string; c
   return <button className={active ? "active" : ""} onClick={() => onFilter(value)} role="tab" aria-selected={active}>{label}<small>{count}</small></button>;
 }
 
-const CandidateRow = React.memo(function CandidateRow({ result, addedAt, active, onSelect }: { result: ScanResult; addedAt?: string; active: boolean; onSelect: (symbol: string) => void }) {
+const CandidateRow = React.memo(function CandidateRow({ result, addedAt, active, onSelect }: { result: CandidateSummary; addedAt?: string; active: boolean; onSelect: (symbol: string) => void }) {
   return (
     <button className={`candidate-row${active ? " selected" : ""}`} onClick={() => onSelect(result.symbol)} aria-pressed={active}>
       <span className="ticker"><strong>{result.symbol}{result.assetType === "etf" ? <em>ETF</em> : null}</strong><small>{money(result.price)}{addedAt ? ` · saved ${shortDate(addedAt)}` : ""}</small></span>
@@ -576,7 +598,7 @@ function EmptyState({ view, runScan }: { view: ViewMode; runScan: () => void }) 
   return <section className="empty-state"><WalletCards size={26} /><h2>{view === "watchlist" ? "Your watchlist is empty" : "No scan results yet"}</h2><p>{view === "watchlist" ? "Save a setup from the scanner to keep it here." : "Run a scan to rank current compression setups."}</p>{view === "scanner" ? <button className="scan-button" onClick={runScan}><Play size={16} />Run Scan</button> : null}</section>;
 }
 
-function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
+function sortResultsByGrade<T extends CandidateSummary>(results: T[]): T[] {
   return [...results].sort((left, right) => {
     const scoreDelta = setupScoreValue(right) - setupScoreValue(left);
     if (scoreDelta !== 0) return scoreDelta;
@@ -608,10 +630,8 @@ function shortDate(value: string): string {
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : value;
 }
 
-function dailySqueezeDotCount(result: ScanResult): number | null {
-  if (typeof result.dailySqueezeDotCount === "number") return result.dailySqueezeDotCount;
-  if (result.maxScore === 5 && result.compressionQualityScore <= 30) return result.compressionQualityScore;
-  return null;
+function dailySqueezeDotCount(result: CandidateSummary): number | null {
+  return typeof result.dailySqueezeDotCount === "number" ? result.dailySqueezeDotCount : null;
 }
 
 function dailySqueezeDotLabel(result: ScanResult): string {
@@ -619,17 +639,16 @@ function dailySqueezeDotLabel(result: ScanResult): string {
   return dots === null ? "Run scan" : `${dots} active`;
 }
 
-function setupScoreValue(result: ScanResult): number {
+function setupScoreValue(result: CandidateSummary): number {
   return typeof result.setupScore === "number" ? result.setupScore : 0;
 }
 
-function setupScoreLabel(result: ScanResult): string {
+function setupScoreLabel(result: CandidateSummary): string {
   return typeof result.setupScore === "number" ? `${formatNumber(result.setupScore, { maximumFractionDigits: 0 })}/100` : "Run scan";
 }
 
-function tradeMark(result: ScanResult): "Take" | "Avoid" {
-  if (result.tradeMark) return result.tradeMark;
-  return result.longCallDecision === "Avoid" || result.longCallDecision === "Watchlist Candidate" ? "Avoid" : "Take";
+function tradeMark(result: CandidateSummary): "Take" | "Avoid" {
+  return result.tradeMark ?? "Avoid";
 }
 
 function tradeMarkReasons(result: ScanResult): string[] {

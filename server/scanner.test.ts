@@ -4,7 +4,7 @@ import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
 import { getCachedResults, getDatabaseReadStats, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readScanStatusResponse, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readDisplayResults, readScanStatusResponse, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import type { SchwabQuote } from "./schwab";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
@@ -315,6 +315,22 @@ describe("background scan refresh", () => {
 
     expect(response.results.map((result) => result.symbol)).toEqual(["CACHE"]);
     expect(response.isRefreshing).toBe(false);
+  }));
+
+  it("serves lightweight A/B summaries while retaining full C setup details", async () => withDbRestore(async () => {
+    const aGrade = qualifyingResult("ALPHA");
+    const cGrade = { ...qualifyingResult("CHARLIE"), grade: "C" as const, setupScore: 65, dailySqueezeDotCount: 5 };
+    await replaceScanResults([aGrade, cGrade]);
+
+    const response = await readCandidateListResponse();
+    const retainedC = await readDisplayResult("CHARLIE");
+
+    expect(response.results.map((result) => result.symbol)).toEqual(["ALPHA"]);
+    expect(response.results[0]).not.toHaveProperty("candles");
+    expect(response.results[0]).not.toHaveProperty("suggestedOptions");
+    expect(retainedC?.grade).toBe("C");
+    expect(retainedC).toHaveProperty("layerEvaluations");
+    expect(retainedC).toHaveProperty("suggestedOptions");
   }));
 
   it("serves repeated cached-result reads without additional database hydration", async () => withDbRestore(async () => {

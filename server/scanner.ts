@@ -1,4 +1,4 @@
-import type { AssetType, Candle, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import type { AssetType, Candle, CandidateListResponse, CandidateSummary, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import { AUTO_REFRESH_INTERVAL_MS } from "../shared/refreshSchedule";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
@@ -394,6 +394,28 @@ export async function readDisplayResults(): Promise<ScanResult[]> {
   return (await getCachedResults())
     .map((result) => normalizeCachedResult(result as ScanResult))
     .filter((result): result is ScanResult => priceMatchesCandles(result) && shouldIncludeResult(result));
+}
+
+export async function readCandidateListResponse(): Promise<CandidateListResponse> {
+  const response = await readCachedScanResponse();
+  return {
+    ...response,
+    // Mature C setups remain persisted and tracked, but the default scanner shortlist
+    // is intentionally limited to actionable technical grades.
+    results: response.results.filter((result) => result.grade !== "C").map(candidateSummary)
+  };
+}
+
+export async function readDisplayResult(symbol: string): Promise<ScanResult | undefined> {
+  const normalizedSymbol = symbol.trim().toUpperCase();
+  const match = (await readDisplayResults()).find((result) => result.symbol === normalizedSymbol);
+  if (!match) return undefined;
+  return (await overlayLiveQuotePrices([match]))[0];
+}
+
+function candidateSummary(result: ScanResult): CandidateSummary {
+  const { symbol, companyName, assetType, price, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated } = result;
+  return { symbol, companyName, assetType, price, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated };
 }
 
 export async function readWatchlist(): Promise<WatchlistEntry[]> {
