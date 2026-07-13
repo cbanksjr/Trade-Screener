@@ -8,7 +8,7 @@ import express from "express";
 import cron from "node-cron";
 import { isMarketRefreshWindow, MARKET_REFRESH_CRON, MARKET_TIME_ZONE } from "../shared/refreshSchedule";
 import { config } from "./config";
-import { addToWatchlist, readCachedScanResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings, SettingsValidationError } from "./scanner";
+import { addToWatchlist, readCachedScanResponse, readScanStatusResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings, SettingsValidationError } from "./scanner";
 import { initDb } from "./sqlite";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -103,7 +103,7 @@ app.post("/api/scan", async (req, res, next) => {
 
 app.get("/api/scan/status", async (_req, res, next) => {
   try {
-    res.json(await readCachedScanResponse());
+    res.json(await readScanStatusResponse());
   } catch (error) {
     next(error);
   }

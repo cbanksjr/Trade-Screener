@@ -19,6 +19,11 @@ const pool = usePostgres
   : undefined;
 
 let db: Database.Database | undefined;
+const settingsCache = new Map<string, unknown>();
+let scanResultsCache: unknown[] = [];
+let watchlistCache: Array<{ symbol: string; addedAt: string; payload: unknown }> = [];
+let cacheHydrated = false;
+const databaseReadStats = { settings: 0, scanResults: 0, watchlist: 0 };
 
 function getDb(): Database.Database {
   if (db) return db;
@@ -55,6 +60,7 @@ export async function initDb() {
         updated_at TIMESTAMPTZ NOT NULL
       );
     `);
+    await hydratePersistenceCache();
     return;
   }
 
@@ -83,9 +89,11 @@ export async function initDb() {
       );
     `);
   await migrateNullableFundamentals();
+  await hydratePersistenceCache();
 }
 
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {
+  if (cacheHydrated) return (settingsCache.has(key) ? settingsCache.get(key) : fallback) as T;
   if (usePostgres) {
     const rows = (await pgQuery<{ value: string }>("SELECT value FROM settings WHERE key = $1;", [key])).rows;
     if (!rows[0]) return fallback;
@@ -104,21 +112,25 @@ export async function setSetting(key: string, value: unknown): Promise<void> {
       VALUES ($1, $2)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value;
     `, [key, payload]);
+    settingsCache.set(key, value);
     return;
   }
   getDb().prepare(`
       INSERT INTO settings (key, value)
       VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value;
-    `).run(key, payload);
+  `).run(key, payload);
+  settingsCache.set(key, value);
 }
 
 export async function deleteSetting(key: string): Promise<void> {
   if (usePostgres) {
     await pgQuery("DELETE FROM settings WHERE key = $1;", [key]);
+    settingsCache.delete(key);
     return;
   }
   getDb().prepare("DELETE FROM settings WHERE key = ?;").run(key);
+  settingsCache.delete(key);
 }
 
 export async function saveScanResult(symbol: string, payload: unknown): Promise<void> {
@@ -154,6 +166,7 @@ export async function replaceScanResults(results: Array<{ symbol: string }>): Pr
         `, [result.symbol.toUpperCase(), JSON.stringify(result), new Date().toISOString()]);
       }
       await client.query("COMMIT");
+      scanResultsCache = results;
     } catch (error) {
       await client.query("ROLLBACK");
       throw error;
@@ -176,9 +189,11 @@ export async function replaceScanResults(results: Array<{ symbol: string }>): Pr
     }
   });
   replaceAll(results);
+  scanResultsCache = results;
 }
 
 export async function getCachedResults(): Promise<unknown[]> {
+  if (cacheHydrated) return scanResultsCache;
   if (usePostgres) {
     const rows = (await pgQuery<{ payload: string }>("SELECT payload FROM scan_results ORDER BY updated_at DESC;")).rows;
     return rows.map((row) => JSON.parse(row.payload));
@@ -197,16 +212,27 @@ export async function upsertWatchlistEntry(symbol: string, payload: unknown): Pr
       VALUES ($1, $2, $3, $3)
       ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
     `, [upperSymbol, serialized, now]);
+    const existing = watchlistCache.find((entry) => entry.symbol === upperSymbol);
+    watchlistCache = [
+      { symbol: upperSymbol, addedAt: existing?.addedAt ?? now, payload },
+      ...watchlistCache.filter((entry) => entry.symbol !== upperSymbol)
+    ];
     return;
   }
   getDb().prepare(`
       INSERT INTO watchlist (symbol, payload, added_at, updated_at)
       VALUES (?, ?, ?, ?)
       ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
-    `).run(upperSymbol, serialized, now, now);
+  `).run(upperSymbol, serialized, now, now);
+  const existing = watchlistCache.find((entry) => entry.symbol === upperSymbol);
+  watchlistCache = [
+    { symbol: upperSymbol, addedAt: existing?.addedAt ?? now, payload },
+    ...watchlistCache.filter((entry) => entry.symbol !== upperSymbol)
+  ];
 }
 
 export async function getWatchlistEntries(): Promise<Array<{ symbol: string; addedAt: string; payload: unknown }>> {
+  if (cacheHydrated) return watchlistCache;
   if (usePostgres) {
     // pg parses TIMESTAMPTZ columns into Date objects; normalize to the ISO
     // string the SQLite branch (TEXT column) returns.
@@ -228,9 +254,53 @@ export async function removeWatchlistEntry(symbol: string): Promise<void> {
   const upperSymbol = symbol.toUpperCase();
   if (usePostgres) {
     await pgQuery("DELETE FROM watchlist WHERE symbol = $1;", [upperSymbol]);
+    watchlistCache = watchlistCache.filter((entry) => entry.symbol !== upperSymbol);
     return;
   }
   getDb().prepare("DELETE FROM watchlist WHERE symbol = ?;").run(upperSymbol);
+  watchlistCache = watchlistCache.filter((entry) => entry.symbol !== upperSymbol);
+}
+
+export function getDatabaseReadStats() {
+  return { ...databaseReadStats };
+}
+
+async function hydratePersistenceCache(): Promise<void> {
+  if (cacheHydrated) return;
+  if (usePostgres) {
+    const [settings, results, watchlist] = await Promise.all([
+      pgQuery<{ key: string; value: string }>("SELECT key, value FROM settings;"),
+      pgQuery<{ payload: string }>("SELECT payload FROM scan_results ORDER BY updated_at DESC;"),
+      pgQuery<{ symbol: string; payload: string; added_at: string | Date }>("SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;")
+    ]);
+    databaseReadStats.settings += 1;
+    databaseReadStats.scanResults += 1;
+    databaseReadStats.watchlist += 1;
+    for (const row of settings.rows) settingsCache.set(row.key, JSON.parse(row.value));
+    scanResultsCache = results.rows.map((row) => JSON.parse(row.payload));
+    watchlistCache = watchlist.rows.map((row) => ({
+      symbol: row.symbol,
+      addedAt: typeof row.added_at === "string" ? row.added_at : row.added_at.toISOString(),
+      payload: JSON.parse(row.payload)
+    }));
+  } else {
+    const settings = getDb().prepare("SELECT key, value FROM settings;").all() as Array<{ key: string; value: string }>;
+    const results = getDb().prepare("SELECT payload FROM scan_results ORDER BY updated_at DESC;").all() as Array<{ payload: string }>;
+    const watchlist = getDb().prepare("SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;").all() as Array<{ symbol: string; payload: string; added_at: string }>;
+    databaseReadStats.settings += 1;
+    databaseReadStats.scanResults += 1;
+    databaseReadStats.watchlist += 1;
+    for (const row of settings) settingsCache.set(row.key, JSON.parse(row.value));
+    scanResultsCache = results.map((row) => JSON.parse(row.payload));
+    watchlistCache = watchlist.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: JSON.parse(row.payload) }));
+  }
+  cacheHydrated = true;
+  console.info("Persistence cache hydrated", {
+    settings: settingsCache.size,
+    scanResults: scanResultsCache.length,
+    watchlist: watchlistCache.length,
+    databaseReads: getDatabaseReadStats()
+  });
 }
 
 export async function getScanMetadata(): Promise<ScanMetadata> {

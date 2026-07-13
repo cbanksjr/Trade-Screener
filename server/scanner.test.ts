@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Candle, ScanDiagnostics, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
-import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
+import { getCachedResults, getDatabaseReadStats, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readDisplayResults, readScanStatusResponse, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import type { SchwabQuote } from "./schwab";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
@@ -315,6 +315,29 @@ describe("background scan refresh", () => {
 
     expect(response.results.map((result) => result.symbol)).toEqual(["CACHE"]);
     expect(response.isRefreshing).toBe(false);
+  }));
+
+  it("serves repeated cached-result reads without additional database hydration", async () => withDbRestore(async () => {
+    await replaceScanResults([qualifyingResult("MEMORY")]);
+    const before = getDatabaseReadStats();
+
+    await readDisplayResults();
+    await readDisplayResults();
+    await readCachedScanResponse();
+
+    expect(getDatabaseReadStats()).toEqual(before);
+  }));
+
+  it("returns lightweight scan status without results or settings", async () => withDbRestore(async () => {
+    await replaceScanResults([qualifyingResult("STATUS")]);
+    await setScanMetadata({ scanStatus: "complete", lastScanMode: "live" });
+
+    const status = await readScanStatusResponse();
+
+    expect(status.scanStatus).toBe("complete");
+    expect(status.mode).toBe("live");
+    expect(status).not.toHaveProperty("results");
+    expect(status).not.toHaveProperty("settings");
   }));
 
   it("appends a universe-refresh warning without clobbering existing scan metadata", async () => withDbRestore(async () => {

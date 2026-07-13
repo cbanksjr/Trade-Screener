@@ -172,6 +172,17 @@ export async function readCachedScanResponse(): Promise<ScanResponse> {
   };
 }
 
+export async function readScanStatusResponse(): Promise<Omit<ScanResponse, "results" | "settings">> {
+  const metadata = await readScanMetadata();
+  return {
+    mode: metadata.lastScanMode ?? "demo",
+    warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
+    ...metadata,
+    scanStatus: activeScan ? "running" : metadata.scanStatus,
+    isRefreshing: Boolean(activeScan)
+  };
+}
+
 export async function readScanMetadata(): Promise<ScanMetadata> {
   const stored = await getScanMetadata();
   return {

@@ -135,7 +135,10 @@ function App() {
     const interval = window.setInterval(() => {
       void api.scanStatus().then((data) => {
         applyScanResponse(data);
-        if (!data.isRefreshing) setLoading(false);
+        if (!data.isRefreshing) {
+          setLoading(false);
+          void api.results().then(applyScanResponse).catch(() => undefined);
+        }
       }).catch(() => setLoading(false));
     }, 3000);
     return () => window.clearInterval(interval);
@@ -182,12 +185,12 @@ function App() {
   }, [brokerStatus?.ok, loading, scanStatus, view]);
 
   function applyScanResponse(data: Partial<ScanResponse>) {
-    const nextResults = sortResultsByGrade(data.results ?? []);
-    setResults(nextResults);
+    const nextResults = data.results ? sortResultsByGrade(data.results) : undefined;
+    if (nextResults) setResults(nextResults);
     if (data.settings) setSettings(data.settings);
     if (data.lastScanFinishedAt) setLastScanFinishedAt(data.lastScanFinishedAt);
     if (data.nextRefreshAt) setNextRefreshAt(data.nextRefreshAt);
-    setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
+    if (nextResults) setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
     if (!data.isRefreshing) void api.watchlist().then(setWatchlist).catch(() => undefined);
