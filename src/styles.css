@@ -344,6 +344,7 @@ h1, h2, h3, p { margin: 0; }
 .candlestick-chart { height: 270px; margin-top: 12px; width: 100%; }
 .candlestick-chart canvas { display: block; }
 .chart-empty { align-items: center; background: var(--surface-2); color: var(--muted); display: flex; font-size: 11px; height: 230px; justify-content: center; margin-top: 12px; }
+.price-as-of, .chart-session { color: var(--muted); display: block; font-size: 10px; font-style: normal; font-weight: 500; margin-top: 3px; }
 
 .trade-plan > .section-heading > small { color: var(--muted); font-size: 9px; }
 .plan-steps { align-items: stretch; display: grid; gap: 7px; grid-template-columns: 1fr auto 1fr auto 1fr auto 1fr; margin-top: 13px; }

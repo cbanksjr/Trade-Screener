@@ -333,6 +333,10 @@ export async function runFullScan(): Promise<ScanResponse> {
   const scannedSymbols = new Set(symbolsToScan);
   for (const previous of previousResults) {
     if (!scannedSymbols.has(previous.symbol) || evaluatedSymbols.has(previous.symbol) || resultSymbols.has(previous.symbol)) continue;
+    if (canUseLiveSchwab && previous.dataSource === "demo") {
+      diagnostics.skipped.other += 1;
+      continue;
+    }
     // Never re-emit a stale payload whose header price no longer matches its
     // candle scale (e.g. a legacy live-quote-over-demo-candles row); its chart
     // and trade plan would be meaningless.
@@ -381,8 +385,14 @@ export async function resolveScanSymbols(inputSettings?: Settings): Promise<stri
 }
 
 export async function readDisplayResults(): Promise<ScanResult[]> {
-  return (await getCachedResults())
+  const [cachedResults, metadata] = await Promise.all([getCachedResults(), getScanMetadata()]);
+  const hideDemoRows = metadata.lastScanMode === "live" || metadata.lastScanMode === "mixed";
+  return cachedResults
     .map((result) => normalizeCachedResult(result as ScanResult))
+    // A live scan can preserve older rows when a provider gap prevents a
+    // symbol-level evaluation. Never present a legacy demo payload as though
+    // it were part of that live snapshot.
+    .filter((result) => !hideDemoRows || result.dataSource !== "demo")
     .filter((result): result is ScanResult => priceMatchesCandles(result) && shouldIncludeResult(result));
 }
 
@@ -404,12 +414,17 @@ export async function readDisplayResult(symbol: string): Promise<ScanResult | un
 }
 
 function candidateSummary(result: ScanResult): CandidateSummary {
-  const { symbol, companyName, assetType, price, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated } = result;
-  return { symbol, companyName, assetType, price, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated };
+  const { symbol, companyName, assetType, price, priceAsOf, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated } = result;
+  return { symbol, companyName, assetType, price, priceAsOf, passesUniverse, grade, tradeMark, setupScore, dailySqueezeDotCount, lastUpdated };
 }
 
 export async function readWatchlist(): Promise<WatchlistEntry[]> {
-  const entries = await getWatchlistEntries();
+  const [storedEntries, metadata] = await Promise.all([getWatchlistEntries(), getScanMetadata()]);
+  const hideDemoRows = metadata.lastScanMode === "live" || metadata.lastScanMode === "mixed";
+  const entries = storedEntries.filter((entry) => {
+    const result = entry.payload as ScanResult;
+    return !hideDemoRows || result.dataSource !== "demo";
+  });
   const results = await overlayLiveQuotePrices(
     entries.map((entry) => normalizeCachedResult(entry.payload as ScanResult))
   );
@@ -426,7 +441,7 @@ export async function readWatchlist(): Promise<WatchlistEntry[]> {
 // displayed symbols on the read/refresh path so the number shown tracks the current
 // Schwab quote. Setup levels (entry/target/stop) are intentionally left untouched — they
 // are the levels the setup earned, not the live price.
-type LivePriceCacheEntry = { price: number; at: number };
+type LivePriceCacheEntry = { price: number; priceAsOf: string; at: number };
 const livePriceCache = new Map<string, LivePriceCacheEntry>();
 
 export function __clearLivePriceCacheForTest(): void {
@@ -466,7 +481,11 @@ export async function overlayLiveQuotePrices(
       for (const symbol of staleSymbols) {
         const price = quotes.get(symbol)?.price;
         if (typeof price === "number" && price > 0) {
-          livePriceCache.set(symbol, { price, at: currentTime });
+          livePriceCache.set(symbol, {
+            price,
+            priceAsOf: quotes.get(symbol)?.priceAsOf ?? new Date(currentTime).toISOString(),
+            at: currentTime
+          });
         }
       }
     } catch {
@@ -477,7 +496,7 @@ export async function overlayLiveQuotePrices(
   return results.map((result) => {
     const entry = livePriceCache.get(result.symbol);
     if (!entry) return result;
-    const overlaid = { ...result, price: entry.price };
+    const overlaid = { ...result, price: entry.price, priceAsOf: entry.priceAsOf };
     // Keep the price/candle scale guard intact between scans: a live quote
     // that has moved beyond what the cached candles can represent would pair
     // a mismatched header price with the chart and trade plan, so keep the
@@ -525,6 +544,9 @@ async function executeScanRefresh(scanRunner: () => Promise<ScanResponse>, start
     const catastrophicReason = catastrophicScanReason(response);
     if (catastrophicReason) throw new Error(catastrophicReason);
     await replaceScanResults(response.results);
+    // A completed scan supersedes every pre-scan quote overlay. Force the next
+    // dashboard read to fetch a fresh price for the new result snapshot.
+    livePriceCache.clear();
     await syncWatchlistWithLatestResults(response.evaluatedResults);
     const finishedAt = new Date().toISOString();
     await setScanMetadata({
@@ -689,6 +711,7 @@ async function scanSymbol(input: {
         assetType,
         candles,
         currentPrice: price,
+        priceAsOf: quote?.priceAsOf ?? scanRanAt.toISOString(),
         currentVolume: quote?.volume,
         fundamentals: fundamentalData,
         optionable: options.length > 0,

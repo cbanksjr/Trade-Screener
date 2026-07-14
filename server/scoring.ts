@@ -65,6 +65,7 @@ export function gradeSetup(input: {
   assetType?: AssetType;
   candles: Candle[];
   currentPrice?: number;
+  priceAsOf?: string;
   currentVolume?: number;
   fundamentals?: Fundamentals;
   optionable: boolean;
@@ -167,6 +168,7 @@ export function gradeSetup(input: {
     setupDirection: "long",
     dataSource: "demo",
     price,
+    priceAsOf: input.priceAsOf ?? scanRanAt.toISOString(),
     beta: beta ?? null,
     marketCap: marketCap ?? null,
     currentVolume: input.currentVolume === undefined ? undefined : round(input.currentVolume, 0),

@@ -317,6 +317,18 @@ describe("background scan refresh", () => {
     expect(response.isRefreshing).toBe(false);
   }));
 
+  it("does not present preserved demo rows as part of a live scan snapshot", async () => withDbRestore(async () => {
+    const demo = qualifyingResult("MOCK");
+    const live = { ...qualifyingResult("LIVE"), dataSource: "schwab" as const };
+    await replaceScanResults([demo, live]);
+    await upsertWatchlistEntry("MOCK", demo);
+    await upsertWatchlistEntry("LIVE", live);
+    await setScanMetadata({ scanStatus: "complete", lastScanMode: "live" });
+
+    expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LIVE"]);
+    expect((await readWatchlist()).map((entry) => entry.symbol)).toEqual(["LIVE"]);
+  }));
+
   it("serves lightweight A/B summaries while retaining full C setup details", async () => withDbRestore(async () => {
     const aGrade = qualifyingResult("ALPHA");
     const cGrade = { ...qualifyingResult("CHARLIE"), grade: "C" as const, setupScore: 65, dailySqueezeDotCount: 5 };
@@ -961,6 +973,7 @@ describe("live price overlay", () => {
       now: () => 1_000
     });
     expect(overlaid[0].price).toBe(142.27);
+    expect(overlaid[0].priceAsOf).toBe("1970-01-01T00:00:01.000Z");
     // Setup levels are untouched — only the live price changes.
     expect(overlaid[0].target1).toBe(qualifyingResult("AAPL").target1);
   });
@@ -1017,6 +1030,28 @@ describe("live price overlay", () => {
     // scan-time price stays until a fresh scan replaces the candles.
     expect(overlaid[0].price).toBe(base.price);
   });
+
+  it("invalidates pre-scan live quote overlays after a successful scan", async () => withDbRestore(async () => {
+    __clearLivePriceCacheForTest();
+    const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
+    await overlayLiveQuotePrices(results, {
+      isLive: async () => true,
+      fetchQuotesFor: async () => new Map([["AAPL", quote("AAPL", 110)]]),
+      now: () => 0
+    });
+
+    await startScanRefresh(() => fakeResponse(results));
+    await settleBackgroundScan();
+
+    let calls = 0;
+    const overlaid = await overlayLiveQuotePrices(results, {
+      isLive: async () => true,
+      fetchQuotesFor: async () => { calls += 1; return new Map([["AAPL", quote("AAPL", 120)]]); },
+      now: () => 30_000
+    });
+    expect(calls).toBe(1);
+    expect(overlaid[0].price).toBe(120);
+  }));
 });
 
 async function fakeResponse(results: ScanResult[], warnings: string[] = [], scanDiagnostics?: ScanDiagnostics, evaluatedSymbols?: string[], evaluatedResults: ScanResult[] = results): Promise<ScanResponse> {

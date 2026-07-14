@@ -12,11 +12,12 @@ describe("Schwab response normalizers", () => {
         reference: { description: "APPLE INC", optionRoot: "AAPL" },
         fundamental: { avg10DaysVolume: 5000000, beta: 1.12, marketCap: 3200000000000 }
       }
-    });
+    }, new Date("2026-07-14T14:30:00.000Z"));
 
     expect(quotes).toEqual([{
       symbol: "AAPL",
       price: 210,
+      priceAsOf: "2026-07-14T14:30:00.000Z",
       companyName: "APPLE INC",
       volume: 123456,
       averageVolume: 5000000,
@@ -346,6 +347,29 @@ describe("Schwab response normalizers", () => {
     }, { includeTime: true });
 
     expect(candles[0].date).toBe("2026-05-29T14:30:00.000Z");
+  });
+
+  it("sorts, deduplicates, validates, and excludes an unfinished daily candle", () => {
+    const payload = {
+      candles: [
+        { datetime: Date.UTC(2026, 6, 14), open: 20, high: 22, low: 19, close: 21, volume: 100 },
+        { datetime: Date.UTC(2026, 6, 13), open: 10, high: 12, low: 9, close: 11, volume: 100 },
+        { datetime: Date.UTC(2026, 6, 13, 1), open: 11, high: 13, low: 10, close: 12, volume: 200 },
+        { datetime: Date.UTC(2026, 6, 12), open: 10, high: 9, low: 8, close: 11, volume: 100 }
+      ]
+    };
+
+    const beforeClose = normalizeSchwabHistory(payload, {
+      completedOnly: true,
+      now: new Date("2026-07-14T19:59:00.000Z")
+    });
+    const afterClose = normalizeSchwabHistory(payload, {
+      completedOnly: true,
+      now: new Date("2026-07-14T20:00:00.000Z")
+    });
+
+    expect(beforeClose).toEqual([{ date: "2026-07-13", open: 11, high: 13, low: 10, close: 12, volume: 200 }]);
+    expect(afterClose.map((candle) => candle.date)).toEqual(["2026-07-13", "2026-07-14"]);
   });
 
   it("normalizes call option chains into liquid-call-compatible contracts", () => {

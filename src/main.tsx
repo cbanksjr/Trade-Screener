@@ -27,6 +27,7 @@ import {
 import type { BrokerStatus, CandidateListResponse, CandidateSummary, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import { isMarketRefreshWindow } from "../shared/refreshSchedule";
 import { CandlestickChart } from "./CandlestickChart";
+import { normalizeChartCandles } from "./chartCandles";
 import "./styles.css";
 
 const api = {
@@ -414,7 +415,7 @@ function FocusPanel({ result, theme, isWatchlisted, watchlistBusy, onToggleWatch
       <div className="setup-header">
         <div className="setup-identity">
           <span className={`grade-badge grade-${result.grade.toLowerCase()}`}>{result.grade}</span>
-          <div><span>Selected setup</span><h2>{result.symbol} <small>{money(result.price)}</small></h2><p>{result.companyName ?? result.entryRecommendationType}</p></div>
+          <div><span>Selected setup</span><h2>{result.symbol} <small>{money(result.price)}</small></h2><p>{result.companyName ?? result.entryRecommendationType}</p><small className="price-as-of">{priceAsOfLabel(result.priceAsOf)}</small></div>
         </div>
         <div className="score-lockup"><span>Setup score</span><strong>{Math.round(result.setupScore)}<small>/100</small></strong></div>
         <div className={`mark-lockup mark-${mark.toLowerCase()}`}><span>Trade mark</span><strong>{mark}</strong></div>
@@ -431,10 +432,10 @@ function FocusPanel({ result, theme, isWatchlisted, watchlistBusy, onToggleWatch
 
       <section className="chart-section">
         <div className="section-heading compact">
-          <div><span>Price structure</span><h3>Daily candlestick chart</h3></div>
+          <div><span>Price structure</span><h3>Daily candlestick chart</h3><small className="chart-session">Completed daily bars · {lastCompletedBarLabel(result.candles, result.lastUpdated)}</small></div>
           <div className="chart-legend"><span><i className="ema-color" />8 EMA</span><span><i className="ema21-color" />21 EMA</span><span><i className="entry-color" />Entry</span><span><i className="risk-color" />Stop</span></div>
         </div>
-        <CandlestickChart candles={result.candles} entryArea={result.suggestedEntryArea} stopPrice={result.stockStopPrice} target1={result.target1} target2={result.target2} symbol={result.symbol} theme={theme} />
+        <CandlestickChart candles={result.candles} dataAsOf={result.lastUpdated} entryArea={result.suggestedEntryArea} livePrice={result.price} stopPrice={result.stockStopPrice} target1={result.target1} target2={result.target2} symbol={result.symbol} theme={theme} />
       </section>
 
       <section className="trade-plan">
@@ -599,6 +600,19 @@ function lastUpdatedLabel(value: string | undefined, loading: boolean): string {
 function shortDate(value: string): string {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : value;
+}
+
+function priceAsOfLabel(value: string | undefined): string {
+  if (!value) return "Scan price";
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? `Live price · ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : "Scan price";
+}
+
+function lastCompletedBarLabel(candles: ScanResult["candles"], dataAsOf: string): string {
+  const value = normalizeChartCandles(candles, new Date(dataAsOf)).at(-1)?.date;
+  if (!value) return "unavailable";
+  const date = new Date(value + (value.length === 10 ? "T12:00:00" : ""));
+  return Number.isFinite(date.getTime()) ? `through ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })}` : value;
 }
 
 function dailySqueezeDotCount(result: CandidateSummary): number | null {

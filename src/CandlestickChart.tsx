@@ -9,12 +9,15 @@ import {
   type Time,
 } from "lightweight-charts";
 import type { Candle } from "../shared/types";
+import { normalizeChartCandles } from "./chartCandles";
 
 type ThemeMode = "light" | "dark";
 
 type CandlestickChartProps = {
   candles: Candle[];
+  dataAsOf?: string;
   entryArea?: string;
+  livePrice?: number;
   stopPrice?: number | null;
   target1?: number | null;
   target2?: number | null;
@@ -38,17 +41,19 @@ function emaSeries(candles: Candle[], length: number): LineData<Time>[] {
   });
 }
 
-export function CandlestickChart({ candles, entryArea, stopPrice, target1, target2, symbol, theme }: CandlestickChartProps) {
+export function CandlestickChart({ candles, dataAsOf, entryArea, livePrice, stopPrice, target1, target2, symbol, theme }: CandlestickChartProps) {
   const containerRef = React.useRef<HTMLDivElement>(null);
 
   React.useEffect(() => {
     const container = containerRef.current;
-    const validCandles = candles.filter((candle) => (
-      Number.isFinite(candle.open) && Number.isFinite(candle.high) && Number.isFinite(candle.low) && Number.isFinite(candle.close)
-    ));
+    const validCandles = normalizeChartCandles(candles, dataAsOf ? new Date(dataAsOf) : new Date());
     if (!container || validCandles.length < 2) return;
 
     const visibleCandles = validCandles.slice(-60);
+    const visibleLow = Math.min(...visibleCandles.map((candle) => candle.low));
+    const visibleHigh = Math.max(...visibleCandles.map((candle) => candle.high));
+    const visibleRange = Math.max(visibleHigh - visibleLow, visibleHigh * 0.01);
+    const scalePadding = visibleRange * 0.08;
     // Seed the EMAs from the full candle history so the plotted lines match
     // the backend's values instead of drifting from a visible-window seed.
     const ema8Data = emaSeries(validCandles, 8).slice(-visibleCandles.length);
@@ -95,7 +100,13 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
       borderUpColor: dark ? "#77e5b5" : "#168a64",
       borderDownColor: dark ? "#ff8b9b" : "#d7485f",
       priceLineVisible: true,
-      lastValueVisible: true,
+      lastValueVisible: false,
+      autoscaleInfoProvider: () => ({
+        priceRange: {
+          minValue: visibleLow - scalePadding,
+          maxValue: visibleHigh + scalePadding,
+        },
+      }),
     });
     candleSeries.setData(visibleCandles.map((candle) => ({
       time: candle.date.slice(0, 10) as Time,
@@ -124,6 +135,9 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     ema21.setData(ema21Data);
 
     const entry = parseEntryPrice(entryArea);
+    if (typeof livePrice === "number" && Number.isFinite(livePrice) && livePrice > 0) {
+      candleSeries.createPriceLine({ price: livePrice, color: dark ? "#e2e8f0" : "#334155", lineWidth: 1, lineStyle: 0, axisLabelVisible: true, title: "Live" });
+    }
     if (entry !== null) candleSeries.createPriceLine({ price: entry, color: dark ? "#49d7c2" : "#0f8d7d", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Entry" });
     if (typeof stopPrice === "number") candleSeries.createPriceLine({ price: stopPrice, color: dark ? "#fb7185" : "#d7485f", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "Stop" });
     if (typeof target1 === "number") candleSeries.createPriceLine({ price: target1, color: dark ? "#59d8a0" : "#168a64", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "T1" });
@@ -132,7 +146,7 @@ export function CandlestickChart({ candles, entryArea, stopPrice, target1, targe
     chart.timeScale().fitContent();
 
     return () => chart.remove();
-  }, [candles, entryArea, stopPrice, symbol, target1, target2, theme]);
+  }, [candles, dataAsOf, entryArea, livePrice, stopPrice, symbol, target1, target2, theme]);
 
   if (candles.length < 2) {
     return <div className="chart-empty">Price history is unavailable for this setup.</div>;

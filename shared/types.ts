@@ -220,6 +220,7 @@ export type ScanResult = {
   setupDirection: TradeDirection;
   dataSource: "schwab" | "demo" | "mixed";
   price: number;
+  priceAsOf?: string;
   beta: number | null;
   marketCap: number | null;
   currentVolume?: number;
@@ -308,6 +309,7 @@ export type CandidateSummary = Pick<ScanResult,
   | "companyName"
   | "assetType"
   | "price"
+  | "priceAsOf"
   | "passesUniverse"
   | "grade"
   | "tradeMark"

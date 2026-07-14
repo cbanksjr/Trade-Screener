@@ -5,10 +5,12 @@ import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { fetchWithRetry } from "./httpRetry";
 import { deleteSetting, getSetting, setSetting } from "./sqlite";
 import type { BrokerStatus, Candle, FundamentalAnalysis, FundamentalFieldSources, OptionContract, ScanResult } from "../shared/types";
+import { isCompletedRegularSessionDate } from "../shared/marketTime";
 
 export type SchwabQuote = {
   symbol: string;
   price: number;
+  priceAsOf?: string;
   companyName?: string;
   volume?: number;
   averageVolume?: number;
@@ -204,7 +206,7 @@ async function fetchDailyHistory(symbol: string, lookbackDays: number): Promise<
     frequency: "1",
     needExtendedHoursData: "false"
   });
-  return normalizeSchwabHistory(data);
+  return normalizeSchwabHistory(data, { completedOnly: true });
 }
 
 export async function fetchCallOptions(symbol: string, price: number): Promise<OptionContract[]> {
@@ -230,7 +232,7 @@ async function fetchDirectionalOptions(symbol: string, price: number, contractTy
     .slice(0, 8);
 }
 
-export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
+export function normalizeSchwabQuotes(data: SchwabQuotePayload, observedAt = new Date()): SchwabQuote[] {
   return Object.entries(data).flatMap(([fallbackSymbol, payload]) => {
     const quote = objectValue(payload.quote);
     const reference = objectValue(payload.reference);
@@ -249,6 +251,7 @@ export function normalizeSchwabQuotes(data: SchwabQuotePayload): SchwabQuote[] {
     return [{
       symbol,
       price,
+      priceAsOf: observedAt.toISOString(),
       companyName: stringValue(reference.description),
       volume: firstNumber(quote.totalVolume, quote.volume),
       averageVolume,
@@ -366,10 +369,14 @@ function dividendStatus(input: {
   return "unknown";
 }
 
-export function normalizeSchwabHistory(data: SchwabPriceHistoryResponse, options: { includeTime?: boolean } = {}): Candle[] {
-  return (data.candles ?? []).map((candle) => {
+export function normalizeSchwabHistory(
+  data: SchwabPriceHistoryResponse,
+  options: { includeTime?: boolean; completedOnly?: boolean; now?: Date } = {}
+): Candle[] {
+  const byDate = new Map<string, Candle>();
+  for (const candle of data.candles ?? []) {
     const timestamp = new Date(candle.datetime).toISOString();
-    return {
+    const normalized = {
       date: options.includeTime ? timestamp : timestamp.slice(0, 10),
       open: Number(candle.open),
       high: Number(candle.high),
@@ -377,7 +384,26 @@ export function normalizeSchwabHistory(data: SchwabPriceHistoryResponse, options
       close: Number(candle.close),
       volume: Number(candle.volume)
     };
-  }).filter((day) => Number.isFinite(day.close) && Number.isFinite(day.volume));
+    if (!isValidCandle(normalized)) continue;
+    if (options.completedOnly && !isCompletedDailyCandle(normalized.date, options.now ?? new Date())) continue;
+    byDate.set(normalized.date, normalized);
+  }
+  return [...byDate.values()].sort((left, right) => left.date.localeCompare(right.date));
+}
+
+function isValidCandle(candle: Candle): boolean {
+  return [candle.open, candle.high, candle.low, candle.close, candle.volume].every(Number.isFinite)
+    && candle.open > 0
+    && candle.high > 0
+    && candle.low > 0
+    && candle.close > 0
+    && candle.volume >= 0
+    && candle.high >= Math.max(candle.open, candle.close)
+    && candle.low <= Math.min(candle.open, candle.close);
+}
+
+export function isCompletedDailyCandle(candleDate: string, now: Date): boolean {
+  return isCompletedRegularSessionDate(candleDate, now);
 }
 
 export function normalizeSchwabCallOptions(data: SchwabOptionChainResponse, price: number): OptionContract[] {

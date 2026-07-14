@@ -13,7 +13,7 @@ Open http://127.0.0.1:5173. Cached scan results load immediately when available;
 
 The Dashboard displays developing and ready compression setups with a separate `Take` or `Avoid` trade mark. `A` means a setup score of `90-100`; `B` means `70-89`; a five-dot squeeze that currently scores below B can remain visible as a tracked `C`/`Avoid` setup so contextual weakness does not hide the compression before it fires. Weekly squeeze is shown as bonus context only and Weekly EMA structure does not boost, cap, filter, or degrade the setup grade. Hostile overlays such as bearish macro, bearish institutional positioning, or unusable option context mark the trade `Avoid` without changing the setup grade.
 
-The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. While connected, automatic refreshes run at most every 15 minutes on weekdays from 8:30 a.m. through 3:00 p.m. America/Chicago. The browser only requests due refreshes while the dashboard is visible, and the server schedule only runs while the service is awake. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
+The app can open immediately from saved results, but background refreshes need Schwab connected because the full default universe requires live quotes, fundamentals, history, and options data. While connected, automatic refreshes run at most every 15 minutes on weekdays from 8:30 a.m. through 3:00 p.m. America/Chicago. The browser only requests due refreshes while the dashboard is visible, and the server schedule only runs while the service is awake. Demo rows are shown only for an explicitly demo-mode scan; a completed live or mixed scan never surfaces an older demo payload when a symbol-level provider gap occurs. To use Schwab, create a Schwab Developer app, copy `.env.example` to `.env`, and add:
 
 ```bash
 SCHWAB_APP_KEY=your_app_key_here
@@ -88,6 +88,7 @@ OpenAI API is not used for universe gathering in this version. The stock univers
 - A setups require the full bullish 8/21/34/55/89 EMA stack and the preferred 21-to-8 EMA entry pocket
 - B setups may use the expanded trend path when the Daily 8 EMA is above the 21 EMA and price is between the 21 EMA and 1.5 ATR above it
 - Selected timeframes: daily and weekly
+- Daily squeeze dots and technical indicators use completed regular-session candles; the still-open current-session daily bar is excluded until 4:00 p.m. America/New_York, while the dashboard price can continue to show a newer live quote.
 - At least 2 consecutive active Daily squeeze dots before expansion; 2-4 dots can qualify as a developing B setup, while 5+ dots establish a ready setup that remains visible until the squeeze fires
 - Daily 20-period Squeeze histogram must be strictly above zero; both cyan (positive and rising) and blue (positive but falling) qualify
 - Daily price between the 34 EMA and 8 EMA, or within 1 ATR above the 21 EMA, is eligible for the preferred A-entry zone; controlled extension up to 1.5 ATR above the 21 EMA remains valid but contributes fewer setup points
