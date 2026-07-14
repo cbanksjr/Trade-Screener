@@ -7,7 +7,6 @@ export type SqueezeMaturityMode = "mature" | "developing" | "insufficient";
 export type SqueezeLifecycleStatus = "developing" | "ready";
 export type ScanMode = "live" | "demo" | "mixed";
 export type ScanStatus = "idle" | "running" | "complete" | "failed";
-export type SnapshotState = "current" | "stale" | "empty";
 export type AnalysisTimeframe = "30m" | "1h" | "4h" | "daily" | "weekly";
 
 export type Candle = {
@@ -304,6 +303,19 @@ export type ScanResult = {
   warnings: string[];
 };
 
+export type CandidateSummary = Pick<ScanResult,
+  | "symbol"
+  | "companyName"
+  | "assetType"
+  | "price"
+  | "passesUniverse"
+  | "grade"
+  | "tradeMark"
+  | "setupScore"
+  | "dailySqueezeDotCount"
+  | "lastUpdated"
+>;
+
 export type Settings = {
   minPrice: number;
   minBeta: number;
@@ -379,8 +391,6 @@ export type ScanMetadata = {
   scanDiagnostics?: ScanDiagnostics;
   nextRefreshAt?: string;
   isRefreshing?: boolean;
-  snapshotState?: SnapshotState;
-  snapshotAgeMs?: number;
 };
 
 export type ScanDiagnosticCounts = {
@@ -411,10 +421,14 @@ export type ScanResponse = ScanMetadata & {
   results: ScanResult[];
   settings: Settings;
   warnings: string[];
-  /** Symbols conclusively evaluated or rejected by deterministic universe filters this run, excluding transient provider/data failures. */
+  /** Symbols fully evaluated with real data this run, regardless of final inclusion — lets callers tell a genuine disqualification apart from a transient per-symbol data failure. */
   evaluatedSymbols?: string[];
   /** Internal refresh payload used to update tracked/watchlisted squeeze lifecycles even when a result is currently marked Avoid. */
   evaluatedResults?: ScanResult[];
+};
+
+export type CandidateListResponse = Omit<ScanResponse, "results" | "evaluatedResults"> & {
+  results: CandidateSummary[];
 };
 
 export type WatchlistEntry = {

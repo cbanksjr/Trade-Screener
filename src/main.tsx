@@ -24,16 +24,19 @@ import {
   WalletCards,
   XCircle,
 } from "lucide-react";
-import type { BrokerStatus, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, SnapshotState, WatchlistEntry } from "../shared/types";
+import type { BrokerStatus, CandidateListResponse, CandidateSummary, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import { isMarketRefreshWindow, isRefreshDue } from "../shared/refreshSchedule";
 import { CandlestickChart } from "./CandlestickChart";
 import "./styles.css";
 
 const api = {
-  async results(): Promise<Partial<ScanResponse>> {
+  async results(): Promise<Partial<CandidateListResponse>> {
     return apiJson("/api/results");
   },
-  async scan(): Promise<ScanResponse> {
+  async result(symbol: string): Promise<ScanResult> {
+    return apiJson("/api/results/" + encodeURIComponent(symbol));
+  },
+  async scan(): Promise<CandidateListResponse> {
     return apiJson("/api/scan", { method: "POST" });
   },
   async scanStatus(): Promise<ScanResponse> {
@@ -80,7 +83,8 @@ function initialTheme(): ThemeMode {
 }
 
 function App() {
-  const [results, setResults] = React.useState<ScanResult[]>([]);
+  const [results, setResults] = React.useState<CandidateSummary[]>([]);
+  const [resultDetails, setResultDetails] = React.useState<Record<string, ScanResult>>({});
   const [settings, setSettings] = React.useState<Settings | null>(null);
   const [selected, setSelected] = React.useState("");
   const [query, setQuery] = React.useState("");
@@ -91,7 +95,6 @@ function App() {
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
   const [scanStatus, setScanStatus] = React.useState("idle");
   const [lastScanFinishedAt, setLastScanFinishedAt] = React.useState<string>();
-  const [snapshotState, setSnapshotState] = React.useState<SnapshotState>("empty");
   const [nextRefreshAt, setNextRefreshAt] = React.useState<string>();
   const [theme, setTheme] = React.useState<ThemeMode>(initialTheme);
   const [view, setView] = React.useState<ViewMode>("scanner");
@@ -122,6 +125,7 @@ function App() {
 
       if (brokerOutcome.status === "fulfilled") {
         setBrokerStatus(brokerOutcome.value);
+        if (resultsOutcome.status === "fulfilled" && brokerOutcome.value.ok && shouldRefresh(resultsOutcome.value)) void startRefresh(false);
       } else {
         setBrokerStatus({ configured: false, baseUrl: "", ok: false, checkedAt: new Date().toISOString(), message: "Unable to check Schwab status." });
       }
@@ -135,7 +139,10 @@ function App() {
     const interval = window.setInterval(() => {
       void api.scanStatus().then((data) => {
         applyScanResponse(data);
-        if (!data.isRefreshing) setLoading(false);
+        if (!data.isRefreshing) {
+          setLoading(false);
+          void api.results().then(applyScanResponse).catch(() => undefined);
+        }
       }).catch(() => setLoading(false));
     }, 3000);
     return () => window.clearInterval(interval);
@@ -148,7 +155,7 @@ function App() {
       if (!isMarketRefreshWindow() || !isRefreshDue(nextRefreshAt)) return;
       if (automaticRefreshPending.current) return;
       automaticRefreshPending.current = true;
-      void api.results().then(applyScanResponse).finally(() => {
+      void startRefresh(false).finally(() => {
         automaticRefreshPending.current = false;
       });
     };
@@ -160,17 +167,43 @@ function App() {
     };
   }, [brokerStatus?.ok, loading, nextRefreshAt, scanStatus]);
 
-  function applyScanResponse(data: Partial<ScanResponse>) {
-    const nextResults = sortResultsByGrade(data.results ?? []);
-    setResults(nextResults);
+  // While the market is open, poll the lightweight read endpoints so the displayed price
+  // tracks the broker's live quote. The server overlays a fresh Schwab price on every read
+  // (guarded by its own short TTL cache), so this is a read-only refresh — it never triggers
+  // a rescan. Outside market hours it stays idle, and the last price shown on load already
+  // reflects the most recent close via the same overlay.
+  React.useEffect(() => {
+    if (!brokerStatus?.ok) return;
+    const pollLivePrices = () => {
+      if (document.visibilityState !== "visible" || loading || scanStatus === "running") return;
+      if (!isMarketRefreshWindow()) return;
+      void api.results().then((data) => applyScanResponse(data)).catch(() => undefined);
+      if (view === "watchlist") void api.watchlist().then(setWatchlist).catch(() => undefined);
+    };
+    const interval = window.setInterval(pollLivePrices, 45_000);
+    document.addEventListener("visibilitychange", pollLivePrices);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", pollLivePrices);
+    };
+  }, [brokerStatus?.ok, loading, scanStatus, view]);
+
+  function applyScanResponse(data: Partial<ScanResponse> | Partial<CandidateListResponse>) {
+    const nextResults = data.results ? sortResultsByGrade(data.results.filter((result) => result.grade !== "C")) : undefined;
+    if (nextResults) setResults(nextResults);
     if (data.settings) setSettings(data.settings);
     if (data.lastScanFinishedAt) setLastScanFinishedAt(data.lastScanFinishedAt);
-    if (data.snapshotState) setSnapshotState(data.snapshotState);
     if (data.nextRefreshAt) setNextRefreshAt(data.nextRefreshAt);
-    setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
+    if (nextResults) setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
     if (!data.isRefreshing) void api.watchlist().then(setWatchlist).catch(() => undefined);
+  }
+
+  function shouldRefresh(data: Partial<CandidateListResponse>) {
+    if (data.isRefreshing) return false;
+    if (!data.nextRefreshAt) return true;
+    return new Date(data.nextRefreshAt).getTime() <= Date.now();
   }
 
   async function startRefresh(showMessage: boolean) {
@@ -251,7 +284,20 @@ function App() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
   const sourceResults = sourceEntries.map((entry) => entry.result);
-  const active = sourceResults.find((item) => item.symbol === selected) ?? sourceResults[0];
+  const selectedSummary = sourceResults.find((item) => item.symbol === selected) ?? sourceResults[0];
+  React.useEffect(() => {
+    if (view !== "scanner" || !selectedSummary) return;
+    const controller = new AbortController();
+    void api.result(selectedSummary.symbol).then((result) => {
+      if (!controller.signal.aborted) setResultDetails((current) => ({ ...current, [result.symbol]: result }));
+    }).catch((error) => {
+      if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "Failed to load candidate details.");
+    });
+    return () => controller.abort();
+  }, [selectedSummary?.symbol, selectedSummary?.price, selectedSummary?.lastUpdated, view]);
+  const active = view === "watchlist"
+    ? watchlist.find((entry) => entry.symbol === selectedSummary?.symbol)?.result ?? watchlist[0]?.result
+    : selectedSummary ? resultDetails[selectedSummary.symbol] : undefined;
   const isWatchlisted = active ? watchlist.some((entry) => entry.symbol === active.symbol) : false;
 
   return (
@@ -287,7 +333,7 @@ function App() {
           </label>
           <div className="top-status">
             <BrokerBadge brokerStatus={brokerStatus} settings={settings} onConnect={connectSchwab} />
-            <span className={`freshness ${snapshotState === "stale" ? "stale" : ""}`}><RefreshCw size={13} className={loading ? "spin" : ""} />{lastUpdatedLabel(lastScanFinishedAt, loading, snapshotState)}</span>
+            <span className="freshness"><RefreshCw size={13} className={loading ? "spin" : ""} />{lastUpdatedLabel(lastScanFinishedAt, loading)}</span>
           </div>
           <button className="theme-button" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label={theme === "dark" ? "Use light mode" : "Use dark mode"}>
             {theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}<span>{theme === "dark" ? "Light" : "Dark"}</span>
@@ -298,7 +344,7 @@ function App() {
         </header>
 
         <section className="summary-bar" aria-label="Scan summary">
-          <span><ShieldCheck size={15} />{scanStatusLabel(scanStatus, loading, snapshotState)}</span><i />
+          <span><ShieldCheck size={15} />{scanStatusLabel(scanStatus, loading)}</span><i />
           <span><strong>{passingCount}</strong> passing</span>
           <span className="take-text"><strong>{takeCount}</strong> Take</span>
           <span className="a-text"><strong>{gradeACount}</strong> A setups</span>
@@ -314,7 +360,7 @@ function App() {
             view={view}
             filter={filter}
             onFilter={setFilter}
-            activeSymbol={active?.symbol}
+            activeSymbol={selectedSummary?.symbol}
             onSelect={setSelected}
             loading={loading && results.length === 0}
             counts={{ all: sourceEntries.length, take: view === "scanner" ? takeCount : sourceResults.filter((item) => tradeMark(item) === "Take").length, avoid: view === "scanner" ? avoidCount : sourceResults.filter((item) => tradeMark(item) === "Avoid").length, gradeA: view === "scanner" ? gradeACount : sourceResults.filter((item) => item.grade === "A").length }}
@@ -323,6 +369,11 @@ function App() {
             <>
               <FocusPanel result={active} theme={theme} isWatchlisted={isWatchlisted} watchlistBusy={watchlistBusy} onToggleWatchlist={() => void toggleWatchlist(active.symbol)} />
               <EvidencePanel result={active} />
+            </>
+          ) : selectedSummary && view === "scanner" ? (
+            <>
+              <section className="focus-panel"><div className="no-results">Loading candidate details…</div></section>
+              <section className="evidence-panel"><div className="no-results">Loading decision evidence…</div></section>
             </>
           ) : <EmptyState view={view} runScan={runScan} />}
         </section>
@@ -336,7 +387,7 @@ function RailButton({ label, active, onClick, children }: { label: string; activ
 }
 
 function CandidatePanel({ entries, view, filter, onFilter, activeSymbol, onSelect, loading, counts }: {
-  entries: Array<{ result: ScanResult; addedAt?: string }>;
+  entries: Array<{ result: CandidateSummary; addedAt?: string }>;
   view: ViewMode;
   filter: ResultFilter;
   onFilter: (filter: ResultFilter) => void;
@@ -373,7 +424,7 @@ function FilterTab({ label, count, value, active, onFilter }: { label: string; c
   return <button className={active ? "active" : ""} onClick={() => onFilter(value)} role="tab" aria-selected={active}>{label}<small>{count}</small></button>;
 }
 
-const CandidateRow = React.memo(function CandidateRow({ result, addedAt, active, onSelect }: { result: ScanResult; addedAt?: string; active: boolean; onSelect: (symbol: string) => void }) {
+const CandidateRow = React.memo(function CandidateRow({ result, addedAt, active, onSelect }: { result: CandidateSummary; addedAt?: string; active: boolean; onSelect: (symbol: string) => void }) {
   return (
     <button className={`candidate-row${active ? " selected" : ""}`} onClick={() => onSelect(result.symbol)} aria-pressed={active}>
       <span className="ticker"><strong>{result.symbol}{result.assetType === "etf" ? <em>ETF</em> : null}</strong><small>{money(result.price)}{addedAt ? ` · saved ${shortDate(addedAt)}` : ""}</small></span>
@@ -547,7 +598,7 @@ function EmptyState({ view, runScan }: { view: ViewMode; runScan: () => void }) 
   return <section className="empty-state"><WalletCards size={26} /><h2>{view === "watchlist" ? "Your watchlist is empty" : "No scan results yet"}</h2><p>{view === "watchlist" ? "Save a setup from the scanner to keep it here." : "Run a scan to rank current compression setups."}</p>{view === "scanner" ? <button className="scan-button" onClick={runScan}><Play size={16} />Run Scan</button> : null}</section>;
 }
 
-function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
+function sortResultsByGrade<T extends CandidateSummary>(results: T[]): T[] {
   return [...results].sort((left, right) => {
     const scoreDelta = setupScoreValue(right) - setupScoreValue(left);
     if (scoreDelta !== 0) return scoreDelta;
@@ -560,21 +611,18 @@ function sortResultsByGrade(results: ScanResult[]): ScanResult[] {
   });
 }
 
-function scanStatusLabel(status: string, loading: boolean, snapshotState: SnapshotState): string {
-  if (loading || status === "running") return snapshotState === "empty" ? "First scan running" : "Saved scan refreshing";
-  if (snapshotState === "stale") return "Stale snapshot";
+function scanStatusLabel(status: string, loading: boolean): string {
+  if (loading || status === "running") return "Scan refreshing";
   if (status === "complete") return "Scan complete";
   if (status === "failed") return "Scan failed";
   return "Cached results";
 }
 
-function lastUpdatedLabel(value: string | undefined, loading: boolean, snapshotState: SnapshotState): string {
-  if (!value) return loading ? "Building first snapshot" : "No saved scan";
+function lastUpdatedLabel(value: string | undefined, loading: boolean): string {
+  if (loading) return "Refreshing in background";
+  if (!value) return "Cached results";
   const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return "Saved scan";
-  const timestamp = `${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}`;
-  if (loading) return `Saved scan · ${timestamp} · Refreshing`;
-  return snapshotState === "stale" ? `Stale snapshot · ${timestamp}` : `Latest scan · ${timestamp}`;
+  return Number.isFinite(date.getTime()) ? `Updated ${date.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}` : "Cached results";
 }
 
 function shortDate(value: string): string {
@@ -582,10 +630,8 @@ function shortDate(value: string): string {
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString(undefined, { month: "short", day: "numeric" }) : value;
 }
 
-function dailySqueezeDotCount(result: ScanResult): number | null {
-  if (typeof result.dailySqueezeDotCount === "number") return result.dailySqueezeDotCount;
-  if (result.maxScore === 5 && result.compressionQualityScore <= 30) return result.compressionQualityScore;
-  return null;
+function dailySqueezeDotCount(result: CandidateSummary): number | null {
+  return typeof result.dailySqueezeDotCount === "number" ? result.dailySqueezeDotCount : null;
 }
 
 function dailySqueezeDotLabel(result: ScanResult): string {
@@ -593,17 +639,16 @@ function dailySqueezeDotLabel(result: ScanResult): string {
   return dots === null ? "Run scan" : `${dots} active`;
 }
 
-function setupScoreValue(result: ScanResult): number {
+function setupScoreValue(result: CandidateSummary): number {
   return typeof result.setupScore === "number" ? result.setupScore : 0;
 }
 
-function setupScoreLabel(result: ScanResult): string {
+function setupScoreLabel(result: CandidateSummary): string {
   return typeof result.setupScore === "number" ? `${formatNumber(result.setupScore, { maximumFractionDigits: 0 })}/100` : "Run scan";
 }
 
-function tradeMark(result: ScanResult): "Take" | "Avoid" {
-  if (result.tradeMark) return result.tradeMark;
-  return result.longCallDecision === "Avoid" || result.longCallDecision === "Watchlist Candidate" ? "Avoid" : "Take";
+function tradeMark(result: CandidateSummary): "Take" | "Avoid" {
+  return result.tradeMark ?? "Avoid";
 }
 
 function tradeMarkReasons(result: ScanResult): string[] {

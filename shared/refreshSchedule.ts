@@ -25,14 +25,3 @@ export function isRefreshDue(nextRefreshAt: string | undefined, now = Date.now()
   const next = new Date(nextRefreshAt).getTime();
   return !Number.isFinite(next) || next <= now;
 }
-
-export function snapshotFreshness(lastScanFinishedAt: string | undefined, now = Date.now()): { snapshotState: "current" | "stale" | "empty"; snapshotAgeMs: number } {
-  if (!lastScanFinishedAt) return { snapshotState: "empty", snapshotAgeMs: 0 };
-  const finishedAt = new Date(lastScanFinishedAt).getTime();
-  if (!Number.isFinite(finishedAt)) return { snapshotState: "empty", snapshotAgeMs: 0 };
-  const snapshotAgeMs = Math.max(0, now - finishedAt);
-  return {
-    snapshotState: snapshotAgeMs >= AUTO_REFRESH_INTERVAL_MS ? "stale" : "current",
-    snapshotAgeMs
-  };
-}
