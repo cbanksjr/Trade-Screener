@@ -6,9 +6,8 @@ import https from "node:https";
 import cors from "cors";
 import express from "express";
 import cron from "node-cron";
-import { isMarketRefreshWindow, MARKET_REFRESH_CRON, MARKET_TIME_ZONE } from "../shared/refreshSchedule";
 import { config } from "./config";
-import { addToWatchlist, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readScanStatusResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, shouldAutoRefresh, startScanRefresh, writeSettings, SettingsValidationError } from "./scanner";
+import { addToWatchlist, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readScanStatusResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, writeSettings, SettingsValidationError } from "./scanner";
 import { initDb } from "./sqlite";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
@@ -49,9 +48,7 @@ app.put("/api/settings", async (req, res, next) => {
 
 app.get("/api/results", async (_req, res, next) => {
   try {
-    const response = await readCandidateListResponse();
-    if (await shouldAutoRefresh()) void startScanRefresh();
-    res.json(response);
+    res.json(await readCandidateListResponse());
   } catch (error) {
     next(error);
   }
@@ -226,13 +223,6 @@ async function refreshUniverseIfNeeded() {
     void recordUniverseWarning(message);
   });
 }
-
-cron.schedule(MARKET_REFRESH_CRON, () => {
-  if (!isMarketRefreshWindow()) return;
-  void shouldAutoRefresh()
-    .then((due) => due ? startScanRefresh() : undefined)
-    .catch((error) => console.warn("Scheduled scan refresh failed:", error));
-}, { timezone: MARKET_TIME_ZONE });
 
 cron.schedule("10 18 28-31 * *", () => {
   if (!isLastDayOfMonth()) return;

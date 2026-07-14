@@ -1,5 +1,4 @@
 export const MARKET_TIME_ZONE = "America/Chicago";
-export const MARKET_REFRESH_CRON = "*/15 8-15 * * 1-5";
 export const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
 const marketClock = new Intl.DateTimeFormat("en-US", {
@@ -18,10 +17,4 @@ export function isMarketRefreshWindow(date = new Date()): boolean {
   if (!weekday || !["Mon", "Tue", "Wed", "Thu", "Fri"].includes(weekday)) return false;
   const minutesAfterMidnight = hour * 60 + minute;
   return minutesAfterMidnight >= 8 * 60 + 30 && minutesAfterMidnight <= 15 * 60;
-}
-
-export function isRefreshDue(nextRefreshAt: string | undefined, now = Date.now()): boolean {
-  if (!nextRefreshAt) return true;
-  const next = new Date(nextRefreshAt).getTime();
-  return !Number.isFinite(next) || next <= now;
 }

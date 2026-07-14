@@ -25,7 +25,7 @@ import {
   XCircle,
 } from "lucide-react";
 import type { BrokerStatus, CandidateListResponse, CandidateSummary, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
-import { isMarketRefreshWindow, isRefreshDue } from "../shared/refreshSchedule";
+import { isMarketRefreshWindow } from "../shared/refreshSchedule";
 import { CandlestickChart } from "./CandlestickChart";
 import "./styles.css";
 
@@ -95,12 +95,10 @@ function App() {
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
   const [scanStatus, setScanStatus] = React.useState("idle");
   const [lastScanFinishedAt, setLastScanFinishedAt] = React.useState<string>();
-  const [nextRefreshAt, setNextRefreshAt] = React.useState<string>();
   const [theme, setTheme] = React.useState<ThemeMode>(initialTheme);
   const [view, setView] = React.useState<ViewMode>("scanner");
   const [watchlist, setWatchlist] = React.useState<WatchlistEntry[]>([]);
   const [watchlistBusy, setWatchlistBusy] = React.useState(false);
-  const automaticRefreshPending = React.useRef(false);
 
   React.useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -125,7 +123,6 @@ function App() {
 
       if (brokerOutcome.status === "fulfilled") {
         setBrokerStatus(brokerOutcome.value);
-        if (resultsOutcome.status === "fulfilled" && brokerOutcome.value.ok && shouldRefresh(resultsOutcome.value)) void startRefresh(false);
       } else {
         setBrokerStatus({ configured: false, baseUrl: "", ok: false, checkedAt: new Date().toISOString(), message: "Unable to check Schwab status." });
       }
@@ -147,25 +144,6 @@ function App() {
     }, 3000);
     return () => window.clearInterval(interval);
   }, [loading, scanStatus]);
-
-  React.useEffect(() => {
-    if (!brokerStatus?.ok) return;
-    const checkForDueRefresh = () => {
-      if (document.visibilityState !== "visible" || loading || scanStatus === "running") return;
-      if (!isMarketRefreshWindow() || !isRefreshDue(nextRefreshAt)) return;
-      if (automaticRefreshPending.current) return;
-      automaticRefreshPending.current = true;
-      void startRefresh(false).finally(() => {
-        automaticRefreshPending.current = false;
-      });
-    };
-    const interval = window.setInterval(checkForDueRefresh, 60_000);
-    document.addEventListener("visibilitychange", checkForDueRefresh);
-    return () => {
-      window.clearInterval(interval);
-      document.removeEventListener("visibilitychange", checkForDueRefresh);
-    };
-  }, [brokerStatus?.ok, loading, nextRefreshAt, scanStatus]);
 
   // While the market is open, poll the lightweight read endpoints so the displayed price
   // tracks the broker's live quote. The server overlays a fresh Schwab price on every read
@@ -193,17 +171,10 @@ function App() {
     if (nextResults) setResults(nextResults);
     if (data.settings) setSettings(data.settings);
     if (data.lastScanFinishedAt) setLastScanFinishedAt(data.lastScanFinishedAt);
-    if (data.nextRefreshAt) setNextRefreshAt(data.nextRefreshAt);
     if (nextResults) setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
     setScanStatus(data.scanStatus ?? "idle");
     setLoading(Boolean(data.isRefreshing));
     if (!data.isRefreshing) void api.watchlist().then(setWatchlist).catch(() => undefined);
-  }
-
-  function shouldRefresh(data: Partial<CandidateListResponse>) {
-    if (data.isRefreshing) return false;
-    if (!data.nextRefreshAt) return true;
-    return new Date(data.nextRefreshAt).getTime() <= Date.now();
   }
 
   async function startRefresh(showMessage: boolean) {

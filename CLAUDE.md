@@ -64,13 +64,15 @@ Schwab is the only source of live quotes/history/options; FMP and demo data exis
 
 Every exported function in `sqlite.ts` has two implementations gated on `usePostgres` (true when `DATABASE_URL` is set): a `better-sqlite3` path (local dev, WAL mode, file at `data/screener.sqlite`) and a `pg` path (production, typically Supabase). When adding or changing a query here, both branches need to be updated — there's no query builder or migration framework abstracting this away. `migrateNullableFundamentals()` is an in-place SQLite schema migration run at startup (drop NOT NULL from `fundamentals` columns); Postgres was created with the nullable schema from the start so it doesn't need the equivalent.
 
+Two Supabase-egress guards live here and should be preserved: `scan_results`/`watchlist` payloads are stored gzip+base64 (`serializePayload`/`parsePayload`, `gz:` prefix; pre-compression plain-JSON rows still parse), and the multi-megabyte provider caches in `LAZY_HYDRATION_KEYS` are excluded from startup cache hydration and only fetched from the database when a scan first asks for them (a new provider cache setting that grows large should be added to that set).
+
 ### Universe management (`server/universe.ts`, `defaultUniverse.ts`, `etfUniverse.ts`)
 
 The stock universe is always S&P 500 + Nasdaq 100 (no user-managed watchlist-as-universe workflow). Refresh waterfall: FMP index constituent endpoints → public S&P 500/Nasdaq 100 source-page scraping (`parseSp500Constituents`, `parseNasdaq100Symbols`) → the bundled `defaultUniverseSymbols` list in `defaultUniverse.ts` as last resort. Refreshed on server startup if no valid cache exists, and monthly via the cron job in `index.ts`. `MIN_REFRESHED_SYMBOLS = 450` guards against accepting a truncated/bad refresh.
 
 ### Scheduling (`server/index.ts`)
 
-Two `node-cron` jobs, both pinned to `America/Chicago`: a scan refresh every 15 minutes on weekdays from 8:30am to 3:00pm CT (`MARKET_REFRESH_CRON`/`isMarketRefreshWindow` in `shared/refreshSchedule.ts`), and a check on the last few days of each month that triggers a universe refresh on the actual last day (evaluated in `America/Chicago` via `isLastDayOfMonth`). Client-triggered refresh also happens via `shouldAutoRefresh()`/`AUTO_REFRESH_MS` (15 min) when the dashboard is polled and Schwab is connected — Render's free tier can sleep, so cached results always render first and a background refresh kicks off opportunistically rather than relying solely on cron.
+Scans are manual-only: the user triggers them from the dashboard via `POST /api/scan` (rate-limited). There is deliberately no scan cron and no automatic/opportunistic rescan on dashboard polls — recurring scans were removed to keep Supabase egress inside the free-tier quota, so don't reintroduce one without discussing it. The one remaining `node-cron` job is the monthly universe refresh: a check on the last few days of each month that fires on the actual last day (evaluated in `America/Chicago` via `isLastDayOfMonth`). The frontend still polls read-only endpoints while the market is open (`isMarketRefreshWindow` in `shared/refreshSchedule.ts`) to overlay live Schwab quote prices; those reads are served from the in-memory persistence cache and never touch the database.
 
 ### Frontend (`src/main.tsx`)
 

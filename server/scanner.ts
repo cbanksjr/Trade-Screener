@@ -206,16 +206,6 @@ export async function recordUniverseWarning(message: string): Promise<void> {
   });
 }
 
-export async function shouldAutoRefresh(): Promise<boolean> {
-  const cached = await readDisplayResults();
-  const metadata = await readScanMetadata();
-  if (activeScan) return false;
-  if (!hasSchwabCredentials() || !await hasSchwabTokens()) return false;
-  if (!cached.length) return true;
-  if (!metadata.nextRefreshAt) return true;
-  return new Date(metadata.nextRefreshAt).getTime() <= Date.now();
-}
-
 export async function runFullScan(): Promise<ScanResponse> {
   const scanRanAt = new Date();
   const settings = await readSettings();

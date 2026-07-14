@@ -1,6 +1,7 @@
 import Database from "better-sqlite3";
 import { mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import { gunzipSync, gzipSync } from "node:zlib";
 import pg from "pg";
 import type { ScanMetadata } from "../shared/types";
 
@@ -19,6 +20,16 @@ const pool = usePostgres
   : undefined;
 
 let db: Database.Database | undefined;
+// Multi-megabyte provider caches are only needed while a scan runs. Excluding
+// them from startup hydration keeps each server restart (frequent on hosts that
+// sleep, like Render's free tier) from re-downloading them from Postgres, which
+// was the dominant source of Supabase egress. They are read on demand by
+// getSetting and stay memoized for the life of the process after the first read.
+const LAZY_HYDRATION_KEYS = new Set([
+  "quantDataCompactCacheV2",
+  "fmpInstitutionalEdgeCompactCacheV2",
+  "fmpFundamentalsCache"
+]);
 const settingsCache = new Map<string, unknown>();
 let scanResultsCache: unknown[] = [];
 let watchlistCache: Array<{ symbol: string; addedAt: string; payload: unknown }> = [];
@@ -92,16 +103,40 @@ export async function initDb() {
   await hydratePersistenceCache();
 }
 
+// Scan-result payloads (candles + layer evaluations per symbol) dominate the
+// bytes read back from Postgres when the cache hydrates on startup. Gzip them
+// at rest to cut that egress; rows written before compression existed are plain
+// JSON and still parse, so no migration is needed.
+const GZIP_PREFIX = "gz:";
+
+function serializePayload(value: unknown): string {
+  return GZIP_PREFIX + gzipSync(Buffer.from(JSON.stringify(value), "utf8")).toString("base64");
+}
+
+function parsePayload(text: string): unknown {
+  if (!text.startsWith(GZIP_PREFIX)) return JSON.parse(text);
+  return JSON.parse(gunzipSync(Buffer.from(text.slice(GZIP_PREFIX.length), "base64")).toString("utf8"));
+}
+
 export async function getSetting<T>(key: string, fallback: T): Promise<T> {
-  if (cacheHydrated) return (settingsCache.has(key) ? settingsCache.get(key) : fallback) as T;
+  if (cacheHydrated) {
+    if (settingsCache.has(key)) return settingsCache.get(key) as T;
+    if (!LAZY_HYDRATION_KEYS.has(key)) return fallback as T;
+  }
   if (usePostgres) {
     const rows = (await pgQuery<{ value: string }>("SELECT value FROM settings WHERE key = $1;", [key])).rows;
+    databaseReadStats.settings += 1;
     if (!rows[0]) return fallback;
-    return JSON.parse(rows[0].value) as T;
+    const value = JSON.parse(rows[0].value) as T;
+    if (cacheHydrated) settingsCache.set(key, value);
+    return value;
   }
   const row = getDb().prepare("SELECT value FROM settings WHERE key = ?;").get(key) as { value: string } | undefined;
+  databaseReadStats.settings += 1;
   if (!row) return fallback;
-  return JSON.parse(row.value) as T;
+  const value = JSON.parse(row.value) as T;
+  if (cacheHydrated) settingsCache.set(key, value);
+  return value;
 }
 
 export async function setSetting(key: string, value: unknown): Promise<void> {
@@ -135,7 +170,7 @@ export async function deleteSetting(key: string): Promise<void> {
 
 export async function saveScanResult(symbol: string, payload: unknown): Promise<void> {
   const upperSymbol = symbol.toUpperCase();
-  const serialized = JSON.stringify(payload);
+  const serialized = serializePayload(payload);
   const updatedAt = new Date().toISOString();
   if (usePostgres) {
     await pgQuery(`
@@ -163,7 +198,7 @@ export async function replaceScanResults(results: Array<{ symbol: string }>): Pr
           INSERT INTO scan_results (symbol, payload, updated_at)
           VALUES ($1, $2, $3)
           ON CONFLICT(symbol) DO UPDATE SET payload = excluded.payload, updated_at = excluded.updated_at;
-        `, [result.symbol.toUpperCase(), JSON.stringify(result), new Date().toISOString()]);
+        `, [result.symbol.toUpperCase(), serializePayload(result), new Date().toISOString()]);
       }
       await client.query("COMMIT");
       scanResultsCache = results;
@@ -185,7 +220,7 @@ export async function replaceScanResults(results: Array<{ symbol: string }>): Pr
   const replaceAll = getDb().transaction((rows: Array<{ symbol: string }>) => {
     getDb().prepare("DELETE FROM scan_results;").run();
     for (const result of rows) {
-      upsert.run(result.symbol.toUpperCase(), JSON.stringify(result), updatedAt);
+      upsert.run(result.symbol.toUpperCase(), serializePayload(result), updatedAt);
     }
   });
   replaceAll(results);
@@ -196,15 +231,15 @@ export async function getCachedResults(): Promise<unknown[]> {
   if (cacheHydrated) return scanResultsCache;
   if (usePostgres) {
     const rows = (await pgQuery<{ payload: string }>("SELECT payload FROM scan_results ORDER BY updated_at DESC;")).rows;
-    return rows.map((row) => JSON.parse(row.payload));
+    return rows.map((row) => parsePayload(row.payload));
   }
   const rows = getDb().prepare("SELECT payload FROM scan_results ORDER BY updated_at DESC;").all() as { payload: string }[];
-  return rows.map((row) => JSON.parse(row.payload));
+  return rows.map((row) => parsePayload(row.payload));
 }
 
 export async function upsertWatchlistEntry(symbol: string, payload: unknown): Promise<void> {
   const upperSymbol = symbol.toUpperCase();
-  const serialized = JSON.stringify(payload);
+  const serialized = serializePayload(payload);
   const now = new Date().toISOString();
   if (usePostgres) {
     await pgQuery(`
@@ -242,12 +277,12 @@ export async function getWatchlistEntries(): Promise<Array<{ symbol: string; add
     return rows.map((row) => ({
       symbol: row.symbol,
       addedAt: typeof row.added_at === "string" ? row.added_at : row.added_at.toISOString(),
-      payload: JSON.parse(row.payload)
+      payload: parsePayload(row.payload)
     }));
   }
   const rows = getDb().prepare("SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;")
     .all() as { symbol: string; payload: string; added_at: string }[];
-  return rows.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: JSON.parse(row.payload) }));
+  return rows.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: parsePayload(row.payload) }));
 }
 
 export async function removeWatchlistEntry(symbol: string): Promise<void> {
@@ -267,9 +302,13 @@ export function getDatabaseReadStats() {
 
 async function hydratePersistenceCache(): Promise<void> {
   if (cacheHydrated) return;
+  const lazyKeys = [...LAZY_HYDRATION_KEYS];
   if (usePostgres) {
     const [settings, results, watchlist] = await Promise.all([
-      pgQuery<{ key: string; value: string }>("SELECT key, value FROM settings;"),
+      pgQuery<{ key: string; value: string }>(
+        `SELECT key, value FROM settings WHERE key NOT IN (${lazyKeys.map((_, index) => `$${index + 1}`).join(", ")});`,
+        lazyKeys
+      ),
       pgQuery<{ payload: string }>("SELECT payload FROM scan_results ORDER BY updated_at DESC;"),
       pgQuery<{ symbol: string; payload: string; added_at: string | Date }>("SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;")
     ]);
@@ -277,22 +316,24 @@ async function hydratePersistenceCache(): Promise<void> {
     databaseReadStats.scanResults += 1;
     databaseReadStats.watchlist += 1;
     for (const row of settings.rows) settingsCache.set(row.key, JSON.parse(row.value));
-    scanResultsCache = results.rows.map((row) => JSON.parse(row.payload));
+    scanResultsCache = results.rows.map((row) => parsePayload(row.payload));
     watchlistCache = watchlist.rows.map((row) => ({
       symbol: row.symbol,
       addedAt: typeof row.added_at === "string" ? row.added_at : row.added_at.toISOString(),
-      payload: JSON.parse(row.payload)
+      payload: parsePayload(row.payload)
     }));
   } else {
-    const settings = getDb().prepare("SELECT key, value FROM settings;").all() as Array<{ key: string; value: string }>;
+    const settings = getDb().prepare(
+      `SELECT key, value FROM settings WHERE key NOT IN (${lazyKeys.map(() => "?").join(", ")});`
+    ).all(...lazyKeys) as Array<{ key: string; value: string }>;
     const results = getDb().prepare("SELECT payload FROM scan_results ORDER BY updated_at DESC;").all() as Array<{ payload: string }>;
     const watchlist = getDb().prepare("SELECT symbol, payload, added_at FROM watchlist ORDER BY added_at DESC;").all() as Array<{ symbol: string; payload: string; added_at: string }>;
     databaseReadStats.settings += 1;
     databaseReadStats.scanResults += 1;
     databaseReadStats.watchlist += 1;
     for (const row of settings) settingsCache.set(row.key, JSON.parse(row.value));
-    scanResultsCache = results.map((row) => JSON.parse(row.payload));
-    watchlistCache = watchlist.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: JSON.parse(row.payload) }));
+    scanResultsCache = results.map((row) => parsePayload(row.payload));
+    watchlistCache = watchlist.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: parsePayload(row.payload) }));
   }
   cacheHydrated = true;
   console.info("Persistence cache hydrated", {
