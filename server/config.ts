@@ -31,7 +31,6 @@ export const config = {
   // from hammering the Schwab budget while still tracking the market between full scans.
   livePriceOverlayTtlSeconds: Number(process.env.LIVE_PRICE_OVERLAY_TTL_SECONDS ?? 60),
   schwabOptionStrikeCount: positiveInteger(process.env.SCHWAB_OPTION_STRIKE_COUNT, 20),
-  schwabPositioningMaxCallsPerScan: positiveInteger(process.env.SCHWAB_POSITIONING_MAX_CALLS_PER_SCAN, 50),
   etfSymbols: process.env.ETF_SYMBOLS ?? "",
   appBasicAuthUsername: process.env.APP_BASIC_AUTH_USERNAME ?? "",
   appBasicAuthPassword: process.env.APP_BASIC_AUTH_PASSWORD ?? ""

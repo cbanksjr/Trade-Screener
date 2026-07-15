@@ -1,4 +1,4 @@
-import type { AssetType, Candle, CandidateListResponse, CandidateSummary, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import type { AssetType, Candle, CandidateListResponse, CandidateSummary, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, OptionContract, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import { AUTO_REFRESH_INTERVAL_MS } from "../shared/refreshSchedule";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
@@ -27,7 +27,7 @@ import {
   resolveSqueezeMaturityMode,
   resolveWeeklyQualificationMode
 } from "./scoring";
-import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
+import { fetchHistory, fetchOptionsForPositioning, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, selectCallOptionsForScan, type SchwabQuote } from "./schwab";
 import { createSchwabPositioningScanProvider } from "./schwabPositioning";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
@@ -243,7 +243,6 @@ export async function runFullScan(): Promise<ScanResponse> {
   let usedLive = false;
   let usedDemo = false;
   let processedSymbols = 0;
-  let schwabPositioningCalls = 0;
   const etfSymbols = settings.etfSymbols;
   const etfSymbolSet = new Set(etfSymbols);
   const symbolsToScan = await resolveScanSymbols(settings);
@@ -282,6 +281,9 @@ export async function runFullScan(): Promise<ScanResponse> {
   await consumeLimit(symbolsToScan, SCAN_CONCURRENCY, async (symbol) => {
     const sector = sectorBySymbol[symbol];
     const assetType: AssetType = etfSymbolSet.has(symbol) ? "etf" : "stock";
+    const previous = previousBySymbol.get(symbol);
+    const watchlistEntry = watchlistBySymbol.get(symbol);
+    const wasTracked = Boolean(previous || watchlistEntry);
     const outcome = await scanSymbol({
       symbol,
       assetType,
@@ -296,15 +298,13 @@ export async function runFullScan(): Promise<ScanResponse> {
       sectorHistories,
       nextEarningsDate: earningsBySymbol.get(symbol),
       fmp,
+      forceOptionEvaluation: wasTracked,
       scanRanAt
     });
     outcome.warnings.forEach((warning) => scanWarnings.add(warning));
-    if (outcome.skipReason) diagnostics.skipped[outcome.skipReason] += 1;
+    if (outcome.skipReason && !outcome.result) diagnostics.skipped[outcome.skipReason] += 1;
     if (outcome.result) {
       evaluatedSymbols.add(outcome.result.symbol);
-      const previous = previousBySymbol.get(outcome.result.symbol);
-      const watchlistEntry = watchlistBySymbol.get(outcome.result.symbol);
-      const wasTracked = Boolean(previous || watchlistEntry);
       const keepTrackedUntilFire = wasTracked && isActiveTrackedSqueeze(outcome.result);
       const newlyDiscovered = shouldIncludeResult(outcome.result);
       let result = outcome.result;
@@ -316,18 +316,18 @@ export async function runFullScan(): Promise<ScanResponse> {
           result = applyInstitutionalEdge(result, edge.edge);
         }
       }
-      if (schwabPositioning
-        && (newlyDiscovered || keepTrackedUntilFire)
-        && schwabPositioningCalls < config.schwabPositioningMaxCallsPerScan) {
-        schwabPositioningCalls += 1;
-        const positioning = await schwabPositioning.enrich(result.symbol, result.price, {
-          nearestExpirationDate: result.recommendedOptionContract?.expirationDate
-        });
+      if (schwabPositioning && (newlyDiscovered || keepTrackedUntilFire)) {
+        const positioning = outcome.positioningFailure
+          ? schwabPositioning.unavailable(outcome.positioningFailure, "provider_error")
+          : schwabPositioning.enrichFromContracts(
+            result.symbol,
+            result.price,
+            outcome.positioningContracts ?? [],
+            { nearestExpirationDate: result.recommendedOptionContract?.expirationDate }
+          );
         if (positioning.usedLive) usedLive = true;
         positioning.warnings.forEach((warning) => scanWarnings.add(warning));
         result = applySchwabPositioning(result, positioning.positioning);
-      } else if (schwabPositioning && (newlyDiscovered || keepTrackedUntilFire)) {
-        scanWarnings.add("Schwab options positioning reached its per-scan request cap; remaining candidates stayed neutral.");
       }
       if (newlyDiscovered || keepTrackedUntilFire) {
         result = withSqueezeLifecycle(result, previous?.firstDetectedAt ?? watchlistEntry?.result.firstDetectedAt ?? previous?.lastUpdated ?? watchlistEntry?.addedAt ?? scanRanAt.toISOString());
@@ -335,7 +335,7 @@ export async function runFullScan(): Promise<ScanResponse> {
       if (watchlistEntry) watchlistEvaluatedResults.push(result);
       if (!priceMatchesCandles(result)) diagnostics.skipped.priceCandleMismatch += 1;
       else if (shouldIncludeResult(result) || keepTrackedUntilFire) results.push(result);
-      else diagnostics.skipped[classifyFilteredResult(result)] += 1;
+      else diagnostics.skipped[outcome.skipReason ?? classifyFilteredResult(result)] += 1;
     } else if (!outcome.skipReason) diagnostics.skipped.other += 1;
     if (outcome.usedLive) usedLive = true;
     if (outcome.usedDemo) usedDemo = true;
@@ -605,8 +605,17 @@ async function scanSymbol(input: {
   sectorHistories?: Map<string, Candle[]>;
   nextEarningsDate?: string;
   fmp?: Awaited<ReturnType<typeof createFmpScanFallback>>;
+  forceOptionEvaluation?: boolean;
   scanRanAt?: Date;
-}): Promise<{ result?: ScanResult; warnings: string[]; usedLive: boolean; usedDemo: boolean; skipReason?: ScanDiagnosticReason }> {
+}): Promise<{
+  result?: ScanResult;
+  warnings: string[];
+  usedLive: boolean;
+  usedDemo: boolean;
+  skipReason?: ScanDiagnosticReason;
+  positioningContracts?: OptionContract[];
+  positioningFailure?: string;
+}> {
   const { symbol, settings, canUseLiveSchwab, assetType } = input;
   const scanRanAt = input.scanRanAt ?? new Date();
   const warnings: string[] = [];
@@ -676,25 +685,6 @@ async function scanSymbol(input: {
     }
     const weekly = weeklySqueezeFromDaily(candles);
 
-    let options: Awaited<ReturnType<typeof fetchCallOptions>> = [];
-    if (canUseLiveSchwab) {
-      try {
-        options = await fetchCallOptions(symbol, price);
-        if (options.length) {
-          optionsSource = "schwab";
-          usedLive = true;
-        }
-      } catch (error) {
-        warnings.push(symbol + ": " + readError(error, "Schwab options request failed."));
-      }
-    }
-    if (!options.length && allowDemoFallback) {
-      if (canUseLiveSchwab) warnings.push(symbol + ": No live Schwab option contracts met the filters; demo contracts were used.");
-      options = demoOptions(symbol, price);
-      optionsSource = "demo";
-      usedDemo = true;
-    }
-
     const contextFmp = assetType === "stock" ? await input.fmp?.enrich(symbol, {
       sector: assetType === "stock" && !input.sector && fundamentals.sources?.sector !== "fmp",
       nextEarningsDate: assetType === "stock" && !input.nextEarningsDate
@@ -719,7 +709,11 @@ async function scanSymbol(input: {
     }
     fundamentals = withCandleLiquidityFallback(fundamentals, candles);
 
-    const buildResult = (fundamentalData: Fundamentals) => {
+    const buildResult = (
+      fundamentalData: Fundamentals,
+      options: OptionContract[],
+      optionable = options.length > 0
+    ) => {
       const sector = input.sector ?? fundamentalData.sector;
       return gradeSetup({
         symbol,
@@ -730,7 +724,7 @@ async function scanSymbol(input: {
         priceAsOf: quote?.priceAsOf ?? scanRanAt.toISOString(),
         currentVolume: quote?.volume,
         fundamentals: fundamentalData,
-        optionable: options.length > 0,
+        optionable,
         options,
         weeklyIndicators: weekly.indicators,
         weeklySqueezeWarning: weekly.warning,
@@ -747,7 +741,10 @@ async function scanSymbol(input: {
       });
     };
 
-    let result = buildResult(fundamentals);
+    // Grade the non-options setup first. Setup score and display eligibility do
+    // not depend on a recommended contract, so this avoids loading a large
+    // option chain for symbols already rejected by technical/catalyst gates.
+    let result = buildResult(fundamentals, [], true);
     if (assetType === "stock" && input.fmp && shouldIncludeResult(result)) {
       const verified = await input.fmp.verifyNextEarningsDate(symbol, fundamentals.nextEarningsDate);
       verified.warnings.forEach((warning) => warnings.push(symbol + ": " + warning));
@@ -761,16 +758,54 @@ async function scanSymbol(input: {
           symbol
         }, { allowDemoFallback });
         fundamentals = withCandleLiquidityFallback(fundamentals, candles);
-        result = buildResult(fundamentals);
+        result = buildResult(fundamentals, [], true);
       }
     }
-    result.dataSource = candlesSource === "schwab" && optionsSource === "schwab" ? "schwab" : candlesSource === "demo" && optionsSource === "demo" ? "demo" : "mixed";
+
+    const shouldLoadOptions = shouldIncludeResult(result)
+      || Boolean(input.forceOptionEvaluation && isActiveTrackedSqueeze(result));
+    let options: OptionContract[] = [];
+    let positioningContracts: OptionContract[] | undefined;
+    let positioningFailure: string | undefined;
+    if (shouldLoadOptions && canUseLiveSchwab) {
+      try {
+        positioningContracts = await fetchOptionsForPositioning(symbol, price);
+        options = selectCallOptionsForScan(positioningContracts, price);
+        optionsSource = "schwab";
+        usedLive = true;
+      } catch (error) {
+        positioningFailure = readError(error, "Schwab option-chain request failed.");
+        warnings.push(symbol + ": " + positioningFailure);
+      }
+    }
+    if (shouldLoadOptions && !options.length && allowDemoFallback) {
+      options = demoOptions(symbol, price);
+      optionsSource = "demo";
+      usedDemo = true;
+    }
+    if (shouldLoadOptions) result = buildResult(fundamentals, options);
+
+    result.dataSource = shouldLoadOptions
+      ? candlesSource === "schwab" && optionsSource === "schwab"
+        ? "schwab"
+        : candlesSource === "demo" && optionsSource === "demo"
+          ? "demo"
+          : "mixed"
+      : candlesSource;
     result.warnings.push(...warnings
       .filter((warning) => warning.startsWith(symbol + ": "))
       .map((warning) => warning.slice(symbol.length + 2))
       .filter(shouldShowWarning));
     await throttleIfLive();
-    return { result, warnings, usedLive, usedDemo };
+    return {
+      result,
+      warnings,
+      usedLive,
+      usedDemo,
+      skipReason: shouldLoadOptions ? undefined : classifyPreflightResult(result),
+      positioningContracts,
+      positioningFailure
+    };
   } catch (error) {
     if (canUseLiveSchwab) {
       warnings.push(symbol + ": " + (error instanceof Error ? error.message : "Scan failed."));
@@ -907,6 +942,16 @@ function classifyFilteredResult(result: ScanResult): ScanDiagnosticReason {
   if (!result.passesUniverse) return "finalDisplayFilter";
   if (result.longCallDecision === "Avoid" || result.longCallDecision === "Watchlist Candidate") return "finalDisplayFilter";
   return "other";
+}
+
+function classifyPreflightResult(result: ScanResult): ScanDiagnosticReason {
+  const layer = (name: ScanResult["layerEvaluations"][number]["layer"]) => result.layerEvaluations.find((item) => item.layer === name);
+  const factor = (name: ScanResult["institutionalFactors"][number]["name"]) => result.institutionalFactors.find((item) => item.name === name);
+  if (layer("Squeeze Market Structure")?.status === "Bearish") return "marketStructure";
+  if (factor("Catalyst Safety")?.status === "Bearish") return "catalyst";
+  if (factor("Sector Strength")?.status === "Insufficient Data") return "sectorDataCap";
+  if (!result.passesUniverse) return "finalDisplayFilter";
+  return "finalDisplayFilter";
 }
 
 function normalizeCachedResult(result: ScanResult): ScanResult {

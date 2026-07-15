@@ -217,6 +217,7 @@ describe("Schwab OI snapshots", () => {
     const first = await provider.enrich("test", 100);
     expect(first.positioning.status).toBe("neutral");
     expect(first.positioning.openInterestChangeSignal).toBe("no_data");
+    expect(first.positioning.availability).toBe("awaiting_oi_comparison");
 
     callOpenInterest = 10_200;
     const sameSession = await provider.enrich("TEST", 100);
@@ -230,6 +231,7 @@ describe("Schwab OI snapshots", () => {
     const nextSession = await provider.enrich("TEST", 100);
     expect(nextSession.positioning.openInterestChangeSignal).toBe("confirmed_build");
     expect(nextSession.positioning.status).toBe("confirmed");
+    expect(nextSession.positioning.availability).toBe("available");
     expect(nextSession.positioning.vetoingFactorCount).toBe(0);
     expect(nextSession.positioning.darkPoolSignal).toBe("no_data");
     expect(nextSession.positioning.ivRankSignal).toBe("no_data");
@@ -288,6 +290,7 @@ describe("Schwab OI snapshots", () => {
     const failed = await failing.enrich("TEST", 100);
     expect(failed.usedLive).toBe(true);
     expect(failed.positioning.status).toBe("neutral");
+    expect(failed.positioning.availability).toBe("provider_error");
     expect(failed.positioning.vetoingFactorCount).toBe(0);
     expect(failed.warnings).toContain("temporary Schwab failure");
     expect(failing.isDirty()).toBe(false);
@@ -296,6 +299,23 @@ describe("Schwab OI snapshots", () => {
     const noChain = await empty.enrich("TEST", 100);
     expect(noChain.positioning.optionsFlowSignal).toBe("neutral");
     expect(noChain.positioning.openInterestChangeSignal).toBe("no_data");
+    expect(noChain.positioning.availability).toBe("no_chain");
     expect(empty.isDirty()).toBe(false);
+  });
+
+  it("reuses a supplied chain without making another provider request", () => {
+    let loadCalls = 0;
+    const provider = createSchwabPositioningProvider({
+      loadChain: async () => {
+        loadCalls += 1;
+        return positioningChain();
+      }
+    });
+
+    const result = provider.enrichFromContracts("TEST", 100, positioningChain());
+
+    expect(loadCalls).toBe(0);
+    expect(result.usedLive).toBe(true);
+    expect(result.positioning.optionsFlowSignal).toBe("bullish");
   });
 });

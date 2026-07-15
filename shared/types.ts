@@ -108,6 +108,12 @@ export type MaxPainSignal = "tailwind" | "pin_risk" | "neutral" | "no_data";
 export type OpenInterestChangeSignal = "confirmed_build" | "no_confirmation" | "no_data";
 export type IvRankSignal = "confirming" | "contradicting" | "neutral" | "no_data";
 export type OptionsPositioningStatus = "confirmed" | "neutral";
+export type OptionsPositioningAvailability =
+  | "available"
+  | "awaiting_oi_comparison"
+  | "no_chain"
+  | "provider_error"
+  | "invalid_input";
 export type LegacyInstitutionalPositioningStatus = OptionsPositioningStatus | "capped" | "vetoed";
 
 export type OptionsPositioningSummary = {
@@ -119,6 +125,7 @@ export type OptionsPositioningSummary = {
   openInterestChangeSignal: OpenInterestChangeSignal;
   ivRankSignal: IvRankSignal;
   status: OptionsPositioningStatus;
+  availability: OptionsPositioningAvailability;
   reason: string;
   flags: string[];
   warnings: string[];
@@ -269,6 +276,7 @@ export type ScanResult = {
   openInterestChangeSignal?: OpenInterestChangeSignal;
   ivRankSignal?: IvRankSignal;
   optionsPositioningStatus?: OptionsPositioningStatus;
+  optionsPositioningAvailability?: OptionsPositioningAvailability;
   optionsPositioningReason?: string;
   gradeBeforePositioning?: Grade;
   positioningPromotionApplied?: boolean;

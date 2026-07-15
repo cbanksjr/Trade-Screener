@@ -495,14 +495,14 @@ function EvidencePanel({ result }: { result: ScanResult }) {
         {result.institutionalFactors.length ? <div className="factor-list">{result.institutionalFactors.map((factor) => <FactorRow result={result} factor={factor} key={factor.name} />)}</div> : <p className="empty-copy">Run a scan to populate setup factors.</p>}
       </EvidenceSection>
 
-      <EvidenceSection title="Schwab options positioning" meta={`${positioningScoreLabel(result)} · ${positioningStatusLabel(result.optionsPositioningStatus)}`} open={Boolean(openSections.positioning)} onToggle={() => toggle("positioning")}>
+      <EvidenceSection title="Schwab options positioning" meta={`${positioningScoreLabel(result)} · ${positioningAvailabilityLabel(result)}`} open={Boolean(openSections.positioning)} onToggle={() => toggle("positioning")}>
         <div className="signal-grid">
-          <Signal label="Options activity" value={signalLabel(result.optionsFlowSignal)} tone={signalTone(result.optionsFlowSignal)} />
-          <Signal label="Gamma exposure" value={signalLabel(result.optionsExposureSignal)} tone={signalTone(result.optionsExposureSignal)} />
-          <Signal label="Dark-pool data" value={signalLabel(result.darkPoolSignal)} tone={signalTone(result.darkPoolSignal)} />
-          <Signal label="OI confirmation" value={signalLabel(result.openInterestChangeSignal)} tone={signalTone(result.openInterestChangeSignal)} />
-          <Signal label="IV rank" value={signalLabel(result.ivRankSignal)} tone={signalTone(result.ivRankSignal)} />
-          <Signal label="Max pain" value={signalLabel(result.maxPainSignal)} tone={signalTone(result.maxPainSignal)} />
+          <Signal label="Options activity" value={positioningSignalLabel("flow", result.optionsFlowSignal, result.optionsPositioningAvailability)} tone={signalTone(result.optionsFlowSignal)} />
+          <Signal label="Gamma concentration" value={positioningSignalLabel("gamma", result.optionsExposureSignal, result.optionsPositioningAvailability)} tone={signalTone(result.optionsExposureSignal)} />
+          <Signal label="Dark-pool data" value={positioningSignalLabel("darkPool", result.darkPoolSignal, result.optionsPositioningAvailability)} tone={signalTone(result.darkPoolSignal)} />
+          <Signal label="OI confirmation" value={positioningSignalLabel("openInterest", result.openInterestChangeSignal, result.optionsPositioningAvailability)} tone={signalTone(result.openInterestChangeSignal)} />
+          <Signal label="IV rank" value={positioningSignalLabel("ivRank", result.ivRankSignal, result.optionsPositioningAvailability)} tone={signalTone(result.ivRankSignal)} />
+          <Signal label="Max pain" value={positioningSignalLabel("maxPain", result.maxPainSignal, result.optionsPositioningAvailability)} tone={signalTone(result.maxPainSignal)} />
         </div>
         {result.optionsPositioningReason ? <p className="section-note">{result.optionsPositioningReason}</p> : null}
         {result.flags?.length ? <div className="flag-list">{result.flags.map((flag) => <span key={flag}>{flag}</span>)}</div> : null}
@@ -685,17 +685,45 @@ function signalTone(value: string | undefined): "neutral" | "warn" | "risk" | "g
 }
 
 function positioningScoreLabel(result: ScanResult): string {
+  if (["no_chain", "provider_error", "invalid_input"].includes(result.optionsPositioningAvailability ?? "")) return "No score";
   return typeof result.optionsPositioningScore === "number" ? `${formatNumber(result.optionsPositioningScore, { maximumFractionDigits: 0 })}/100` : "No score";
 }
 
-function positioningStatusLabel(status: ScanResult["optionsPositioningStatus"]): string {
-  if (status === "confirmed") return "Confirmed";
-  return "Neutral";
+function positioningAvailabilityLabel(result: ScanResult): string {
+  if (result.optionsPositioningAvailability === "awaiting_oi_comparison") return "Partial · OI history pending";
+  if (result.optionsPositioningAvailability === "no_chain") return "No eligible chain";
+  if (result.optionsPositioningAvailability === "provider_error") return "Provider error";
+  if (result.optionsPositioningAvailability === "invalid_input") return "Invalid input";
+  if (result.optionsPositioningAvailability === "available") {
+    return result.optionsPositioningStatus === "confirmed" ? "Confirmed" : "Calculated";
+  }
+  if (typeof result.optionsPositioningScore === "number" && result.openInterestChangeSignal === "no_data") {
+    return "Partial · OI history pending";
+  }
+  return typeof result.optionsPositioningScore === "number" ? "Calculated" : "Not populated";
 }
 
 function signalLabel(value: string | undefined): string {
   if (!value) return "Unavailable";
   return value.split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" ");
+}
+
+function positioningSignalLabel(
+  kind: "flow" | "gamma" | "darkPool" | "openInterest" | "ivRank" | "maxPain",
+  value: string | undefined,
+  availability: ScanResult["optionsPositioningAvailability"]
+): string {
+  if (["no_chain", "provider_error", "invalid_input"].includes(availability ?? "")) {
+    if (kind === "darkPool") return "Unsupported by Schwab";
+    if (kind === "ivRank") return "History unavailable";
+    return "Unavailable";
+  }
+  if (kind === "gamma" && value === "neutral") return "Calculated · Direction unknown";
+  if (kind === "maxPain" && value === "neutral") return "Calculated · Informational";
+  if (kind === "darkPool" && value === "no_data") return "Unsupported by Schwab";
+  if (kind === "ivRank" && value === "no_data") return "History unavailable";
+  if (kind === "openInterest" && value === "no_data") return "Prior session needed";
+  return signalLabel(value);
 }
 
 function layerLabel(layer: string): string {

@@ -295,6 +295,7 @@ function applyPositioningOverlay(
     openInterestChangeSignal: positioning.openInterestChangeSignal,
     ivRankSignal: positioning.ivRankSignal,
     optionsPositioningStatus: positioning.status,
+    optionsPositioningAvailability: positioning.availability,
     optionsPositioningReason: positioning.reason,
     strongLongCallCandidate,
     flags,

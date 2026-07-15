@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "./config";
-import { __resetSchwabTokenCacheForTest, fetchCallOptions, fetchOptionsForPositioning, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
+import { __resetSchwabTokenCacheForTest, fetchCallOptions, fetchOptionsForPositioning, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes, selectCallOptionsForScan } from "./schwab";
 import { getSetting, initDb, setSetting } from "./sqlite";
 
 describe("Schwab response normalizers", () => {
@@ -468,6 +468,26 @@ describe("Schwab response normalizers", () => {
       delta: -0.48
     });
     expect(contracts[0].score).toBeGreaterThan(0);
+  });
+
+  it("selects the grading calls from an already-loaded call/put chain", () => {
+    const calls = normalizeSchwabCallOptions({
+      callExpDateMap: {
+        "2026-08-21:37": {
+          "105.0": [{ symbol: "TEST-C105", expirationDate: "2026-08-21", strikePrice: 105, bid: 1.9, ask: 2.1, totalVolume: 500, openInterest: 2_000 }],
+          "130.0": [{ symbol: "TEST-C130", expirationDate: "2026-08-21", strikePrice: 130, bid: 0.9, ask: 1.1, totalVolume: 500, openInterest: 2_000 }]
+        }
+      }
+    }, 100);
+    const puts = normalizeSchwabPutOptions({
+      putExpDateMap: {
+        "2026-08-21:37": {
+          "95.0": [{ symbol: "TEST-P95", expirationDate: "2026-08-21", strikePrice: 95, bid: 0.9, ask: 1.1, totalVolume: 500, openInterest: 2_000 }]
+        }
+      }
+    }, 100);
+
+    expect(selectCallOptionsForScan([...calls, ...puts], 100).map((contract) => contract.symbol)).toEqual(["TEST-C105"]);
   });
 
 });

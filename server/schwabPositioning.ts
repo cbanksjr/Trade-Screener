@@ -1,5 +1,6 @@
 import type {
   OptionsPositioningSummary,
+  OptionsPositioningAvailability,
   MaxPainSignal,
   OpenInterestChangeSignal,
   OptionContract,
@@ -83,7 +84,7 @@ type ChainLoader = (symbol: string, price: number) => Promise<OptionContract[]>;
 
 const CACHE_KEY = "schwabPositioningSnapshotsV2";
 const MAX_SESSIONS_PER_SYMBOL = 2;
-const DEFAULT_MAX_CACHE_SYMBOLS = 250;
+const DEFAULT_MAX_CACHE_SYMBOLS = 600;
 const MAX_OI_COHORT_CONTRACTS = 40;
 const MIN_OI_COHORT_COVERAGE = 0.8;
 const MIN_ACTIVITY_VOLUME = 250;
@@ -102,6 +103,7 @@ const EMPTY_POSITIONING: OptionsPositioningSummary = {
   openInterestChangeSignal: "no_data",
   ivRankSignal: "no_data",
   status: "neutral",
+  availability: "provider_error",
   reason: "Schwab options positioning was unavailable; technical grade and trade mark were unchanged.",
   flags: [],
   warnings: [],
@@ -139,7 +141,7 @@ export function createSchwabPositioningProvider(input: {
   ): Promise<SchwabPositioningResult> {
     const upperSymbol = symbol.trim().toUpperCase();
     if (!upperSymbol || !Number.isFinite(price) || price <= 0) {
-      return noDataResult("Schwab options positioning needs a valid symbol and underlying price.", false);
+      return noDataResult("Schwab options positioning needs a valid symbol and underlying price.", false, "invalid_input");
     }
 
     let loaded: OptionContract[];
@@ -147,12 +149,26 @@ export function createSchwabPositioningProvider(input: {
       loaded = await loadChain(upperSymbol, price);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Schwab option-chain request failed.";
-      return noDataResult(message, true);
+      return noDataResult(message, true, "provider_error");
+    }
+
+    return enrichFromContracts(upperSymbol, price, loaded, context);
+  }
+
+  function enrichFromContracts(
+    symbol: string,
+    price: number,
+    loaded: OptionContract[],
+    context: SchwabPositioningEnrichContext = {}
+  ): SchwabPositioningResult {
+    const upperSymbol = symbol.trim().toUpperCase();
+    if (!upperSymbol || !Number.isFinite(price) || price <= 0) {
+      return noDataResult("Schwab options positioning needs a valid symbol and underlying price.", false, "invalid_input");
     }
 
     const contracts = uniqueContracts(loaded)
       .filter((contract) => contract.dte === undefined || (contract.dte >= 14 && contract.dte <= 180));
-    if (!contracts.length) return noDataResult("Schwab returned no 14-180 DTE call/put contracts for positioning.", true);
+    if (!contracts.length) return noDataResult("Schwab returned no 14-180 DTE call/put contracts for positioning.", true, "no_chain");
 
     const activity = analyzeOptionsActivity(contracts);
     const observedAt = now();
@@ -200,6 +216,10 @@ export function createSchwabPositioningProvider(input: {
 
   return {
     enrich,
+    enrichFromContracts,
+    unavailable(message: string, availability: OptionsPositioningAvailability = "provider_error") {
+      return noDataResult(message, true, availability);
+    },
     cache: () => snapshotCache,
     isDirty: () => dirty
   };
@@ -496,6 +516,7 @@ function summarizeSchwabPositioning(
     openInterestChangeSignal: openInterest.signal,
     ivRankSignal: "no_data",
     status,
+    availability: openInterest.signal === "no_data" ? "awaiting_oi_comparison" : "available",
     reason,
     flags,
     warnings: [],
@@ -504,10 +525,19 @@ function summarizeSchwabPositioning(
   };
 }
 
-function noDataResult(message: string, usedLive: boolean): SchwabPositioningResult {
+function noDataResult(
+  message: string,
+  usedLive: boolean,
+  availability: OptionsPositioningAvailability
+): SchwabPositioningResult {
   const warnings = [message];
   return {
-    positioning: { ...EMPTY_POSITIONING, warnings, reason: message + " Technical grade and trade mark were unchanged." },
+    positioning: {
+      ...EMPTY_POSITIONING,
+      availability,
+      warnings,
+      reason: message + " Technical grade and trade mark were unchanged."
+    },
     warnings,
     usedLive
   };

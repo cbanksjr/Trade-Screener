@@ -12,6 +12,7 @@ describe("Schwab options positioning overlay", () => {
     expect(result.tradeMark).toBe("Take");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.positioningPromotionApplied).toBe(false);
+    expect(result.optionsPositioningAvailability).toBe("available");
   });
 
   it("keeps ambiguous positioning neutral and clears stale provider overlay reasons", () => {
@@ -53,6 +54,7 @@ function positioning(status: OptionsPositioningSummary["status"]): OptionsPositi
     openInterestChangeSignal: status === "confirmed" ? "confirmed_build" : "no_confirmation",
     ivRankSignal: "no_data",
     status,
+    availability: "available",
     reason: "Schwab options positioning test.",
     flags: [],
     warnings: [],

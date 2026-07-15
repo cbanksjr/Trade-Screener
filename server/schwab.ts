@@ -214,6 +214,19 @@ export async function fetchCallOptions(symbol: string, price: number): Promise<O
 }
 
 /**
+ * Selects the compact call set used by grading from an already-loaded chain.
+ * Keeping this separate lets the scanner reuse one ALL chain for both contract
+ * selection and Schwab positioning without changing the existing call filters.
+ */
+export function selectCallOptionsForScan(options: OptionContract[], price: number): OptionContract[] {
+  return options
+    .filter((item) => item.optionType === "call")
+    .filter((item) => item.bid > 0 && item.ask > 0 && isStrikeNearPrice(item, price))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 8);
+}
+
+/**
  * Loads the bounded 14-180 DTE chain used for positioning calculations.
  * Unlike fetchCallOptions, this intentionally preserves both puts and calls,
  * every returned strike, and contracts without a tradable two-sided quote.
@@ -252,10 +265,12 @@ async function fetchDirectionalOptions(symbol: string, price: number, contractTy
     toDate
   });
   const options = contractType === "CALL" ? normalizeSchwabCallOptions(data, price) : normalizeSchwabPutOptions(data, price);
-  return options
-    .filter((item) => item.bid > 0 && item.ask > 0 && isStrikeNearPrice(item, price))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, 8);
+  return contractType === "CALL"
+    ? selectCallOptionsForScan(options, price)
+    : options
+      .filter((item) => item.bid > 0 && item.ask > 0 && isStrikeNearPrice(item, price))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 8);
 }
 
 export function normalizeSchwabQuotes(data: SchwabQuotePayload, observedAt = new Date()): SchwabQuote[] {
