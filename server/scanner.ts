@@ -7,7 +7,6 @@ import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { createFmpInstitutionalEdgeScanProvider } from "./fmpInstitutionalEdge";
 import { activeSqueezeDotCount, latestIndicators, MIN_CANDLES_REQUIRED } from "./indicators";
 import { computeMacroRegimeContext, type MacroRegimeContext } from "./macroRegime";
-import { createQuantDataPositioningScanProvider } from "./quantData";
 import {
   A_SETUP_SCORE_THRESHOLD,
   BEARISH_MACRO_GRADE_CAP_REASON,
@@ -18,7 +17,7 @@ import {
   RELAXED_WEEKLY_GRADE_CAP_REASON,
   WEEKLY_ATR_GRADE_CAP_REASON,
   applyInstitutionalEdge,
-  applyInstitutionalPositioning,
+  applySchwabPositioning,
   applyMacroRegimeModifier,
   defaultSettings,
   gradeFromSetupScore,
@@ -29,6 +28,7 @@ import {
   resolveWeeklyQualificationMode
 } from "./scoring";
 import { fetchCallOptions, fetchHistory, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, type SchwabQuote } from "./schwab";
+import { createSchwabPositioningScanProvider } from "./schwabPositioning";
 import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
@@ -38,6 +38,27 @@ const MEMORY_LOG_INTERVAL = 50;
 const MAX_STORED_SCAN_WARNINGS = 50;
 const CATASTROPHIC_FAILURE_RATIO = 0.8;
 const OLD_DEFAULT_MIN_AVG_DOLLAR_VOLUME = 600_000_000;
+const LEGACY_QUANTDATA_FLAGS = new Set([
+  "QuantData Grade Promotion",
+  "Bullish Flow Confirmation",
+  "Ask-Side Call Buying",
+  "Unusual Call Volume",
+  "Repeated Bullish Call Sweeps",
+  "Opening Call Activity",
+  "Bearish Flow Veto",
+  "Options Positioning Veto",
+  "Good Chart, Weak Sponsorship",
+  "Put Support Below Price",
+  "Call Wall Overhead",
+  "Squeeze-Prone Exposure",
+  "Supportive Gamma Structure",
+  "Good Chart, Options Resistance",
+  "Dark-Pool Accumulation",
+  "Max Pain Pin Risk",
+  "Confirmed Call OI Build",
+  "IV Rank Confirms Compression",
+  "IV Rank Elevated Despite Compression"
+]);
 type ScanDiagnosticReason = keyof ScanDiagnosticCounts;
 const SECTOR_ETF_BY_GICS: Record<string, string> = {
   "Communication Services": "XLC",
@@ -222,9 +243,10 @@ export async function runFullScan(): Promise<ScanResponse> {
   let usedLive = false;
   let usedDemo = false;
   let processedSymbols = 0;
+  let schwabPositioningCalls = 0;
   const etfSymbols = settings.etfSymbols;
   const etfSymbolSet = new Set(etfSymbols);
-  let symbolsToScan = await resolveScanSymbols(settings);
+  const symbolsToScan = await resolveScanSymbols(settings);
   logScanMemory("start", { universeSize: symbolsToScan.length });
   const stockSymbolsToScan = symbolsToScan.filter((symbol) => !etfSymbolSet.has(symbol));
   const diagnostics = createScanDiagnostics(symbolsToScan.length, settings.minAvgDollarVolume);
@@ -246,15 +268,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   const sectorHistories = canUseLiveSchwab ? await loadSectorHistories(scanWarnings) : new Map<string, Candle[]>();
   const fmp = canUseLiveSchwab ? await createFmpScanFallback() : undefined;
   const fmpInstitutionalEdge = canUseLiveSchwab ? await createFmpInstitutionalEdgeScanProvider() : undefined;
-  const quantDataPositioning = canUseLiveSchwab ? await createQuantDataPositioningScanProvider() : undefined;
-  if (quantDataPositioning) {
-    // Universe-wide, once-per-scan prioritization (not a scoring factor): order per-symbol
-    // QuantData spend toward names showing real same-day institutional flow first.
-    const ranking = await quantDataPositioning.rankSymbols(symbolsToScan);
-    if (ranking.usedLive) usedLive = true;
-    ranking.warnings.forEach((warning) => scanWarnings.add(warning));
-    symbolsToScan = ranking.symbols;
-  }
+  const schwabPositioning = canUseLiveSchwab ? await createSchwabPositioningScanProvider() : undefined;
   const fmpEarnings = fmp && stockSymbolsToScan.length ? await fmp.earningsCalendar(stockSymbolsToScan) : undefined;
   const earningsBySymbol = fmpEarnings?.earningsBySymbol ?? new Map<string, string>();
   fmpEarnings?.warnings.forEach((warning) => scanWarnings.add(warning));
@@ -302,16 +316,18 @@ export async function runFullScan(): Promise<ScanResponse> {
           result = applyInstitutionalEdge(result, edge.edge);
         }
       }
-      if (quantDataPositioning && (newlyDiscovered || keepTrackedUntilFire)) {
-        const compressionActive = result.layerEvaluations.some((item) => item.layer === "Compression Quality" && item.status !== "Bearish");
-        const positioning = await quantDataPositioning.enrich(result.symbol, result.price, {
-          compressionActive,
-          nearestExpirationDate: result.recommendedOptionContract?.expirationDate,
-          daysToNearestExpiration: result.recommendedOptionContract?.dte
+      if (schwabPositioning
+        && (newlyDiscovered || keepTrackedUntilFire)
+        && schwabPositioningCalls < config.schwabPositioningMaxCallsPerScan) {
+        schwabPositioningCalls += 1;
+        const positioning = await schwabPositioning.enrich(result.symbol, result.price, {
+          nearestExpirationDate: result.recommendedOptionContract?.expirationDate
         });
         if (positioning.usedLive) usedLive = true;
         positioning.warnings.forEach((warning) => scanWarnings.add(warning));
-        result = applyInstitutionalPositioning(result, positioning.positioning);
+        result = applySchwabPositioning(result, positioning.positioning);
+      } else if (schwabPositioning && (newlyDiscovered || keepTrackedUntilFire)) {
+        scanWarnings.add("Schwab options positioning reached its per-scan request cap; remaining candidates stayed neutral.");
       }
       if (newlyDiscovered || keepTrackedUntilFire) {
         result = withSqueezeLifecycle(result, previous?.firstDetectedAt ?? watchlistEntry?.result.firstDetectedAt ?? previous?.lastUpdated ?? watchlistEntry?.addedAt ?? scanRanAt.toISOString());
@@ -360,7 +376,7 @@ export async function runFullScan(): Promise<ScanResponse> {
   };
   if (fmp) await fmp.flush();
   if (fmpInstitutionalEdge) await fmpInstitutionalEdge.flush();
-  if (quantDataPositioning) await quantDataPositioning.flush();
+  if (schwabPositioning) await schwabPositioning.flush();
   logScanMemory("complete", {
     processedSymbols,
     universeSize: symbolsToScan.length,
@@ -909,9 +925,17 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
   if ((capA || bearishMacro) && scoreGrade === "A") scoreGrade = "B";
   const grade = scoreGrade;
   const gradeCapReasons = mergeCachedGradeCapReasons(result, setupScore, dailyEntryQualificationMode, squeezeMaturityMode, missingDailyEmaStack);
+  const hasLegacyQuantDataPositioning = result.institutionalPositioningScore !== undefined
+    || result.institutionalPositioningStatus !== undefined
+    || result.institutionalPositioningReason !== undefined
+    || result.gradeBeforeQuantData !== undefined
+    || result.institutionalPromotionApplied !== undefined;
   const tradeMarkReasons = cachedTradeMarkReasons(result, grade, setupScore);
   const tradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
   const longCallDecision = cachedCompatibilityDecision(grade, tradeMark);
+  const optionsPositioningStatus = result.optionsPositioningStatus;
+  const clearLegacyPositioningReason = (reason: string) => reason !== result.institutionalPositioningReason
+    && !/quantdata|institutional positioning/i.test(reason);
   const normalized: ScanResult = {
     ...result,
     assetType: result.assetType ?? "stock",
@@ -940,10 +964,34 @@ function normalizeCachedResult(result: ScanResult): ScanResult {
     tradeMarkReasons,
     gradeCapReasons,
     strongLongCallCandidate: longCallDecision === "Strong Long Call Candidate",
-    flags: (result.flags ?? []).filter((flag) => flag !== "QuantData Grade Promotion"),
-    gradeBeforeQuantData: result.institutionalPositioningStatus ? grade : result.gradeBeforeQuantData,
-    finalGrade: result.institutionalPositioningStatus ? grade : result.finalGrade,
-    institutionalPromotionApplied: false,
+    flags: [...new Set((result.flags ?? [])
+      .filter((flag) => !hasLegacyQuantDataPositioning || !LEGACY_QUANTDATA_FLAGS.has(flag))
+      .filter((flag) => flag !== "QuantData Grade Promotion" && flag !== "Bearish Flow Veto"))],
+    reasonsSupportingTrade: hasLegacyQuantDataPositioning
+      ? result.reasonsSupportingTrade.filter(clearLegacyPositioningReason)
+      : result.reasonsSupportingTrade,
+    reasonsAgainstTrade: hasLegacyQuantDataPositioning
+      ? result.reasonsAgainstTrade.filter(clearLegacyPositioningReason)
+      : result.reasonsAgainstTrade,
+    optionsPositioningScore: hasLegacyQuantDataPositioning ? undefined : result.optionsPositioningScore,
+    optionsFlowSignal: hasLegacyQuantDataPositioning ? undefined : result.optionsFlowSignal,
+    optionsExposureSignal: hasLegacyQuantDataPositioning ? undefined : result.optionsExposureSignal,
+    darkPoolSignal: hasLegacyQuantDataPositioning ? "no_data" : result.darkPoolSignal,
+    maxPainSignal: hasLegacyQuantDataPositioning ? "no_data" : result.maxPainSignal,
+    openInterestChangeSignal: hasLegacyQuantDataPositioning ? "no_data" : result.openInterestChangeSignal,
+    ivRankSignal: hasLegacyQuantDataPositioning ? "no_data" : result.ivRankSignal,
+    optionsPositioningStatus,
+    optionsPositioningReason: hasLegacyQuantDataPositioning
+      ? "Run a fresh scan to populate Schwab options positioning. Legacy QuantData evidence was discarded."
+      : result.optionsPositioningReason,
+    gradeBeforePositioning: optionsPositioningStatus || hasLegacyQuantDataPositioning ? grade : result.gradeBeforePositioning,
+    finalGrade: optionsPositioningStatus || hasLegacyQuantDataPositioning ? grade : result.finalGrade,
+    positioningPromotionApplied: false,
+    institutionalPositioningScore: undefined,
+    institutionalPositioningStatus: undefined,
+    institutionalPositioningReason: undefined,
+    gradeBeforeQuantData: undefined,
+    institutionalPromotionApplied: undefined,
     finalScore: typeof result.finalScore === "number" ? result.finalScore : setupScore,
     macroModifierApplied: typeof result.macroModifierApplied === "number" ? result.macroModifierApplied : 1,
     counterTrend: result.counterTrend ?? false,
@@ -1018,10 +1066,13 @@ function mergeCachedGradeCapReasons(
 }
 
 function cachedTradeMarkReasons(result: ScanResult, grade: ScanResult["grade"], setupScore: number): string[] {
-  const reasons = (result.tradeMarkReasons ?? []).filter((reason) => reason !== "Institutional Edge is bearish.");
+  const reasons = (result.tradeMarkReasons ?? [])
+    .filter((reason) => reason !== "Institutional Edge is bearish.")
+    .filter((reason) => reason !== "Institutional positioning is not supportive."
+      && reason !== "Bearish Flow Veto"
+      && reason !== "Options positioning is not supportive."
+      && reason !== "Options Positioning Veto");
   if (grade === "C" || setupScore < B_SETUP_SCORE_THRESHOLD) addUnique(reasons, "Setup grade is C.");
-  if (result.institutionalPositioningStatus === "capped") addUnique(reasons, "Institutional positioning is not supportive.");
-  if (result.institutionalPositioningStatus === "vetoed") addUnique(reasons, "Bearish Flow Veto");
   removeItem(reasons, BEARISH_MACRO_GRADE_CAP_REASON);
   result.layerEvaluations?.filter((item) => (item.layer === "Squeeze Market Structure" || item.layer === "Compression Quality") && item.status === "Bearish")
     .forEach((item) => addUnique(reasons, item.detail));

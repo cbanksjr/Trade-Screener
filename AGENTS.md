@@ -4,7 +4,7 @@
 
 This is a local TypeScript options swing screener. It has a Vite/React frontend and an Express/Node backend that scans S&P 500, Nasdaq 100, and selected ETF symbols for long-call compression setups.
 
-Read `README.md` before changing scanner behavior. It documents the trading rules, grading model, Schwab/FMP/QuantData usage, hosting setup, and expected scan behavior.
+Read `README.md` before changing scanner behavior. It documents the trading rules, grading model, Schwab/FMP usage, hosting setup, and expected scan behavior.
 
 ## Common Commands
 
@@ -27,7 +27,7 @@ Local API defaults to `https://127.0.0.1:4173`.
 - `server/scanner.ts` coordinates scan execution, cached results, settings, and provider enrichment.
 - `server/scoring.ts` owns grading, setup quality, trade marks, and layer evaluation logic.
 - `server/indicators.ts` owns EMA, ATR, squeeze, and momentum calculations.
-- `server/schwab.ts`, `server/fmp.ts`, and `server/quantData.ts` isolate external data providers.
+- `server/schwab.ts` and `server/fmp.ts` isolate external data providers; `server/schwabPositioning.ts` derives the bounded Schwab options-positioning overlay.
 - `server/sqlite.ts` handles local SQLite and hosted Postgres persistence.
 - `shared/types.ts` is the contract between server and frontend.
 
@@ -42,7 +42,6 @@ Important environment variables include:
 - `SCHWAB_CALLBACK_URL`
 - `API_HTTPS`
 - `FMP_API_KEY`
-- `QUANTDATA_API_KEY`
 - `DATABASE_URL`
 - `DATABASE_SSL`
 - `PUBLIC_URL`
@@ -70,7 +69,9 @@ Preserve the scanner's domain rules unless the user explicitly asks to change th
 - A/B setup grades are based on setup score.
 - `Take`/`Avoid` is separate from setup grade.
 - Weekly squeeze is contextual only.
-- QuantData can confirm, cap, veto, or promote clean B setups, but should not demote below the technical grade.
+- Schwab options positioning is confirmation/context only and must never change the technical grade or create an `Avoid` mark from ambiguous positioning data.
+- Same-session options activity is a proxy only; confirmation requires a comparable fixed-contract call open-interest build from the immediately preceding trading session.
+- Dark-pool and IV Rank signals remain unavailable/neutral unless a future provider supplies their missing inputs.
 - FMP Institutional Edge is informational unless README/spec says otherwise.
 - ETFs bypass stock-only beta, market-cap, sector, and earnings requirements.
 

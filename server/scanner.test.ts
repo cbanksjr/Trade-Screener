@@ -513,7 +513,41 @@ describe("background scan refresh", () => {
     expect(result.grade).toBe("B");
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
     expect(result.gradeCapReasons).toContain(BEARISH_MACRO_GRADE_CAP_REASON);
-    expect(result.institutionalPromotionApplied).toBe(false);
+    expect(result.positioningPromotionApplied).toBe(false);
+    expect(result.gradeBeforePositioning).toBe("B");
+    expect(result.gradeBeforeQuantData).toBeUndefined();
+  }));
+
+  it("discards cached QuantData evidence instead of relabeling it as Schwab positioning", async () => withDbRestore(async () => {
+    const legacyVeto: ScanResult = {
+      ...qualifyingResult("LEGACYVETO"),
+      institutionalPositioningStatus: "vetoed",
+      institutionalPositioningScore: 12,
+      institutionalPositioningReason: "QuantData reported bearish institutional positioning.",
+      darkPoolSignal: "distribution",
+      ivRankSignal: "contradicting",
+      tradeMark: "Avoid",
+      tradeMarkReasons: ["Bearish Flow Veto"],
+      flags: ["Bearish Flow Veto", "Dark-Pool Accumulation"],
+      reasonsAgainstTrade: ["QuantData reported bearish institutional positioning."]
+    };
+    await replaceScanResults([legacyVeto]);
+
+    const [result] = await readDisplayResults();
+
+    expect(result.tradeMark).toBe("Take");
+    expect(result.tradeMarkReasons).not.toContain("Options Positioning Veto");
+    expect(result.tradeMarkReasons).not.toContain("Bearish Flow Veto");
+    expect(result.flags).not.toContain("Options Positioning Veto");
+    expect(result.flags).not.toContain("Bearish Flow Veto");
+    expect(result.flags).not.toContain("Dark-Pool Accumulation");
+    expect(result.optionsPositioningStatus).toBeUndefined();
+    expect(result.optionsPositioningScore).toBeUndefined();
+    expect(result.darkPoolSignal).toBe("no_data");
+    expect(result.ivRankSignal).toBe("no_data");
+    expect(result.reasonsAgainstTrade).toEqual([]);
+    expect(result.optionsPositioningReason).toContain("Legacy QuantData evidence was discarded");
+    expect(result.institutionalPositioningStatus).toBeUndefined();
   }));
 
   it("does not promote a cached result on reload when no QuantData promotion was recorded", async () => withDbRestore(async () => {

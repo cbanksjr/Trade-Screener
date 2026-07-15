@@ -34,12 +34,11 @@ This is a single-tenant local/self-hosted app: an Express API (`server/`) that r
 
 1. Resolve the symbol universe (`universe.ts` for the S&P 500 + Nasdaq 100 stock list, `etfUniverse.ts` for the curated/overridable ETF list).
 2. Pull quotes/history/options from Schwab (`schwab.ts`) if credentials + tokens exist (`canUseLiveSchwab`); otherwise the scan runs in demo mode using `demoData.ts`.
-3. Optional QuantData Gainers-Losers pass reorders (never filters) the symbol list once per scan so QuantData's limited per-symbol call budget goes to names with real same-day movement first.
-4. Per symbol (bounded concurrency via `mapLimit`, `SCAN_CONCURRENCY = 4`): merge fundamentals from a source waterfall (Schwab → FMP → 20-day candle history → demo, tracked field-by-field in `Fundamentals.sources`), then call `gradeSetup()` in `scoring.ts` to produce the technical grade.
-5. Two optional enrichment layers run *after* the technical grade and only affect Take/Avoid + grade promotion, never invent a grade from nothing:
+3. Per symbol (bounded concurrency via `mapLimit`, `SCAN_CONCURRENCY = 4`): merge fundamentals from a source waterfall (Schwab → FMP → 20-day candle history → demo, tracked field-by-field in `Fundamentals.sources`), then call `gradeSetup()` in `scoring.ts` to produce the technical grade.
+4. Two enrichment layers run *after* the technical grade and never change the technical grade:
    - **FMP Institutional Edge** (`fmpInstitutionalEdge.ts`) — informational context only (financial scores, analyst grades, insider/ETF data). Never changes grade or Take/Avoid.
-   - **QuantData Institutional Positioning** (`quantData.ts`) — an execution overlay that never changes the technical grade (`finalGrade` always equals `gradeBeforeQuantData`, `institutionalPromotionApplied` is always false). It scores {bullish flow, supportive exposure, dark-pool accumulation, confirmed OI build, confirming IV Rank} into `institutionalPositioningScore`/`Status` and can confirm, caution, or veto a setup to Avoid via Take/Avoid (hostile gamma walls, max-pain pin risk), but never below what the technical score already earned.
-6. Results are sorted by setup score → grade → squeeze dot count, cached wholesale (`replaceScanResults`, full delete+reinsert, not a diff), and scan metadata (status, warnings, diagnostics, next refresh time) is written for the frontend to poll.
+   - **Schwab Options Positioning** (`schwabPositioning.ts`) — conservative confirmation/context derived from scan-time call/put activity and a fixed-contract call-OI build from the immediately preceding trading session. Unsigned gamma concentration and bounded-strike max pain are informational; dark-pool and IV Rank remain unavailable. It never changes the technical grade or creates an `Avoid` mark.
+5. Results are sorted by setup score → grade → squeeze dot count, cached wholesale (`replaceScanResults`, full delete+reinsert, not a diff), and scan metadata (status, warnings, diagnostics, next refresh time) is written for the frontend to poll.
 
 `shouldIncludeResult()` is the single gate for what actually reaches the dashboard (universe pass, long direction, positive momentum, active daily squeeze, valid entry mode, grade A/B). `classifyFilteredResult()` back-derives *why* a result was filtered for the diagnostics panel — keep it in sync with `shouldIncludeResult()` and the layer/factor names in `shared/types.ts` when either changes.
 
@@ -54,9 +53,9 @@ This is a single-tenant local/self-hosted app: an Express API (`server/`) that r
 - `timeframes.ts` — aggregates daily candles into weekly (`aggregateDailyCandlesToWeeks`) for weekly context, which is bonus confirmation only and cannot reject or degrade a grade below what daily analysis earned (only bearish weekly still rejects).
 - Grade thresholds live as named constants (`A_SETUP_SCORE_THRESHOLD = 90`, `B_SETUP_SCORE_THRESHOLD = 70`) and every grade-capping reason is a named exported string constant (e.g. `BROAD_ENTRY_GRADE_CAP_REASON`) — reuse these constants rather than re-deriving the message text, since `scanner.ts`'s cache-normalization path matches against them.
 
-### External data providers (`schwab.ts`, `fmp.ts`, `fmpInstitutionalEdge.ts`, `quantData.ts`)
+### External data providers (`schwab.ts`, `schwabPositioning.ts`, `fmp.ts`, `fmpInstitutionalEdge.ts`)
 
-All follow the same shape: a `createXScanProvider()` factory sets up a per-scan cache and call budget, exposes an `enrich()`/`rankSymbols()` call per symbol, and a `flush()` to persist the cache at the end of the scan. Each has its own max-calls-per-scan and TTL settings in `config.ts` to protect free-tier API limits (`FMP_MAX_CALLS_PER_SCAN`, `QUANTDATA_MAX_CALLS_PER_SCAN`, `FMP_INSTITUTIONAL_EDGE_PROBE_TTL_HOURS`, etc.). `httpRetry.ts` (`fetchWithRetry`) is the shared retry-with-backoff wrapper used across these HTTP clients for 429/5xx responses.
+Scan providers expose an `enrich()` call and a `flush()` when they persist bounded state. FMP has call-budget and TTL settings in `config.ts`; Schwab positioning has a per-scan request cap and persists at most two snapshots of 40 call-OI cohort entries for 250 symbols. It never archives quotes, descriptions, raw chains, or trades. `httpRetry.ts` (`fetchWithRetry`) is the shared retry-with-backoff wrapper used across the HTTP clients for 429/5xx responses.
 
 Schwab is the only source of live quotes/history/options; FMP and demo data exist purely as fallbacks when Schwab is unavailable or omits a field — this waterfall ordering (Schwab → FMP → history-derived → demo) is threaded through `mergeFundamentals()`/`withCandleLiquidityFallback()` in `scanner.ts` and tracked per-field in `Fundamentals.sources` so the UI/warnings can say which source supplied a value.
 

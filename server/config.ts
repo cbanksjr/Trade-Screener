@@ -26,16 +26,12 @@ export const config = {
   fmpStarterSafeMode: (process.env.FMP_STARTER_SAFE_MODE ?? "true") !== "false",
   fmpInstitutionalEdgeMaxCallsPerScan: Number(process.env.FMP_INSTITUTIONAL_EDGE_MAX_CALLS_PER_SCAN ?? 250),
   fmpInstitutionalEdgeProbeTtlHours: Number(process.env.FMP_INSTITUTIONAL_EDGE_PROBE_TTL_HOURS ?? 24),
-  quantDataApiKey: process.env.QUANTDATA_API_KEY ?? "",
-  quantDataBaseUrl: process.env.QUANTDATA_BASE_URL ?? "https://api.quantdata.us",
-  quantDataEnabled: (process.env.QUANTDATA_ENABLED ?? "true") !== "false",
-  quantDataMaxCallsPerScan: Number(process.env.QUANTDATA_MAX_CALLS_PER_SCAN ?? 300),
-  quantDataCacheTtlMinutes: Number(process.env.QUANTDATA_CACHE_TTL_MINUTES ?? 15),
   // How long a batch of live Schwab quotes is reused to refresh displayed prices on the
   // read/refresh path before another /quotes call is made. Keeps rapid dashboard polls
   // from hammering the Schwab budget while still tracking the market between full scans.
   livePriceOverlayTtlSeconds: Number(process.env.LIVE_PRICE_OVERLAY_TTL_SECONDS ?? 60),
   schwabOptionStrikeCount: positiveInteger(process.env.SCHWAB_OPTION_STRIKE_COUNT, 20),
+  schwabPositioningMaxCallsPerScan: positiveInteger(process.env.SCHWAB_POSITIONING_MAX_CALLS_PER_SCAN, 50),
   etfSymbols: process.env.ETF_SYMBOLS ?? "",
   appBasicAuthUsername: process.env.APP_BASIC_AUTH_USERNAME ?? "",
   appBasicAuthPassword: process.env.APP_BASIC_AUTH_PASSWORD ?? ""

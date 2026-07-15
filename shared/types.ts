@@ -54,6 +54,7 @@ export type OptionContract = {
   volume: number;
   openInterest: number;
   delta?: number;
+  gamma?: number;
   impliedVolatility?: number;
   dte?: number;
   spreadPct: number;
@@ -106,9 +107,10 @@ export type DarkPoolSignal = "accumulation" | "neutral" | "distribution" | "no_d
 export type MaxPainSignal = "tailwind" | "pin_risk" | "neutral" | "no_data";
 export type OpenInterestChangeSignal = "confirmed_build" | "no_confirmation" | "no_data";
 export type IvRankSignal = "confirming" | "contradicting" | "neutral" | "no_data";
-export type InstitutionalPositioningStatus = "confirmed" | "neutral" | "capped" | "vetoed";
+export type OptionsPositioningStatus = "confirmed" | "neutral";
+export type LegacyInstitutionalPositioningStatus = OptionsPositioningStatus | "capped" | "vetoed";
 
-export type InstitutionalPositioningSummary = {
+export type OptionsPositioningSummary = {
   score: number;
   optionsFlowSignal: OptionsFlowSignal;
   optionsExposureSignal: OptionsExposureSignal;
@@ -116,7 +118,7 @@ export type InstitutionalPositioningSummary = {
   maxPainSignal: MaxPainSignal;
   openInterestChangeSignal: OpenInterestChangeSignal;
   ivRankSignal: IvRankSignal;
-  status: InstitutionalPositioningStatus;
+  status: OptionsPositioningStatus;
   reason: string;
   flags: string[];
   warnings: string[];
@@ -259,14 +261,20 @@ export type ScanResult = {
   institutionalEdgeFactors?: InstitutionalEdgeFactor[];
   institutionalEdgeAdjustment?: number;
   institutionalEdgeWarnings?: string[];
-  institutionalPositioningScore?: number;
+  optionsPositioningScore?: number;
   optionsFlowSignal?: OptionsFlowSignal;
   optionsExposureSignal?: OptionsExposureSignal;
   darkPoolSignal?: DarkPoolSignal;
   maxPainSignal?: MaxPainSignal;
   openInterestChangeSignal?: OpenInterestChangeSignal;
   ivRankSignal?: IvRankSignal;
-  institutionalPositioningStatus?: InstitutionalPositioningStatus;
+  optionsPositioningStatus?: OptionsPositioningStatus;
+  optionsPositioningReason?: string;
+  gradeBeforePositioning?: Grade;
+  positioningPromotionApplied?: boolean;
+  /** Legacy cached-result inputs; discarded on read so QuantData evidence is never relabeled as Schwab. */
+  institutionalPositioningScore?: number;
+  institutionalPositioningStatus?: LegacyInstitutionalPositioningStatus;
   institutionalPositioningReason?: string;
   gradeBeforeQuantData?: Grade;
   finalGrade?: Grade;

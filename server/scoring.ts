@@ -8,7 +8,7 @@ import type {
   InstitutionalFactor,
   InstitutionalFactorName,
   InstitutionalEdgeSummary,
-  InstitutionalPositioningSummary,
+  OptionsPositioningSummary,
   LayerEvaluation,
   LayerStatus,
   LongCallDecision,
@@ -50,6 +50,12 @@ const MAX_OPTION_SPREAD_PCT = 15;
 const PREFERRED_OPTION_SPREAD_PCT = 10;
 const MIN_OPTION_OPEN_INTEREST = 100;
 const MIN_OPTION_VOLUME = 25;
+const POSITIONING_OVERLAY_REASONS: string[] = [
+  "Institutional positioning is not supportive.",
+  "Bearish Flow Veto",
+  "Options positioning is not supportive.",
+  "Options Positioning Veto"
+];
 
 export const defaultSettings = {
   minPrice: 20,
@@ -246,57 +252,57 @@ export function applyInstitutionalEdge(result: ScanResult, edge: InstitutionalEd
   };
 }
 
-export function applyInstitutionalPositioning(result: ScanResult, positioning: InstitutionalPositioningSummary): ScanResult {
-  const flags = unique([...(result.flags ?? []).filter((flag) => flag !== "QuantData Grade Promotion"), ...positioning.flags]);
-  const gradeCapReasons = removeWeeklyGradeReasons(result.gradeCapReasons ?? []);
-  const tradeMarkReasons = [...(result.tradeMarkReasons ?? [])];
+/** Applies Schwab-derived positioning without implying institutional identity. */
+export function applySchwabPositioning(result: ScanResult, positioning: OptionsPositioningSummary): ScanResult {
+  return applyPositioningOverlay(result, positioning);
+}
 
-  if (positioning.status === "vetoed") {
-    if (!flags.includes("Bearish Flow Veto")) flags.push("Bearish Flow Veto");
-    addUnique(tradeMarkReasons, "Bearish Flow Veto");
-  } else if (positioning.status === "capped") {
-    addUnique(tradeMarkReasons, "Institutional positioning is not supportive.");
-  } else if (positioning.status === "confirmed") {
-    removeItem(tradeMarkReasons, "Institutional positioning is not supportive.");
-  }
+function applyPositioningOverlay(
+  result: ScanResult,
+  positioning: OptionsPositioningSummary
+): ScanResult {
+  const flags = unique([
+    ...(result.flags ?? []).filter((flag) => flag !== "QuantData Grade Promotion" && !POSITIONING_OVERLAY_REASONS.includes(flag)),
+    ...positioning.flags
+  ]);
+  const gradeCapReasons = removeWeeklyGradeReasons(result.gradeCapReasons ?? []);
+  const tradeMarkReasons = (result.tradeMarkReasons ?? []).filter((reason) => !POSITIONING_OVERLAY_REASONS.includes(reason));
 
   const tradeMark: TradeMark = tradeMarkReasons.length ? "Avoid" : "Take";
-  const gradeBeforeQuantData = result.grade;
-  // Institutional positioning is an execution overlay only. It can confirm,
-  // caution, or veto through Take/Avoid, but never changes the technical grade.
-  const finalGrade: Grade = gradeBeforeQuantData;
+  const technicalGrade = result.grade;
+  // Schwab positioning is confirmation/context only. It can add support when
+  // comparable OI corroborates activity, but never changes grade or creates Avoid.
+  const finalGrade: Grade = technicalGrade;
   const longCallDecision = compatibilityDecision(finalGrade, tradeMark);
   const strongLongCallCandidate = longCallDecision === "Strong Long Call Candidate";
 
   return {
     ...result,
     grade: finalGrade,
-    gradeBeforeQuantData,
+    gradeBeforePositioning: technicalGrade,
     finalGrade,
-    institutionalPromotionApplied: false,
+    positioningPromotionApplied: false,
     tradeMark,
     tradeMarkReasons,
     longCallDecision,
     setupQuality: finalGrade === "A" ? "High" : "Moderate",
     entryRecommendationType: entryType(longCallDecision, result.compressionQualityStatus),
-    institutionalPositioningScore: Math.max(0, Math.min(100, round(positioning.score, 0))),
+    optionsPositioningScore: Math.max(0, Math.min(100, round(positioning.score, 0))),
     optionsFlowSignal: positioning.optionsFlowSignal,
     optionsExposureSignal: positioning.optionsExposureSignal,
     darkPoolSignal: positioning.darkPoolSignal,
     maxPainSignal: positioning.maxPainSignal,
     openInterestChangeSignal: positioning.openInterestChangeSignal,
     ivRankSignal: positioning.ivRankSignal,
-    institutionalPositioningStatus: positioning.status,
-    institutionalPositioningReason: positioning.reason,
+    optionsPositioningStatus: positioning.status,
+    optionsPositioningReason: positioning.reason,
     strongLongCallCandidate,
     flags,
     gradeCapReasons,
     reasonsSupportingTrade: positioning.status === "confirmed"
       ? unique([...result.reasonsSupportingTrade, positioning.reason]).slice(0, 8)
       : result.reasonsSupportingTrade,
-    reasonsAgainstTrade: positioning.status === "capped" || positioning.status === "vetoed"
-      ? unique([...result.reasonsAgainstTrade, positioning.reason]).slice(0, 8)
-      : result.reasonsAgainstTrade,
+    reasonsAgainstTrade: result.reasonsAgainstTrade,
     warnings: unique([...result.warnings, ...positioning.warnings])
   };
 }

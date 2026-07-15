@@ -8,10 +8,11 @@ import { getSetting, initDb, setSetting } from "./sqlite";
 // misses the in-memory settingsCache and actually reads the row back from the
 // database through parsePayload. Each cache-bypassing read uses its own key so the
 // tests stay independent (getSetting memoizes a lazy key after its first read).
-const WRITE_KEY = "quantDataCompactCacheV2"; // round-trip write path (populates cache)
+const WRITE_KEY = "schwabPositioningSnapshotsV2"; // round-trip write path (populates cache)
 const GZIP_READ_KEY = "fmpInstitutionalEdgeCompactCacheV2"; // cache-free gzip read path
 const LEGACY_READ_KEY = "fmpFundamentalsCache"; // cache-free legacy plain-JSON read path
 const TOUCHED_KEYS = [WRITE_KEY, GZIP_READ_KEY, LEGACY_READ_KEY];
+const REMOVED_PROVIDER_KEY = "quantDataCompactCacheV2";
 const dbPath = resolve("data/screener.sqlite");
 
 function withExternalDb<T>(run: (db: Database.Database) => T): T {
@@ -54,6 +55,7 @@ describe("settings value compression", () => {
       if (original === undefined) deleteRawSetting(key);
       else writeRawSettingValue(key, original);
     }
+    deleteRawSetting(REMOVED_PROVIDER_KEY);
   });
 
   it("stores settings values gzip-compressed and round-trips them", async () => {
@@ -83,5 +85,13 @@ describe("settings value compression", () => {
     expect(readRawSettingValue(LEGACY_READ_KEY)?.startsWith("gz:")).toBe(false);
 
     expect(await getSetting(LEGACY_READ_KEY, null)).toEqual(value);
+  });
+
+  it("removes the obsolete QuantData provider cache during initialization", async () => {
+    writeRawSettingValue(REMOVED_PROVIDER_KEY, JSON.stringify({ obsolete: true }));
+
+    await initDb();
+
+    expect(readRawSettingValue(REMOVED_PROVIDER_KEY)).toBeUndefined();
   });
 });

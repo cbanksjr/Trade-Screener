@@ -35,10 +35,11 @@ let db: Database.Database | undefined;
 // was the dominant source of Supabase egress. They are read on demand by
 // getSetting and stay memoized for the life of the process after the first read.
 const LAZY_HYDRATION_KEYS = new Set([
-  "quantDataCompactCacheV2",
+  "schwabPositioningSnapshotsV2",
   "fmpInstitutionalEdgeCompactCacheV2",
   "fmpFundamentalsCache"
 ]);
+const LEGACY_PROVIDER_CACHE_KEYS = ["quantDataCompactCacheV2", "schwabPositioningSnapshotsV1"];
 const settingsCache = new Map<string, unknown>();
 let scanResultsCache: unknown[] = [];
 let watchlistCache: Array<{ symbol: string; addedAt: string; payload: unknown }> = [];
@@ -80,6 +81,7 @@ export async function initDb() {
         updated_at TIMESTAMPTZ NOT NULL
       );
     `);
+    await purgeLegacyProviderCaches();
     await hydratePersistenceCache();
     return;
   }
@@ -107,8 +109,9 @@ export async function initDb() {
         added_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
-    `);
+  `);
   await migrateNullableFundamentals();
+  await purgeLegacyProviderCaches();
   await hydratePersistenceCache();
 }
 
@@ -386,6 +389,17 @@ async function migrateNullableFundamentals() {
     SELECT symbol, beta, market_cap, avg_dollar_volume_20d, updated_at FROM fundamentals_old;
     DROP TABLE fundamentals_old;
   `);
+}
+
+async function purgeLegacyProviderCaches(): Promise<void> {
+  if (usePostgres) {
+    await pgQuery("DELETE FROM settings WHERE key = ANY($1::text[]);", [LEGACY_PROVIDER_CACHE_KEYS]);
+  } else {
+    getDb().prepare(
+      `DELETE FROM settings WHERE key IN (${LEGACY_PROVIDER_CACHE_KEYS.map(() => "?").join(", ")});`
+    ).run(...LEGACY_PROVIDER_CACHE_KEYS);
+  }
+  for (const key of LEGACY_PROVIDER_CACHE_KEYS) settingsCache.delete(key);
 }
 
 async function pgQuery<T extends pg.QueryResultRow = pg.QueryResultRow>(sql: string, values?: unknown[]): Promise<pg.QueryResult<T>> {

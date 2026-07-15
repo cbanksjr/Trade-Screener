@@ -213,6 +213,32 @@ export async function fetchCallOptions(symbol: string, price: number): Promise<O
   return fetchDirectionalOptions(symbol, price, "CALL");
 }
 
+/**
+ * Loads the bounded 14-180 DTE chain used for positioning calculations.
+ * Unlike fetchCallOptions, this intentionally preserves both puts and calls,
+ * every returned strike, and contracts without a tradable two-sided quote.
+ * Schwab's configured strikeCount remains the memory/network bound.
+ */
+export async function fetchOptionsForPositioning(symbol: string, price: number): Promise<OptionContract[]> {
+  const data = await schwabGet<SchwabOptionChainResponse>("/chains", {
+    symbol,
+    contractType: "ALL",
+    strategy: "SINGLE",
+    includeUnderlyingQuote: "false",
+    strikeCount: config.schwabOptionStrikeCount,
+    fromDate: dateOffset(14),
+    toDate: dateOffset(180)
+  });
+  return [
+    ...normalizeSchwabCallOptions(data, price),
+    ...normalizeSchwabPutOptions(data, price)
+  ]
+    .filter((item) => item.dte === undefined || (item.dte >= 14 && item.dte <= 180))
+    .sort((left, right) => left.expirationDate.localeCompare(right.expirationDate)
+      || left.strike - right.strike
+      || left.optionType.localeCompare(right.optionType));
+}
+
 async function fetchDirectionalOptions(symbol: string, price: number, contractType: "CALL" | "PUT"): Promise<OptionContract[]> {
   const fromDate = dateOffset(14);
   const toDate = dateOffset(180);
@@ -445,6 +471,7 @@ function normalizeOption(item: Record<string, unknown>, price: number, optionTyp
     volume,
     openInterest,
     delta: finiteNumber(item.delta),
+    gamma: finiteNumber(item.gamma),
     impliedVolatility: finiteNumber(item.volatility ?? item.impliedVolatility),
     dte,
     spreadPct: Number(spreadPct.toFixed(2)),

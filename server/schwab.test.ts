@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "./config";
-import { __resetSchwabTokenCacheForTest, fetchCallOptions, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
+import { __resetSchwabTokenCacheForTest, fetchCallOptions, fetchOptionsForPositioning, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes } from "./schwab";
 import { getSetting, initDb, setSetting } from "./sqlite";
 
 describe("Schwab response normalizers", () => {
@@ -498,6 +498,63 @@ describe("Schwab request resilience", () => {
     await fetchCallOptions("AAPL", 200);
 
     expect(new URL(requestedUrl).searchParams.get("strikeCount")).toBe(String(config.schwabOptionStrikeCount));
+  });
+
+  it("requests a bounded ALL chain and preserves puts and gamma for positioning", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-15T15:00:00.000Z"));
+    try {
+      await initDb();
+      await setSetting("schwabTokens", {
+        accessToken: "valid-token",
+        refreshToken: "refresh-token",
+        accessTokenExpiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString()
+      });
+      let requestedUrl = "";
+      vi.stubGlobal("fetch", vi.fn(async (input: string | URL) => {
+        requestedUrl = String(input);
+        return new Response(JSON.stringify({
+          callExpDateMap: {
+            "2026-08-21:37": {
+              "100.0": [{
+                symbol: "TEST  260821C00100000",
+                expirationDate: "2026-08-21",
+                strikePrice: 100,
+                bid: 1.9,
+                ask: 2.1,
+                totalVolume: 500,
+                openInterest: 2_000,
+                gamma: 0.02
+              }]
+            }
+          },
+          putExpDateMap: {
+            "2026-08-21:37": {
+              "95.0": [{
+                symbol: "TEST  260821P00095000",
+                expirationDate: "2026-08-21",
+                strikePrice: 95,
+                bid: 0.9,
+                ask: 1.1,
+                totalVolume: 200,
+                openInterest: 3_000,
+                gamma: 0.04
+              }]
+            }
+          }
+        }), { status: 200 });
+      }));
+
+      const contracts = await fetchOptionsForPositioning("TEST", 100);
+      const url = new URL(requestedUrl);
+
+      expect(url.searchParams.get("contractType")).toBe("ALL");
+      expect(url.searchParams.get("strikeCount")).toBe(String(config.schwabOptionStrikeCount));
+      expect(contracts.map((contract) => contract.optionType)).toEqual(["put", "call"]);
+      expect(contracts.find((contract) => contract.optionType === "put")?.gamma).toBe(0.04);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("deduplicates concurrent token refreshes so only one refresh request is sent", async () => {

@@ -495,16 +495,16 @@ function EvidencePanel({ result }: { result: ScanResult }) {
         {result.institutionalFactors.length ? <div className="factor-list">{result.institutionalFactors.map((factor) => <FactorRow result={result} factor={factor} key={factor.name} />)}</div> : <p className="empty-copy">Run a scan to populate setup factors.</p>}
       </EvidenceSection>
 
-      <EvidenceSection title="Institutional positioning" meta={`${positioningScoreLabel(result)} · ${positioningStatusLabel(result.institutionalPositioningStatus)}`} open={Boolean(openSections.positioning)} onToggle={() => toggle("positioning")}>
+      <EvidenceSection title="Schwab options positioning" meta={`${positioningScoreLabel(result)} · ${positioningStatusLabel(result.optionsPositioningStatus)}`} open={Boolean(openSections.positioning)} onToggle={() => toggle("positioning")}>
         <div className="signal-grid">
-          <Signal label="Options flow" value={signalLabel(result.optionsFlowSignal)} tone={signalTone(result.optionsFlowSignal)} />
-          <Signal label="Exposure" value={signalLabel(result.optionsExposureSignal)} tone={signalTone(result.optionsExposureSignal)} />
-          <Signal label="Dark pool" value={signalLabel(result.darkPoolSignal)} tone={signalTone(result.darkPoolSignal)} />
-          <Signal label="OI change" value={signalLabel(result.openInterestChangeSignal)} tone={signalTone(result.openInterestChangeSignal)} />
+          <Signal label="Options activity" value={signalLabel(result.optionsFlowSignal)} tone={signalTone(result.optionsFlowSignal)} />
+          <Signal label="Gamma exposure" value={signalLabel(result.optionsExposureSignal)} tone={signalTone(result.optionsExposureSignal)} />
+          <Signal label="Dark-pool data" value={signalLabel(result.darkPoolSignal)} tone={signalTone(result.darkPoolSignal)} />
+          <Signal label="OI confirmation" value={signalLabel(result.openInterestChangeSignal)} tone={signalTone(result.openInterestChangeSignal)} />
           <Signal label="IV rank" value={signalLabel(result.ivRankSignal)} tone={signalTone(result.ivRankSignal)} />
           <Signal label="Max pain" value={signalLabel(result.maxPainSignal)} tone={signalTone(result.maxPainSignal)} />
         </div>
-        {result.institutionalPositioningReason ? <p className="section-note">{result.institutionalPositioningReason}</p> : null}
+        {result.optionsPositioningReason ? <p className="section-note">{result.optionsPositioningReason}</p> : null}
         {result.flags?.length ? <div className="flag-list">{result.flags.map((flag) => <span key={flag}>{flag}</span>)}</div> : null}
       </EvidenceSection>
 
@@ -527,7 +527,7 @@ function EvidencePanel({ result }: { result: ScanResult }) {
         {result.alertMessage ? <p className="section-note">{result.alertMessage}</p> : null}
       </EvidenceSection>
 
-      <div className="method-note"><SlidersHorizontal size={14} /><p><strong>Grade and mark are separate.</strong> Institutional overlays can confirm, cap, or veto—but never demote the technical setup grade.</p></div>
+      <div className="method-note"><SlidersHorizontal size={14} /><p><strong>Grade and mark are separate.</strong> Schwab options positioning confirms only when call activity is backed by comparable prior-session open-interest growth. Ambiguous activity, unsigned gamma, bounded max pain, and unavailable dark-pool data stay neutral.</p></div>
     </aside>
   );
 }
@@ -685,13 +685,11 @@ function signalTone(value: string | undefined): "neutral" | "warn" | "risk" | "g
 }
 
 function positioningScoreLabel(result: ScanResult): string {
-  return typeof result.institutionalPositioningScore === "number" ? `${formatNumber(result.institutionalPositioningScore, { maximumFractionDigits: 0 })}/100` : "No score";
+  return typeof result.optionsPositioningScore === "number" ? `${formatNumber(result.optionsPositioningScore, { maximumFractionDigits: 0 })}/100` : "No score";
 }
 
-function positioningStatusLabel(status: ScanResult["institutionalPositioningStatus"]): string {
+function positioningStatusLabel(status: ScanResult["optionsPositioningStatus"]): string {
   if (status === "confirmed") return "Confirmed";
-  if (status === "capped") return "Capped";
-  if (status === "vetoed") return "Vetoed";
   return "Neutral";
 }
 
@@ -701,6 +699,7 @@ function signalLabel(value: string | undefined): string {
 }
 
 function layerLabel(layer: string): string {
+  if (layer === "Institutional Context") return "Liquidity & eligibility";
   return layer === "Compression Quality" ? "Daily Squeeze Dots" : layer;
 }
 
