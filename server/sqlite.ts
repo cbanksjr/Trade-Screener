@@ -18,15 +18,6 @@ const pool = usePostgres
     ssl: usePostgresSsl ? { rejectUnauthorized: false } : undefined
   })
   : undefined;
-// node-postgres emits 'error' on the Pool when an idle pooled client is dropped
-// by the server (Supabase's pooler recycles idle connections). Without a
-// listener Node treats it as an unhandled error and crashes the process, which
-// on Render's free tier means a restart + full cache re-hydration (egress) every
-// time — a potential crash loop. Log and swallow it; the pool recovers on the
-// next query by dialing a fresh connection.
-pool?.on("error", (error) => {
-  console.error("Postgres pool error (idle client dropped): " + (error instanceof Error ? error.message : String(error)));
-});
 
 let db: Database.Database | undefined;
 // Multi-megabyte provider caches are only needed while a scan runs. Excluding
@@ -112,12 +103,10 @@ export async function initDb() {
   await hydratePersistenceCache();
 }
 
-// Scan-result payloads (candles + layer evaluations per symbol) and the large
-// lazy provider-cache settings values dominate the bytes read back from Postgres
-// per scan and on startup hydration. Gzip them at rest to cut that egress; rows
-// written before compression existed are plain JSON and still parse (parsePayload
-// falls back to JSON.parse when the gz: prefix is absent), so no migration is
-// needed.
+// Scan-result payloads (candles + layer evaluations per symbol) dominate the
+// bytes read back from Postgres when the cache hydrates on startup. Gzip them
+// at rest to cut that egress; rows written before compression existed are plain
+// JSON and still parse, so no migration is needed.
 const GZIP_PREFIX = "gz:";
 
 function serializePayload(value: unknown): string {
@@ -138,24 +127,20 @@ export async function getSetting<T>(key: string, fallback: T): Promise<T> {
     const rows = (await pgQuery<{ value: string }>("SELECT value FROM settings WHERE key = $1;", [key])).rows;
     databaseReadStats.settings += 1;
     if (!rows[0]) return fallback;
-    const value = parsePayload(rows[0].value) as T;
+    const value = JSON.parse(rows[0].value) as T;
     if (cacheHydrated) settingsCache.set(key, value);
     return value;
   }
   const row = getDb().prepare("SELECT value FROM settings WHERE key = ?;").get(key) as { value: string } | undefined;
   databaseReadStats.settings += 1;
   if (!row) return fallback;
-  const value = parsePayload(row.value) as T;
+  const value = JSON.parse(row.value) as T;
   if (cacheHydrated) settingsCache.set(key, value);
   return value;
 }
 
 export async function setSetting(key: string, value: unknown): Promise<void> {
-  // Compress every settings value at rest (gz: prefix). The large lazy provider
-  // caches dominate settings egress, but compressing uniformly is simpler and
-  // parsePayload round-trips small values too. settingsCache keeps the parsed
-  // value so in-memory reads are unaffected.
-  const payload = serializePayload(value);
+  const payload = JSON.stringify(value);
   if (usePostgres) {
     await pgQuery(`
       INSERT INTO settings (key, value)
@@ -330,7 +315,7 @@ async function hydratePersistenceCache(): Promise<void> {
     databaseReadStats.settings += 1;
     databaseReadStats.scanResults += 1;
     databaseReadStats.watchlist += 1;
-    for (const row of settings.rows) settingsCache.set(row.key, parsePayload(row.value));
+    for (const row of settings.rows) settingsCache.set(row.key, JSON.parse(row.value));
     scanResultsCache = results.rows.map((row) => parsePayload(row.payload));
     watchlistCache = watchlist.rows.map((row) => ({
       symbol: row.symbol,
@@ -346,7 +331,7 @@ async function hydratePersistenceCache(): Promise<void> {
     databaseReadStats.settings += 1;
     databaseReadStats.scanResults += 1;
     databaseReadStats.watchlist += 1;
-    for (const row of settings) settingsCache.set(row.key, parsePayload(row.value));
+    for (const row of settings) settingsCache.set(row.key, JSON.parse(row.value));
     scanResultsCache = results.map((row) => parsePayload(row.payload));
     watchlistCache = watchlist.map((row) => ({ symbol: row.symbol, addedAt: row.added_at, payload: parsePayload(row.payload) }));
   }
