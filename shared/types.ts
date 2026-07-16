@@ -454,3 +454,13 @@ export type WatchlistEntry = {
   addedAt: string;
   result: ScanResult;
 };
+
+export type LocalSessionSnapshot = ScanMetadata & {
+  mode: ScanMode;
+  results: ScanResult[];
+  settings: Settings;
+  warnings: string[];
+  watchlist: WatchlistEntry[];
+  runtimeCache: Record<string, unknown>;
+  cachedAt: string;
+};

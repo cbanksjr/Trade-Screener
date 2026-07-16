@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { config } from "./config";
 import { __resetSchwabTokenCacheForTest, fetchCallOptions, fetchOptionsForPositioning, fetchQuote, mergeFundamentalAnalysis, normalizeFundamentalAnalysis, normalizeSchwabCallOptions, normalizeSchwabHistory, normalizeSchwabPutOptions, normalizeSchwabQuotes, selectCallOptionsForScan } from "./schwab";
-import { getSetting, initDb, setSetting } from "./sqlite";
+import { getSetting, resetMemoryStoreForTests, setSetting } from "./memoryStore";
 
 describe("Schwab response normalizers", () => {
   it("normalizes batch quote payloads and calculates average dollar volume", () => {
@@ -494,6 +494,7 @@ describe("Schwab response normalizers", () => {
 
 describe("Schwab request resilience", () => {
   beforeEach(() => {
+    resetMemoryStoreForTests();
     __resetSchwabTokenCacheForTest();
   });
 
@@ -503,7 +504,6 @@ describe("Schwab request resilience", () => {
   });
 
   it("bounds option-chain responses with the configured strike count", async () => {
-    await initDb();
     await setSetting("schwabTokens", {
       accessToken: "valid-token",
       refreshToken: "refresh-token",
@@ -524,7 +524,6 @@ describe("Schwab request resilience", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-15T15:00:00.000Z"));
     try {
-      await initDb();
       await setSetting("schwabTokens", {
         accessToken: "valid-token",
         refreshToken: "refresh-token",
@@ -578,7 +577,6 @@ describe("Schwab request resilience", () => {
   });
 
   it("deduplicates concurrent token refreshes so only one refresh request is sent", async () => {
-    await initDb();
     await setSetting("schwabTokens", {
       accessToken: "expired-token",
       refreshToken: "refresh-token",
@@ -609,7 +607,6 @@ describe("Schwab request resilience", () => {
   });
 
   it("retries a transient 429 before succeeding on a quote request", async () => {
-    await initDb();
     await setSetting("schwabTokens", {
       accessToken: "valid-token",
       refreshToken: "refresh-token",
@@ -641,7 +638,6 @@ describe("Schwab request resilience", () => {
   });
 
   it("clears stored tokens when Schwab rejects a refresh token", async () => {
-    await initDb();
     await setSetting("schwabTokens", {
       accessToken: "expired-token",
       refreshToken: "expired-refresh-token",

@@ -9,7 +9,7 @@ npm install --cache .npm-cache
 npm run dev
 ```
 
-Open http://127.0.0.1:5173. Cached scan results load immediately when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
+Open http://127.0.0.1:5173. Cached scan results load from the browser when available; click **Run Scan** to start a background refresh while the cached dashboard stays visible.
 
 The Dashboard displays developing and ready compression setups with a separate `Take` or `Avoid` trade mark. `A` means a setup score of `90-100`; `B` means `70-89`; a five-dot squeeze that currently scores below B can remain visible as a tracked `C`/`Avoid` setup so contextual weakness does not hide the compression before it fires. Weekly squeeze is shown as bonus context only and Weekly EMA structure does not boost, cap, filter, or degrade the setup grade. Hostile technical overlays such as unusable option context can mark the trade `Avoid` without changing the setup grade; Schwab options positioning is confirmation/context only.
 
@@ -23,7 +23,7 @@ API_HTTPS=true
 FMP_API_KEY=your_fmp_key_here
 ```
 
-Then restart the dev server. The local API runs HTTPS by default for Schwab OAuth and will generate a local self-signed certificate in `certs/` the first time it starts. The app will show whether Schwab is connected. If credentials are present but no token is stored, click **Connect Schwab** and complete the OAuth login. Schwab must be configured with the exact same HTTPS callback URL as `.env`.
+Then restart the dev server. The local API runs HTTPS by default for Schwab OAuth and will generate a local self-signed certificate in `certs/` the first time it starts. The app will show whether Schwab is connected. Click **Connect Schwab** after each server restart because OAuth tokens intentionally remain only in server memory. Schwab must be configured with the exact same HTTPS callback URL as `.env`.
 
 The scan uses Schwab for:
 
@@ -43,38 +43,17 @@ The scanner stores no more than two compact session snapshots per enriched symbo
 
 The scanner includes a curated ETF list by default: `SPY`, `QQQ`, `DIA`, `IWM`, `SMH`, `XLK`, `XLF`, `XLV`, `XLE`, `XLY`, `XLI`, `XLC`, `XLP`, `XLU`, `XLB`, and `XLRE`. To override that list, set `ETF_SYMBOLS` to a comma-separated list such as `ETF_SYMBOLS=SPY,QQQ,SMH`.
 
-## Hosting
+## Local-only state
 
-For a hosted private deployment, use **Supabase Free Postgres** for persistence and a **Render Free Web Service** for the app. SQLite remains the local fallback when `DATABASE_URL` is not set, but hosted deployments should use Supabase so scan results, Schwab OAuth tokens, and cached universe data survive redeploys.
+The screener has no external or embedded data store. The Express process keeps active scan state in memory, and the React app saves a compressed, versioned snapshot in browser `localStorage`. That snapshot includes full candidate details, watchlist entries, scan metadata, the refreshed universe, bounded FMP caches, and the two-session Schwab positioning cohorts. On a page reload or server restart, the frontend rehydrates the server before a new scan can run.
 
-Render Free web services can sleep after inactivity. The app is built around that tradeoff: cached results load first after wake-up, the dashboard's market-hours polling is read-only, and a fresh full scan runs only when you click **Run Scan**. The only cron job refreshes the symbol universe monthly; there is no recurring scan job keeping Render awake. Scan-result rows and provider caches are replaced/upserted rather than appended. Schwab positioning retains only two bounded call-OI cohort snapshots for at most 600 enriched symbols and lazily loads that cache, limiting Supabase storage and wake-up egress without requiring continuous collection. A missed trading session simply leaves OI confirmation unavailable until two adjacent-session snapshots exist; it does not weaken or veto the setup.
-
-Recommended Supabase + Render setup:
-
-- Create a Supabase project.
-- In Supabase database connection settings, copy the **Shared Pooler / Session mode** connection string. Do not use the direct IPv6-only connection string for Render Free.
-- Create a Render Free Web Service from this GitHub repo.
-- Build command: `npm install && npm run build`
-- Start command: `npm start`
-- Add environment variables in Render:
-  - `NODE_ENV=production`
-  - `API_HTTPS=false`
-  - `DATABASE_URL=<Supabase shared pooler session-mode connection string>`
-  - `DATABASE_SSL=true`
-  - `PUBLIC_URL=https://trade-screener-auyv.onrender.com`
-  - `CLIENT_ORIGIN=https://trade-screener-auyv.onrender.com`
-  - `SCHWAB_CALLBACK_URL=https://trade-screener-auyv.onrender.com/api/schwab/callback`
-  - `SCHWAB_APP_KEY` and `SCHWAB_APP_SECRET`
-  - `FMP_API_KEY`
-  - Optional private access gate: `APP_BASIC_AUTH_USERNAME` and `APP_BASIC_AUTH_PASSWORD`
-
-Update the Schwab Developer app callback URL to exactly match the hosted `SCHWAB_CALLBACK_URL`. Render provides public HTTPS, so the app disables its local self-signed HTTPS server in production.
+Schwab OAuth tokens are the deliberate exception: they never leave server memory and are never placed in browser storage. Restarting `npm run dev` therefore requires clicking **Connect Schwab** again. Clearing site data for `127.0.0.1:5173` removes the saved local screener snapshot.
 
 ## Automatic Universe
 
 The screener always scans a de-duped **S&P 500 + Nasdaq 100 + selected ETFs** universe. There is no user-managed stock-universe workflow in this version.
 
-The checked-in universe is a safe last-known-good fallback. On startup, the server attempts to refresh the universe from FMP's S&P 500 and Nasdaq constituent endpoints if no valid cached universe exists. If FMP is unavailable, rate-limited, malformed, or incomplete, it falls back to public S&P 500 and Nasdaq 100 source pages. At the end of every month, it checks again and caches the refreshed symbol list in the configured database. If every live refresh source fails, the app keeps using the last cached list or the bundled fallback.
+The checked-in universe is a safe last-known-good fallback. On startup, the server attempts to refresh the universe from FMP's S&P 500 and Nasdaq constituent endpoints if no valid browser snapshot has rehydrated it. If FMP is unavailable, rate-limited, malformed, or incomplete, it falls back to public S&P 500 and Nasdaq 100 source pages. At the end of every month, it checks again and keeps the refreshed symbol list in the local browser snapshot. If every live refresh source fails, the app keeps using the last cached list or the bundled fallback.
 
 OpenAI API is not used for universe gathering in this version. The stock universe comes from FMP index constituent endpoints with deterministic public-source parsing and the bundled list as fallbacks. ETF candidates come from the curated or configured ETF list. Schwab remains the market-data source for screening.
 

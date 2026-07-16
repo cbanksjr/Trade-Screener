@@ -24,8 +24,9 @@ import {
   WalletCards,
   XCircle,
 } from "lucide-react";
-import type { BrokerStatus, CandidateListResponse, CandidateSummary, FundamentalFieldSources, LayerStatus, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
-import { isMarketRefreshWindow } from "../shared/refreshSchedule";
+import type { BrokerStatus, CandidateListResponse, CandidateSummary, FundamentalFieldSources, LayerStatus, LocalSessionSnapshot, ScanMetadata, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import { AUTO_REFRESH_INTERVAL_MS, isMarketRefreshWindow, isRefreshDue } from "../shared/refreshSchedule";
+import { loadBrowserSession, saveBrowserSession } from "./browserCache";
 import { CandlestickChart } from "./CandlestickChart";
 import { normalizeChartCandles } from "./chartCandles";
 import "./styles.css";
@@ -40,8 +41,18 @@ const api = {
   async scan(): Promise<CandidateListResponse> {
     return apiJson("/api/scan", { method: "POST" });
   },
-  async scanStatus(): Promise<ScanResponse> {
+  async scanStatus(): Promise<Partial<ScanResponse>> {
     return apiJson("/api/scan/status");
+  },
+  async session(): Promise<LocalSessionSnapshot> {
+    return apiJson("/api/session");
+  },
+  async restoreSession(snapshot: LocalSessionSnapshot): Promise<LocalSessionSnapshot> {
+    return apiJson("/api/session/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(snapshot),
+    });
   },
   async brokerStatus(): Promise<BrokerStatus> {
     return apiJson("/api/schwab/status");
@@ -94,8 +105,13 @@ function App() {
   const [loading, setLoading] = React.useState(false);
   const [message, setMessage] = React.useState("");
   const [brokerStatus, setBrokerStatus] = React.useState<BrokerStatus | null>(null);
-  const [scanStatus, setScanStatus] = React.useState("idle");
-  const [lastScanFinishedAt, setLastScanFinishedAt] = React.useState<string>();
+  const [sessionMetadata, setSessionMetadata] = React.useState<ScanMetadata>({ scanStatus: "idle" });
+  const scanStatus = sessionMetadata.scanStatus;
+  const lastScanFinishedAt = sessionMetadata.lastScanFinishedAt;
+  const [scanMode, setScanMode] = React.useState<LocalSessionSnapshot["mode"]>("demo");
+  const [scanWarnings, setScanWarnings] = React.useState<string[]>([]);
+  const [runtimeCache, setRuntimeCache] = React.useState<Record<string, unknown>>({});
+  const [browserHydrated, setBrowserHydrated] = React.useState(false);
   const [theme, setTheme] = React.useState<ThemeMode>(initialTheme);
   const [view, setView] = React.useState<ViewMode>("scanner");
   const [watchlist, setWatchlist] = React.useState<WatchlistEntry[]>([]);
@@ -115,22 +131,47 @@ function App() {
     if (schwabResult === "error" && schwabMessage) console.warn("Schwab connection did not complete:", schwabMessage);
     if (schwabResult) window.history.replaceState({}, document.title, window.location.pathname);
 
-    const resultsRequest = api.results();
-    const brokerRequest = api.brokerStatus();
-    const watchlistRequest = api.watchlist();
-    void Promise.allSettled([resultsRequest, brokerRequest, watchlistRequest]).then(([resultsOutcome, brokerOutcome, watchlistOutcome]) => {
-      if (resultsOutcome.status === "fulfilled") applyScanResponse(resultsOutcome.value);
-      else setMessage(resultsOutcome.reason instanceof Error ? resultsOutcome.reason.message : "Failed to load scan results.");
-
-      if (brokerOutcome.status === "fulfilled") {
-        setBrokerStatus(brokerOutcome.value);
-      } else {
-        setBrokerStatus({ configured: false, baseUrl: "", ok: false, checkedAt: new Date().toISOString(), message: "Unable to check Schwab status." });
+    let cancelled = false;
+    void (async () => {
+      const cached = await loadBrowserSession();
+      if (cancelled) return;
+      if (cached) applyLocalSessionSnapshot(cached);
+      try {
+        const serverSnapshot = await api.session();
+        const serverHasState = Boolean(serverSnapshot.results.length || serverSnapshot.watchlist.length || serverSnapshot.lastScanFinishedAt);
+        const next = !serverHasState && cached && (cached.results.length || cached.watchlist.length || cached.lastScanFinishedAt)
+          ? await api.restoreSession(cached)
+          : serverSnapshot;
+        if (!cancelled) applyLocalSessionSnapshot(next);
+      } catch (error) {
+        if (!cancelled && !cached) setMessage(error instanceof Error ? error.message : "Failed to load the local session.");
+      } finally {
+        if (!cancelled) setBrowserHydrated(true);
       }
-
-      if (watchlistOutcome.status === "fulfilled") setWatchlist(watchlistOutcome.value);
+    })();
+    void api.brokerStatus().then(setBrokerStatus).catch(() => {
+      if (!cancelled) setBrokerStatus({ configured: false, baseUrl: "", ok: false, checkedAt: new Date().toISOString(), message: "Unable to check Schwab status." });
     });
+    return () => { cancelled = true; };
   }, []);
+
+  React.useEffect(() => {
+    if (!browserHydrated || !settings) return;
+    const timeout = window.setTimeout(() => {
+      const snapshot: LocalSessionSnapshot = {
+        ...sessionMetadata,
+        mode: scanMode,
+        results: Object.values(resultDetails),
+        settings,
+        warnings: scanWarnings,
+        watchlist,
+        runtimeCache,
+        cachedAt: new Date().toISOString()
+      };
+      void saveBrowserSession(snapshot).catch((error) => console.warn("Unable to save local browser session:", error));
+    }, 250);
+    return () => window.clearTimeout(timeout);
+  }, [browserHydrated, resultDetails, runtimeCache, scanMode, scanWarnings, sessionMetadata, settings, watchlist]);
 
   React.useEffect(() => {
     if (!loading && scanStatus !== "running") return;
@@ -139,43 +180,68 @@ function App() {
         applyScanResponse(data);
         if (!data.isRefreshing) {
           setLoading(false);
-          void api.results().then(applyScanResponse).catch(() => undefined);
+          void api.session().then(applyLocalSessionSnapshot).catch(() => undefined);
         }
       }).catch(() => setLoading(false));
     }, 3000);
     return () => window.clearInterval(interval);
   }, [loading, scanStatus]);
 
-  // While the market is open, poll the lightweight read endpoints so the displayed price
-  // tracks the broker's live quote. The server overlays a fresh Schwab price on every read
-  // (guarded by its own short TTL cache), so this is a read-only refresh — it never triggers
-  // a rescan. Outside market hours it stays idle, and the last price shown on load already
-  // reflects the most recent close via the same overlay.
+  const lastMarketPollAt = React.useRef(0);
+  // While the market is open, poll lightweight price overlays at most once every 15 minutes.
+  // The browser retains the full scan snapshot; this read-only refresh only patches summary
+  // prices and never clears candles, evidence, watchlist state, or trade-plan details.
   React.useEffect(() => {
     if (!brokerStatus?.ok) return;
     const pollLivePrices = () => {
       if (document.visibilityState !== "visible" || loading || scanStatus === "running") return;
       if (!isMarketRefreshWindow()) return;
+      if (!isRefreshDue(lastMarketPollAt.current)) return;
+      lastMarketPollAt.current = Date.now();
       void api.results().then((data) => applyScanResponse(data)).catch(() => undefined);
-      if (view === "watchlist") void api.watchlist().then(setWatchlist).catch(() => undefined);
     };
-    const interval = window.setInterval(pollLivePrices, 45_000);
+    const interval = window.setInterval(pollLivePrices, AUTO_REFRESH_INTERVAL_MS);
     document.addEventListener("visibilitychange", pollLivePrices);
     return () => {
       window.clearInterval(interval);
       document.removeEventListener("visibilitychange", pollLivePrices);
     };
-  }, [brokerStatus?.ok, loading, scanStatus, view]);
+  }, [brokerStatus?.ok, loading, scanStatus]);
+
+  function applyLocalSessionSnapshot(snapshot: LocalSessionSnapshot) {
+    const details = Object.fromEntries(snapshot.results.map((result) => [result.symbol, result]));
+    const nextResults = sortResultsByGrade(snapshot.results.filter((result) => result.grade !== "C"));
+    setResultDetails(details);
+    setResults(nextResults);
+    setSettings(snapshot.settings);
+    setWatchlist(snapshot.watchlist);
+    setRuntimeCache(snapshot.runtimeCache ?? {});
+    setScanMode(snapshot.mode);
+    setScanWarnings(snapshot.warnings ?? []);
+    setSessionMetadata({
+      scanStatus: snapshot.scanStatus,
+      lastScanStartedAt: snapshot.lastScanStartedAt,
+      lastScanFinishedAt: snapshot.lastScanFinishedAt,
+      lastScanFailedAt: snapshot.lastScanFailedAt,
+      lastScanMode: snapshot.lastScanMode,
+      lastScanWarnings: snapshot.lastScanWarnings,
+      scanDiagnostics: snapshot.scanDiagnostics,
+      nextRefreshAt: snapshot.nextRefreshAt,
+      isRefreshing: snapshot.isRefreshing
+    });
+    setLoading(Boolean(snapshot.isRefreshing));
+    setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
+  }
 
   function applyScanResponse(data: Partial<ScanResponse> | Partial<CandidateListResponse>) {
     const nextResults = data.results ? sortResultsByGrade(data.results.filter((result) => result.grade !== "C")) : undefined;
     if (nextResults) setResults(nextResults);
     if (data.settings) setSettings(data.settings);
-    if (data.lastScanFinishedAt) setLastScanFinishedAt(data.lastScanFinishedAt);
+    if (data.mode) setScanMode(data.mode);
+    if (data.warnings) setScanWarnings(data.warnings);
     if (nextResults) setSelected((current) => current && nextResults.some((item) => item.symbol === current) ? current : nextResults[0]?.symbol ?? "");
-    setScanStatus(data.scanStatus ?? "idle");
+    setSessionMetadata((current) => mergeScanMetadata(current, data));
     setLoading(Boolean(data.isRefreshing));
-    if (!data.isRefreshing) void api.watchlist().then(setWatchlist).catch(() => undefined);
   }
 
   async function startRefresh(showMessage: boolean) {
@@ -581,6 +647,20 @@ function sortResultsByGrade<T extends CandidateSummary>(results: T[]): T[] {
     if (rightDots !== leftDots) return rightDots - leftDots;
     return left.symbol.localeCompare(right.symbol);
   });
+}
+
+function mergeScanMetadata(current: ScanMetadata, data: Partial<ScanMetadata>): ScanMetadata {
+  return {
+    scanStatus: data.scanStatus ?? current.scanStatus,
+    lastScanStartedAt: data.lastScanStartedAt ?? current.lastScanStartedAt,
+    lastScanFinishedAt: data.lastScanFinishedAt ?? current.lastScanFinishedAt,
+    lastScanFailedAt: data.lastScanFailedAt ?? current.lastScanFailedAt,
+    lastScanMode: data.lastScanMode ?? current.lastScanMode,
+    lastScanWarnings: data.lastScanWarnings ?? current.lastScanWarnings,
+    scanDiagnostics: data.scanDiagnostics ?? current.scanDiagnostics,
+    nextRefreshAt: data.nextRefreshAt ?? current.nextRefreshAt,
+    isRefreshing: data.isRefreshing ?? current.isRefreshing
+  };
 }
 
 function scanStatusLabel(status: string, loading: boolean): string {

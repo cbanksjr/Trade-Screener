@@ -1,7 +1,7 @@
 import type { AssetType, InstitutionalEdgeFactor, InstitutionalEdgeSummary, LayerStatus } from "../shared/types";
 import { config } from "./config";
 import { fetchWithRetry } from "./httpRetry";
-import { getSetting, setSetting } from "./sqlite";
+import { getSetting, setSetting } from "./memoryStore";
 
 type FetchLike = (input: string | URL, init?: RequestInit) => Promise<Response>;
 

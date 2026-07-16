@@ -4,7 +4,7 @@
 
 This is a local TypeScript options swing screener. It has a Vite/React frontend and an Express/Node backend that scans S&P 500, Nasdaq 100, and selected ETF symbols for long-call compression setups.
 
-Read `README.md` before changing scanner behavior. It documents the trading rules, grading model, Schwab/FMP usage, hosting setup, and expected scan behavior.
+Read `README.md` before changing scanner behavior. It documents the trading rules, grading model, Schwab/FMP usage, local state model, and expected scan behavior.
 
 ## Common Commands
 
@@ -28,12 +28,12 @@ Local API defaults to `https://127.0.0.1:4173`.
 - `server/scoring.ts` owns grading, setup quality, trade marks, and layer evaluation logic.
 - `server/indicators.ts` owns EMA, ATR, squeeze, and momentum calculations.
 - `server/schwab.ts` and `server/fmp.ts` isolate external data providers; `server/schwabPositioning.ts` derives the bounded Schwab options-positioning overlay.
-- `server/sqlite.ts` handles local SQLite and hosted Postgres persistence.
+- `server/memoryStore.ts` holds ephemeral server state; `src/browserCache.ts` owns compressed browser persistence and startup rehydration.
 - `shared/types.ts` is the contract between server and frontend.
 
 ## Environment And Secrets
 
-Do not commit `.env`, API keys, OAuth tokens, generated certs, local databases, build output, or `node_modules`.
+Do not commit `.env`, API keys, OAuth tokens, generated certs, build output, or `node_modules`.
 
 Important environment variables include:
 
@@ -42,8 +42,6 @@ Important environment variables include:
 - `SCHWAB_CALLBACK_URL`
 - `API_HTTPS`
 - `FMP_API_KEY`
-- `DATABASE_URL`
-- `DATABASE_SSL`
 - `PUBLIC_URL`
 - `CLIENT_ORIGIN`
 - `ETF_SYMBOLS`
@@ -58,7 +56,6 @@ Treat these as generated/local state unless the user explicitly asks otherwise:
 - `node_modules/`
 - `dist/`
 - `dist-server/`
-- `data/`
 - `certs/`
 - `*.tsbuildinfo`
 

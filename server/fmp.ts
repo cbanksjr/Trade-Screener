@@ -1,6 +1,6 @@
 import { config } from "./config";
 import { fetchWithRetry } from "./httpRetry";
-import { getSetting, setSetting } from "./sqlite";
+import { getSetting, setSetting } from "./memoryStore";
 
 export type FmpFundamentals = {
   symbol: string;

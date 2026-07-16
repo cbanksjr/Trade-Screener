@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Candle, ScanDiagnostics, ScanResponse, ScanResult, Settings } from "../shared/types";
 import { defaultUniverseSymbols } from "./defaultUniverse";
 import { activeSqueezeDotCount } from "./indicators";
-import { getCachedResults, getDatabaseReadStats, getScanMetadata, getSetting, getWatchlistEntries, initDb, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./memoryStore";
 import { defaultEtfSymbols, parseEtfSymbols } from "./etfUniverse";
-import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readDisplayResults, readScanStatusResponse, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
+import { __clearLivePriceCacheForTest, __resetScanStateForTest, addToWatchlist, mergeFundamentals, mergeScanResponseMetadata, overlayLiveQuotePrices, priceMatchesCandles, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readDisplayResults, readLocalSessionSnapshot, readScanStatusResponse, readSettings, readWatchlist, recordUniverseWarning, removeFromWatchlist, resolveScanSymbols, restoreLocalSessionSnapshot, SettingsValidationError, startScanRefresh, withCandleLiquidityFallback, writeSettings } from "./scanner";
 import type { SchwabQuote } from "./schwab";
 import {
   BEARISH_MACRO_GRADE_CAP_REASON,
@@ -14,7 +14,7 @@ import {
 } from "./scoring";
 
 describe("scan symbol resolution", () => {
-  it("uses the automatic S&P 500 + Nasdaq 100 universe plus default ETFs", async () => withDbRestore(async () => {
+  it("uses the automatic S&P 500 + Nasdaq 100 universe plus default ETFs", async () => withStoreRestore(async () => {
     await setSetting("settings", {});
 
     const symbols = await resolveScanSymbols();
@@ -188,7 +188,7 @@ describe("fundamental provider merge", () => {
 });
 
 describe("settings", () => {
-  it("defaults volume liquidity thresholds", async () => withDbRestore(async () => {
+  it("defaults volume liquidity thresholds", async () => withStoreRestore(async () => {
     await setSetting("settings", {});
 
     const settings = await readSettings();
@@ -196,7 +196,7 @@ describe("settings", () => {
     expect(settings.minAvgDollarVolume).toBe(300_000_000);
   }));
 
-  it("migrates the old $600M average dollar volume default to $300M", async () => withDbRestore(async () => {
+  it("migrates the old $600M average dollar volume default to $300M", async () => withStoreRestore(async () => {
     await setSetting("settings", { minAvgDollarVolume: 600_000_000 });
 
     const settings = await readSettings();
@@ -206,7 +206,7 @@ describe("settings", () => {
     expect(stored.minAvgDollarVolume).toBe(300_000_000);
   }));
 
-  it("preserves custom average dollar volume settings", async () => withDbRestore(async () => {
+  it("preserves custom average dollar volume settings", async () => withStoreRestore(async () => {
     await setSetting("settings", { minAvgDollarVolume: 450_000_000 });
 
     const settings = await readSettings();
@@ -214,7 +214,7 @@ describe("settings", () => {
     expect(settings.minAvgDollarVolume).toBe(450_000_000);
   }));
 
-  it("allows settings to override the ETF scan list", async () => withDbRestore(async () => {
+  it("allows settings to override the ETF scan list", async () => withStoreRestore(async () => {
     await setSetting("settings", { etfSymbols: ["spy", "qqq", "bad-symbol!", "SPY"] });
 
     const settings = await readSettings();
@@ -226,7 +226,7 @@ describe("settings", () => {
     expect(symbols).not.toContain("SMH");
   }));
 
-  it("uses the curated ETF list when settings do not override it", async () => withDbRestore(async () => {
+  it("uses the curated ETF list when settings do not override it", async () => withStoreRestore(async () => {
     await setSetting("settings", {});
 
     const settings = await readSettings();
@@ -234,20 +234,20 @@ describe("settings", () => {
     expect(settings.etfSymbols).toEqual(defaultEtfSymbols);
   }));
 
-  it("rejects invalid numeric settings before they are stored", async () => withDbRestore(async () => {
+  it("rejects invalid numeric settings before they are stored", async () => withStoreRestore(async () => {
     await expect(writeSettings({ minPrice: -1 })).rejects.toBeInstanceOf(SettingsValidationError);
 
     const settings = await readSettings();
     expect(settings.minPrice).toBe(20);
   }));
 
-  it("rejects malformed ETF setting payloads", async () => withDbRestore(async () => {
+  it("rejects malformed ETF setting payloads", async () => withStoreRestore(async () => {
     await expect(writeSettings({ etfSymbols: "SPY,QQQ" as unknown as string[] })).rejects.toBeInstanceOf(SettingsValidationError);
   }));
 });
 
 describe("background scan refresh", () => {
-  it("starts a scan without waiting for completion", async () => withDbRestore(async () => {
+  it("starts a scan without waiting for completion", async () => withStoreRestore(async () => {
     let calls = 0;
     let resolveScan!: (value: ScanResponse) => void;
     const runner = () => {
@@ -267,7 +267,7 @@ describe("background scan refresh", () => {
     await settleBackgroundScan();
   }));
 
-  it("does not start a duplicate scan while one is running", async () => withDbRestore(async () => {
+  it("does not start a duplicate scan while one is running", async () => withStoreRestore(async () => {
     let calls = 0;
     let resolveScan!: (value: ScanResponse) => void;
     const runner = () => {
@@ -287,7 +287,7 @@ describe("background scan refresh", () => {
     await settleBackgroundScan();
   }));
 
-  it("deduplicates simultaneous refresh triggers before scan metadata is persisted", async () => withDbRestore(async () => {
+  it("deduplicates simultaneous refresh triggers before scan metadata is persisted", async () => withStoreRestore(async () => {
     let calls = 0;
     let resolveScan!: (value: ScanResponse) => void;
     const runner = () => {
@@ -307,7 +307,7 @@ describe("background scan refresh", () => {
     await settleBackgroundScan();
   }));
 
-  it("loads cached results without starting a slow scan", async () => withDbRestore(async () => {
+  it("loads cached results without starting a slow scan", async () => withStoreRestore(async () => {
     await replaceScanResults([qualifyingResult("CACHE")]);
     await setScanMetadata({ scanStatus: "complete", lastScanMode: "demo", lastScanFinishedAt: "2026-05-30T12:00:00.000Z" });
 
@@ -317,7 +317,7 @@ describe("background scan refresh", () => {
     expect(response.isRefreshing).toBe(false);
   }));
 
-  it("does not present preserved demo rows as part of a live scan snapshot", async () => withDbRestore(async () => {
+  it("does not present preserved demo rows as part of a live scan snapshot", async () => withStoreRestore(async () => {
     const demo = qualifyingResult("MOCK");
     const live = { ...qualifyingResult("LIVE"), dataSource: "schwab" as const };
     await replaceScanResults([demo, live]);
@@ -329,7 +329,7 @@ describe("background scan refresh", () => {
     expect((await readWatchlist()).map((entry) => entry.symbol)).toEqual(["LIVE"]);
   }));
 
-  it("serves lightweight A/B summaries while retaining full C setup details", async () => withDbRestore(async () => {
+  it("serves lightweight A/B summaries while retaining full C setup details", async () => withStoreRestore(async () => {
     const aGrade = qualifyingResult("ALPHA");
     const cGrade = { ...qualifyingResult("CHARLIE"), grade: "C" as const, setupScore: 65, dailySqueezeDotCount: 5 };
     await replaceScanResults([aGrade, cGrade]);
@@ -345,18 +345,18 @@ describe("background scan refresh", () => {
     expect(retainedC).toHaveProperty("suggestedOptions");
   }));
 
-  it("serves repeated cached-result reads without additional database hydration", async () => withDbRestore(async () => {
+  it("serves repeated cached-result reads from the in-memory store", async () => withStoreRestore(async () => {
     await replaceScanResults([qualifyingResult("MEMORY")]);
-    const before = getDatabaseReadStats();
 
-    await readDisplayResults();
-    await readDisplayResults();
-    await readCachedScanResponse();
+    const first = await readDisplayResults();
+    const second = await readDisplayResults();
+    const response = await readCachedScanResponse();
 
-    expect(getDatabaseReadStats()).toEqual(before);
+    expect(second).toEqual(first);
+    expect(response.results).toEqual(first);
   }));
 
-  it("returns lightweight scan status without results or settings", async () => withDbRestore(async () => {
+  it("returns lightweight scan status without results or settings", async () => withStoreRestore(async () => {
     await replaceScanResults([qualifyingResult("STATUS")]);
     await setScanMetadata({ scanStatus: "complete", lastScanMode: "live" });
 
@@ -368,7 +368,32 @@ describe("background scan refresh", () => {
     expect(status).not.toHaveProperty("settings");
   }));
 
-  it("appends a universe-refresh warning without clobbering existing scan metadata", async () => withDbRestore(async () => {
+  it("rehydrates an empty server store from the browser-owned local snapshot", async () => withStoreRestore(async () => {
+    const result = { ...qualifyingResult("CACHEX"), dataSource: "schwab" as const };
+    await replaceScanResults([]);
+    for (const entry of await getWatchlistEntries()) await removeWatchlistEntry(entry.symbol);
+    await setScanMetadata({ scanStatus: "idle" });
+
+    const restored = await restoreLocalSessionSnapshot({
+      mode: "live",
+      results: [result],
+      settings: await readSettings(),
+      warnings: [],
+      watchlist: [{ symbol: result.symbol, addedAt: "2026-07-15T12:00:00.000Z", result }],
+      runtimeCache: { schwabPositioningSnapshotsV2: { version: 2, symbols: {} } },
+      cachedAt: "2026-07-16T12:00:00.000Z",
+      scanStatus: "complete",
+      lastScanMode: "live",
+      lastScanFinishedAt: "2026-07-16T11:59:00.000Z"
+    });
+
+    expect(restored.results.map((item) => item.symbol)).toEqual(["CACHEX"]);
+    expect(restored.watchlist).toHaveLength(1);
+    expect(await getSetting("schwabPositioningSnapshotsV2", undefined)).toEqual({ version: 2, symbols: {} });
+    expect((await readLocalSessionSnapshot()).scanStatus).toBe("complete");
+  }));
+
+  it("appends a universe-refresh warning without clobbering existing scan metadata", async () => withStoreRestore(async () => {
     await setScanMetadata({ scanStatus: "complete", lastScanMode: "demo", lastScanWarnings: ["Existing warning."] });
 
     await recordUniverseWarning("Default universe refresh failed: network error.");
@@ -379,7 +404,7 @@ describe("background scan refresh", () => {
     expect(metadata.lastScanWarnings).toEqual(["Existing warning.", "Default universe refresh failed: network error."]);
   }));
 
-  it("filters cached results when the Daily squeeze is inactive", async () => withDbRestore(async () => {
+  it("filters cached results when the Daily squeeze is inactive", async () => withStoreRestore(async () => {
     await replaceScanResults([
       qualifyingResult("NOSQZ", indicator("none"), indicator("none"))
     ]);
@@ -387,7 +412,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual([]);
   }));
 
-  it("caps a cached A-band setup score to grade B when Sector Strength data is missing", async () => withDbRestore(async () => {
+  it("caps a cached A-band setup score to grade B when Sector Strength data is missing", async () => withStoreRestore(async () => {
     const missingSector: ScanResult = {
       ...qualifyingResult("NOSECTORCACHE"),
       setupScore: 92,
@@ -403,7 +428,7 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).toContain("Sector Strength unavailable.");
   }));
 
-  it("filters old cached short results from display", async () => withDbRestore(async () => {
+  it("filters old cached short results from display", async () => withStoreRestore(async () => {
     const oldShort: ScanResult = { ...qualifyingResult("OLDPUT"), setupDirection: "short" };
     await replaceScanResults([
       qualifyingResult("LONG"),
@@ -413,7 +438,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["LONG"]);
   }));
 
-  it("filters cached candidates whose Daily Squeeze histogram is not above zero", async () => withDbRestore(async () => {
+  it("filters cached candidates whose Daily Squeeze histogram is not above zero", async () => withStoreRestore(async () => {
     const negativeHistogram: ScanResult = {
       ...qualifyingResult("NEGHIST"),
       indicators: { ...indicator("low"), momentum: -1, momentumImproving: true }
@@ -426,7 +451,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["POSHIST"]);
   }));
 
-  it("filters cached candidates with fewer than 2 active Daily squeeze dots", async () => withDbRestore(async () => {
+  it("filters cached candidates with fewer than 2 active Daily squeeze dots", async () => withStoreRestore(async () => {
     const insufficientDots: ScanResult = {
       ...qualifyingResult("ONEDOT"),
       dailySqueezeDotCount: 1,
@@ -445,7 +470,7 @@ describe("background scan refresh", () => {
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["TWODOTS"]);
   }));
 
-  it("keeps bearish-macro cached candidates visible as B setups still marked Take", async () => withDbRestore(async () => {
+  it("keeps bearish-macro cached candidates visible as B setups still marked Take", async () => withStoreRestore(async () => {
     const macroCaution: ScanResult = {
       ...qualifyingResult("MACROCAUTION"),
       setupScore: 95,
@@ -470,7 +495,7 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("treats cached FMP Institutional Edge as informational only", async () => withDbRestore(async () => {
+  it("treats cached FMP Institutional Edge as informational only", async () => withStoreRestore(async () => {
     const staleEdgeAvoid: ScanResult = {
       ...qualifyingResult("FMPINFO"),
       setupScore: 95,
@@ -491,7 +516,7 @@ describe("background scan refresh", () => {
     expect(result.institutionalEdgeStatus).toBe("Bearish");
   }));
 
-  it("removes legacy QuantData promotion from cached results and restores the technical grade", async () => withDbRestore(async () => {
+  it("removes legacy QuantData promotion from cached results and restores the technical grade", async () => withStoreRestore(async () => {
     const promoted: ScanResult = {
       ...qualifyingResult("PROMOTED"),
       setupScore: 88,
@@ -518,7 +543,7 @@ describe("background scan refresh", () => {
     expect(result.gradeBeforeQuantData).toBeUndefined();
   }));
 
-  it("discards cached QuantData evidence instead of relabeling it as Schwab positioning", async () => withDbRestore(async () => {
+  it("discards cached QuantData evidence instead of relabeling it as Schwab positioning", async () => withStoreRestore(async () => {
     const legacyVeto: ScanResult = {
       ...qualifyingResult("LEGACYVETO"),
       institutionalPositioningStatus: "vetoed",
@@ -550,7 +575,7 @@ describe("background scan refresh", () => {
     expect(result.institutionalPositioningStatus).toBeUndefined();
   }));
 
-  it("does not promote a cached result on reload when no QuantData promotion was recorded", async () => withDbRestore(async () => {
+  it("does not promote a cached result on reload when no QuantData promotion was recorded", async () => withStoreRestore(async () => {
     const notPromoted: ScanResult = {
       ...qualifyingResult("NOTPROMOTED"),
       setupScore: 88
@@ -564,7 +589,7 @@ describe("background scan refresh", () => {
     expect(result.longCallDecision).toBe("Moderate Long Call Candidate");
   }));
 
-  it("displays valid A/B candidates regardless of legacy decision and weekly structure", async () => withDbRestore(async () => {
+  it("displays valid A/B candidates regardless of legacy decision and weekly structure", async () => withStoreRestore(async () => {
     const watchlist: ScanResult = { ...qualifyingResult("WATCH"), longCallDecision: "Watchlist Candidate" };
     const cGrade: ScanResult = { ...qualifyingResult("CGRADE"), setupScore: 69, grade: "C" };
     const nonBullishWeekly: ScanResult = {
@@ -585,7 +610,7 @@ describe("background scan refresh", () => {
     expect(results.find((result) => result.symbol === "WEEKLYNEUTRAL")?.longCallDecision).toBe("Moderate Long Call Candidate");
   }));
 
-  it("keeps ATR-only weekly cached candidates visible without capping them", async () => withDbRestore(async () => {
+  it("keeps ATR-only weekly cached candidates visible without capping them", async () => withStoreRestore(async () => {
     const atrOnly: ScanResult = {
       ...qualifyingResult("WEEKLYATR"),
       weeklyQualificationMode: "ema21-atr",
@@ -604,7 +629,7 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("does not add the missing Daily EMA-stack reason to cached neutral market structure when Daily stack is present", async () => withDbRestore(async () => {
+  it("does not add the missing Daily EMA-stack reason to cached neutral market structure when Daily stack is present", async () => withStoreRestore(async () => {
     const weeklyCap: ScanResult = {
       ...qualifyingResult("CACHEDWEEKLY"),
       weeklyQualificationMode: "ema21-atr",
@@ -629,7 +654,7 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("keeps the missing Daily EMA-stack reason for cached neutral market structure when Daily stack is absent", async () => withDbRestore(async () => {
+  it("keeps the missing Daily EMA-stack reason for cached neutral market structure when Daily stack is absent", async () => withStoreRestore(async () => {
     const missingDailyStack: ScanResult = {
       ...qualifyingResult("CACHEDDAILY"),
       setupScore: 95,
@@ -652,7 +677,7 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("keeps extended-entry cached candidates visible without a weekly-style cap", async () => withDbRestore(async () => {
+  it("keeps extended-entry cached candidates visible without a weekly-style cap", async () => withStoreRestore(async () => {
     const extendedEntry: ScanResult = {
       ...qualifyingResult("EXTENDEDENTRY"),
       dailyEntryQualificationMode: "extended",
@@ -672,7 +697,7 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("keeps developing-squeeze cached candidates visible with setup-grade explanation", async () => withDbRestore(async () => {
+  it("keeps developing-squeeze cached candidates visible with setup-grade explanation", async () => withStoreRestore(async () => {
     const developing: ScanResult = {
       ...qualifyingResult("DEVELOPING"),
       dailyEntryQualificationMode: "strict",
@@ -693,7 +718,7 @@ describe("background scan refresh", () => {
     expect(result.gradeCapReasons).not.toContain(RELAXED_TREND_GRADE_CAP_REASON);
   }));
 
-  it("normalizes old cached compression diagnostic text without using old scores as dots", async () => withDbRestore(async () => {
+  it("normalizes old cached compression diagnostic text without using old scores as dots", async () => withStoreRestore(async () => {
     const legacy: ScanResult = {
       ...qualifyingResult("LEGACY"),
       compressionQualityScore: 95,
@@ -717,7 +742,7 @@ describe("background scan refresh", () => {
     expect(result.alertMessage).not.toContain("compression status");
   }));
 
-  it("recomputes daily squeeze dots from old cached candles when available", async () => withDbRestore(async () => {
+  it("recomputes daily squeeze dots from old cached candles when available", async () => withStoreRestore(async () => {
     const candles = activeDailySqueezeCandles();
     const expectedDots = activeSqueezeDotCount(candles);
     const legacy: ScanResult = {
@@ -743,7 +768,7 @@ describe("background scan refresh", () => {
     expect(result.layerEvaluations[0].detail).toContain(expectedDots + " consecutive active squeeze dots");
   }));
 
-  it("drops a cached result whose header price no longer matches its candle scale", async () => withDbRestore(async () => {
+  it("drops a cached result whose header price no longer matches its candle scale", async () => withStoreRestore(async () => {
     const candles = activeDailySqueezeCandles();
     const lastClose = candles[candles.length - 1].close;
     const mismatched: ScanResult = { ...qualifyingResult("BADSCALE"), candles, price: lastClose * 0.6 };
@@ -756,7 +781,7 @@ describe("background scan refresh", () => {
     expect(symbols).not.toContain("BADSCALE");
   }));
 
-  it("removes stale cached symbols after a completed refresh", async () => withDbRestore(async () => {
+  it("removes stale cached symbols after a completed refresh", async () => withStoreRestore(async () => {
     await replaceScanResults([qualifyingResult("STALE")]);
     expect((await readDisplayResults()).map((result) => result.symbol)).toEqual(["STALE"]);
 
@@ -766,7 +791,7 @@ describe("background scan refresh", () => {
     expect(await readDisplayResults()).toEqual([]);
   }));
 
-  it("keeps a five-dot squeeze visible even when score, momentum, entry, and compression context say Avoid", async () => withDbRestore(async () => {
+  it("keeps a five-dot squeeze visible even when score, momentum, entry, and compression context say Avoid", async () => withStoreRestore(async () => {
     const fiveDot: ScanResult = {
       ...qualifyingResult("FIVEDOT"),
       setupScore: 55,
@@ -791,7 +816,7 @@ describe("background scan refresh", () => {
     expect(result.squeezeLifecycleStatus).toBe("ready");
   }));
 
-  it("saves scan metadata after a completed refresh", async () => withDbRestore(async () => {
+  it("saves scan metadata after a completed refresh", async () => withStoreRestore(async () => {
     const diagnostics = fakeDiagnostics({ scannedSymbols: 2, qualifiedResults: 1, stockLiquidity: 1 });
     await startScanRefresh(() => fakeResponse([qualifyingResult("META")], ["ok"], diagnostics));
     await settleBackgroundScan();
@@ -812,7 +837,7 @@ describe("background scan refresh", () => {
     });
   }));
 
-  it("marks a provider-wide scan failure and preserves the previous result cache", async () => withDbRestore(async () => {
+  it("marks a provider-wide scan failure and preserves the previous result cache", async () => withStoreRestore(async () => {
     await replaceScanResults([qualifyingResult("PRESERVED")]);
     const diagnostics = fakeDiagnostics({ scannedSymbols: 100, qualifiedResults: 0, quoteMissing: 90 });
 
@@ -826,7 +851,7 @@ describe("background scan refresh", () => {
     expect(metadata.lastScanWarnings?.[0]).toContain("Previous results and watchlist entries were preserved");
   }));
 
-  it("returns completed scan diagnostics with cached results", async () => withDbRestore(async () => {
+  it("returns completed scan diagnostics with cached results", async () => withStoreRestore(async () => {
     await replaceScanResults([qualifyingResult("DIAG")]);
     await setScanMetadata({
       scanStatus: "complete",
@@ -868,7 +893,7 @@ describe("background scan refresh", () => {
 });
 
 describe("watchlist manual add", () => {
-  it("does not automatically add a scanned symbol marked Take to the watchlist", async () => withDbRestore(async () => {
+  it("does not automatically add a scanned symbol marked Take to the watchlist", async () => withStoreRestore(async () => {
     const take = { ...qualifyingResult("TAKEME"), tradeMark: "Take" as const };
 
     await startScanRefresh(() => fakeResponse([take]));
@@ -878,7 +903,7 @@ describe("watchlist manual add", () => {
     expect(watchlist.map((entry) => entry.symbol)).not.toContain("TAKEME");
   }));
 
-  it("adds a scanned symbol to the watchlist when requested manually", async () => withDbRestore(async () => {
+  it("adds a scanned symbol to the watchlist when requested manually", async () => withStoreRestore(async () => {
     const take = { ...qualifyingResult("TAKEME"), tradeMark: "Take" as const };
 
     await startScanRefresh(() => fakeResponse([take]));
@@ -889,14 +914,14 @@ describe("watchlist manual add", () => {
     expect(watchlist.map((entry) => entry.symbol)).toContain("TAKEME");
   }));
 
-  it("throws when adding a symbol that is not in the current scan results", async () => withDbRestore(async () => {
+  it("throws when adding a symbol that is not in the current scan results", async () => withStoreRestore(async () => {
     await startScanRefresh(() => fakeResponse([]));
     await settleBackgroundScan();
 
     await expect(addToWatchlist("NOTFOUND")).rejects.toThrow();
   }));
 
-  it("removes a watchlisted symbol only after a later scan confirms the squeeze fired", async () => withDbRestore(async () => {
+  it("removes a watchlisted symbol only after a later scan confirms the squeeze fired", async () => withStoreRestore(async () => {
     const take = { ...qualifyingResult("STICKY"), tradeMark: "Take" as const };
     const fired = releasedResult(take);
 
@@ -910,7 +935,7 @@ describe("watchlist manual add", () => {
     expect(watchlist.map((entry) => entry.symbol)).not.toContain("STICKY");
   }));
 
-  it("keeps a watchlisted symbol when a later scan could not evaluate it (data gap)", async () => withDbRestore(async () => {
+  it("keeps a watchlisted symbol when a later scan could not evaluate it (data gap)", async () => withStoreRestore(async () => {
     const take = { ...qualifyingResult("GAPPY"), tradeMark: "Take" as const };
 
     await startScanRefresh(() => fakeResponse([take]));
@@ -923,7 +948,7 @@ describe("watchlist manual add", () => {
     expect(watchlist.map((entry) => entry.symbol)).toContain("GAPPY");
   }));
 
-  it("keeps and updates a watchlisted symbol when a later scan marks it Avoid", async () => withDbRestore(async () => {
+  it("keeps and updates a watchlisted symbol when a later scan marks it Avoid", async () => withStoreRestore(async () => {
     const take = { ...qualifyingResult("FLIPS"), tradeMark: "Take" as const };
     const avoid = { ...qualifyingResult("FLIPS"), tradeMark: "Avoid" as const, tradeMarkReasons: ["Bearish macro."] };
 
@@ -939,7 +964,7 @@ describe("watchlist manual add", () => {
     expect(entry?.result.tradeMarkReasons).toContain("Bearish macro.");
   }));
 
-  it("refreshes a watchlisted symbol's stored result after a later scan", async () => withDbRestore(async () => {
+  it("refreshes a watchlisted symbol's stored result after a later scan", async () => withStoreRestore(async () => {
     const take = { ...qualifyingResult("REFRESH"), tradeMark: "Take" as const, price: 100 };
     const updated = { ...qualifyingResult("REFRESH"), tradeMark: "Take" as const, price: 101 };
 
@@ -954,7 +979,7 @@ describe("watchlist manual add", () => {
     expect(entry?.result.price).toBe(101);
   }));
 
-  it("removes a symbol from the watchlist on request", async () => withDbRestore(async () => {
+  it("removes a symbol from the watchlist on request", async () => withStoreRestore(async () => {
     const take = { ...qualifyingResult("DROPME"), tradeMark: "Take" as const };
 
     await startScanRefresh(() => fakeResponse([take]));
@@ -968,8 +993,7 @@ describe("watchlist manual add", () => {
   }));
 });
 
-async function withDbRestore(run: () => Promise<void>) {
-  await initDb();
+async function withStoreRestore(run: () => Promise<void>) {
   const cached = await getCachedResults() as Array<{ symbol: string }>;
   const metadata = await getScanMetadata();
   const settings = await getSetting<Partial<Settings>>("settings", {});
@@ -1065,7 +1089,7 @@ describe("live price overlay", () => {
     expect(overlaid[0].price).toBe(base.price);
   });
 
-  it("invalidates pre-scan live quote overlays after a successful scan", async () => withDbRestore(async () => {
+  it("invalidates pre-scan live quote overlays after a successful scan", async () => withStoreRestore(async () => {
     __clearLivePriceCacheForTest();
     const results = [{ ...qualifyingResult("AAPL"), price: 100 }];
     await overlayLiveQuotePrices(results, {

@@ -3,7 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { config } from "./config";
 import { createFmpScanFallback, type FmpFundamentals } from "./fmp";
 import { fetchWithRetry } from "./httpRetry";
-import { deleteSetting, getSetting, setSetting } from "./sqlite";
+import { deleteSetting, getSetting, setSetting } from "./memoryStore";
 import type { BrokerStatus, Candle, FundamentalAnalysis, FundamentalFieldSources, OptionContract, ScanResult } from "../shared/types";
 import { isCompletedRegularSessionDate } from "../shared/marketTime";
 

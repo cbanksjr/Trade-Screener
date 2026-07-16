@@ -1,6 +1,10 @@
 export const MARKET_TIME_ZONE = "America/Chicago";
 export const AUTO_REFRESH_INTERVAL_MS = 15 * 60 * 1000;
 
+export function isRefreshDue(lastRefreshAt: number, now = Date.now()): boolean {
+  return now - lastRefreshAt >= AUTO_REFRESH_INTERVAL_MS;
+}
+
 const marketClock = new Intl.DateTimeFormat("en-US", {
   timeZone: MARKET_TIME_ZONE,
   weekday: "short",

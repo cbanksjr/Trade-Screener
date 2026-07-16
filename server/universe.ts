@@ -1,7 +1,7 @@
 import { defaultUniverseName, defaultUniverseSymbols } from "./defaultUniverse";
 import { config } from "./config";
 import { normalizeFmpSector } from "./fmp";
-import { getSetting, setSetting } from "./sqlite";
+import { getSetting, setSetting } from "./memoryStore";
 
 export type UniverseCache = {
   symbols: string[];

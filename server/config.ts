@@ -10,7 +10,6 @@ export const config = {
   host: process.env.HOST ?? (isProduction ? "0.0.0.0" : "127.0.0.1"),
   isProduction,
   clientOrigin: process.env.CLIENT_ORIGIN ?? (publicUrl || localClientOrigin),
-  databaseUrl: process.env.DATABASE_URL ?? "",
   schwabAppKey: process.env.SCHWAB_APP_KEY ?? "",
   schwabAppSecret: process.env.SCHWAB_APP_SECRET ?? "",
   schwabCallbackUrl: process.env.SCHWAB_CALLBACK_URL ?? (publicUrl ? `${publicUrl}/api/schwab/callback` : localCallbackUrl),

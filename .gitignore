@@ -3,10 +3,6 @@ node_modules
 dist
 dist-server
 .env
-data/*.sqlite
-data/*.sqlite-journal
-data/*.sqlite-wal
-data/*.sqlite-shm
 *.tsbuildinfo
 shared/types.js
 certs/*.pem

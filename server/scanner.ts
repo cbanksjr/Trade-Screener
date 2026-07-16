@@ -1,4 +1,4 @@
-import type { AssetType, Candle, CandidateListResponse, CandidateSummary, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, OptionContract, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
+import type { AssetType, Candle, CandidateListResponse, CandidateSummary, FundamentalFieldSources, Fundamentals, IndicatorSnapshot, LocalSessionSnapshot, OptionContract, ScanDiagnosticCounts, ScanDiagnostics, ScanMetadata, ScanMode, ScanResponse, ScanResult, Settings, WatchlistEntry } from "../shared/types";
 import { AUTO_REFRESH_INTERVAL_MS } from "../shared/refreshSchedule";
 import { config } from "./config";
 import { demoCandles, demoFundamental, demoOptions } from "./demoData";
@@ -29,7 +29,7 @@ import {
 } from "./scoring";
 import { fetchHistory, fetchOptionsForPositioning, fetchQuote, fetchQuotes, hasSchwabCredentials, hasSchwabTokens, selectCallOptionsForScan, type SchwabQuote } from "./schwab";
 import { createSchwabPositioningScanProvider } from "./schwabPositioning";
-import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./sqlite";
+import { getCachedResults, getScanMetadata, getSetting, getWatchlistEntries, removeWatchlistEntry, replaceScanResults, setScanMetadata, setSetting, upsertWatchlistEntry } from "./memoryStore";
 import { aggregateDailyCandlesToWeeks } from "./timeframes";
 import { getDefaultUniverseSectorMap, getDefaultUniverseStatus, getDefaultUniverseSymbols, MIN_REFRESHED_SYMBOLS } from "./universe";
 
@@ -74,6 +74,12 @@ const SECTOR_ETF_BY_GICS: Record<string, string> = {
   Utilities: "XLU"
 };
 let activeScan: Promise<void> | null = null;
+const BROWSER_RUNTIME_CACHE_KEYS = [
+  "defaultUniverseCache",
+  "fmpFundamentalsCache",
+  "fmpInstitutionalEdgeCompactCacheV2",
+  "schwabPositioningSnapshotsV2"
+] as const;
 
 export class SettingsValidationError extends Error {
   constructor(message: string) {
@@ -191,6 +197,84 @@ export async function readCachedScanResponse(): Promise<ScanResponse> {
     scanStatus: activeScan ? "running" : metadata.scanStatus,
     isRefreshing: Boolean(activeScan)
   };
+}
+
+export async function readLocalSessionSnapshot(): Promise<LocalSessionSnapshot> {
+  const metadata = await readScanMetadata();
+  const runtimeCache = Object.fromEntries(await Promise.all(BROWSER_RUNTIME_CACHE_KEYS.map(async (key) => [
+    key,
+    await getSetting<unknown>(key, undefined)
+  ])));
+  return {
+    mode: metadata.lastScanMode ?? "demo",
+    results: await overlayLiveQuotePrices(await readDisplayResults()),
+    settings: await readSettings(),
+    warnings: (metadata.lastScanWarnings ?? []).filter(shouldShowWarning),
+    watchlist: await readWatchlist(),
+    runtimeCache,
+    cachedAt: new Date().toISOString(),
+    ...metadata,
+    scanStatus: activeScan ? "running" : metadata.scanStatus,
+    isRefreshing: Boolean(activeScan)
+  };
+}
+
+export async function restoreLocalSessionSnapshot(snapshot: LocalSessionSnapshot): Promise<LocalSessionSnapshot> {
+  if (activeScan) return readLocalSessionSnapshot();
+  const [currentResults, currentMetadata, currentWatchlist] = await Promise.all([
+    getCachedResults(),
+    getScanMetadata(),
+    getWatchlistEntries()
+  ]);
+  if (currentResults.length || currentWatchlist.length || currentMetadata.lastScanFinishedAt) {
+    return readLocalSessionSnapshot();
+  }
+  if (!snapshot || !Array.isArray(snapshot.results) || !Array.isArray(snapshot.watchlist)) {
+    throw new SettingsValidationError("Local session snapshot is malformed.");
+  }
+  if (snapshot.results.length > 250 || snapshot.watchlist.length > 250) {
+    throw new SettingsValidationError("Local session snapshot exceeds the 250-symbol safety limit.");
+  }
+  const results = snapshot.results.filter(isRestorableScanResult);
+  const watchlist = snapshot.watchlist.filter((entry): entry is WatchlistEntry => (
+    Boolean(entry) && isTradableTicker(entry.symbol) && typeof entry.addedAt === "string" && isRestorableScanResult(entry.result)
+  ));
+  if (results.length !== snapshot.results.length || watchlist.length !== snapshot.watchlist.length) {
+    throw new SettingsValidationError("Local session snapshot contains invalid result data.");
+  }
+  for (const key of BROWSER_RUNTIME_CACHE_KEYS) {
+    const value = snapshot.runtimeCache?.[key];
+    if (value !== undefined) await setSetting(key, value);
+  }
+  await writeSettings(snapshot.settings ?? {});
+  await replaceScanResults(results);
+  await setScanMetadata({
+    scanStatus: snapshot.lastScanFinishedAt
+      ? snapshot.scanStatus === "failed" ? "failed" : "complete"
+      : "idle",
+    lastScanStartedAt: snapshot.lastScanStartedAt,
+    lastScanFinishedAt: snapshot.lastScanFinishedAt,
+    lastScanFailedAt: snapshot.lastScanFailedAt,
+    lastScanMode: snapshot.lastScanMode ?? snapshot.mode,
+    lastScanWarnings: (snapshot.lastScanWarnings ?? snapshot.warnings ?? []).filter(shouldShowWarning),
+    scanDiagnostics: snapshot.scanDiagnostics,
+    nextRefreshAt: snapshot.nextRefreshAt,
+    isRefreshing: false
+  });
+  for (const entry of watchlist) {
+    await upsertWatchlistEntry(entry.symbol, entry.result, entry.addedAt);
+  }
+  return readLocalSessionSnapshot();
+}
+
+function isRestorableScanResult(value: unknown): value is ScanResult {
+  if (!value || typeof value !== "object") return false;
+  const result = value as Partial<ScanResult>;
+  return isTradableTicker(result.symbol) && ["A", "B", "C"].includes(result.grade ?? "") && Array.isArray(result.candles);
+}
+
+function isTradableTicker(value: unknown): value is string {
+  return typeof value === "string" && /^[A-Z][A-Z.]{0,5}$/.test(value);
 }
 
 export async function readScanStatusResponse(): Promise<Omit<ScanResponse, "results" | "settings">> {

@@ -7,12 +7,11 @@ import cors from "cors";
 import express from "express";
 import cron from "node-cron";
 import { config } from "./config";
-import { addToWatchlist, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readScanStatusResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, runScan, readSettings, writeSettings, SettingsValidationError } from "./scanner";
-import { initDb } from "./sqlite";
+import { addToWatchlist, readCachedScanResponse, readCandidateListResponse, readDisplayResult, readLocalSessionSnapshot, readScanStatusResponse, readWatchlist, recordUniverseWarning, removeFromWatchlist, restoreLocalSessionSnapshot, runScan, readSettings, writeSettings, SettingsValidationError } from "./scanner";
+import type { LocalSessionSnapshot } from "../shared/types";
 import { fetchFundamentalAnalysis, getSchwabLoginUrl, getSchwabStatus, handleSchwabCallback, hasSchwabCredentials } from "./schwab";
 import { hasCachedDefaultUniverse, isLastDayOfMonth, refreshDefaultUniverse } from "./universe";
 
-await initDb();
 await refreshUniverseIfNeeded();
 
 const app = express();
@@ -21,7 +20,7 @@ const app = express();
 // every client together.
 app.set("trust proxy", 1);
 app.use(cors({ origin: config.clientOrigin }));
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use(optionalBasicAuth);
 
 const scanRateLimit = createRateLimit({ maxRequests: 6, windowMs: 5 * 60 * 1000 });
@@ -59,6 +58,22 @@ app.get("/api/results/:symbol", async (req, res, next) => {
     const result = await readDisplayResult(String(req.params.symbol ?? ""));
     if (!result) return res.status(404).json({ error: "Candidate not found." });
     res.json(result);
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/session", async (_req, res, next) => {
+  try {
+    res.json(await readLocalSessionSnapshot());
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/session/restore", async (req, res, next) => {
+  try {
+    res.json(await restoreLocalSessionSnapshot(req.body as LocalSessionSnapshot));
   } catch (error) {
     next(error);
   }

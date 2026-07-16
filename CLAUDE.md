@@ -22,11 +22,11 @@ npx vitest run server/scoring.test.ts -t "applies the counter-trend discount and
 
 There are two separate TypeScript project configs (`tsconfig.client.json` covers `src/` + `shared/`, `tsconfig.server.json` covers `server/` + `shared/`) referenced from the root `tsconfig.json`. Frontend and backend are typechecked independently.
 
-The dev server requires local HTTPS (`certs/localhost-*.pem`, auto-generated via `openssl` on first boot) because Schwab OAuth requires an HTTPS callback. Set `API_HTTPS=false` to disable (production/Render sets this since it gets HTTPS from the host).
+The dev server requires local HTTPS (`certs/localhost-*.pem`, auto-generated via `openssl` on first boot) because Schwab OAuth requires an HTTPS callback. Set `API_HTTPS=false` only for local troubleshooting.
 
 ## Architecture
 
-This is a single-tenant local/self-hosted app: an Express API (`server/`) that runs a recurring options-screening scan over an automatic stock+ETF universe, a thin React SPA (`src/main.tsx`, one file, no router/state library) that displays cached results and can trigger a rescan, and `shared/types.ts` with the types both sides import directly (no code generation, no API schema layer).
+This is a single-tenant local app: an Express API (`server/`) that runs user-triggered options-screening scans over an automatic stock+ETF universe, a thin React SPA (`src/main.tsx`, one file, no router/state library) that owns the durable local snapshot, and `shared/types.ts` with the types both sides import directly (no code generation, no API schema layer).
 
 ### Scan pipeline (`server/scanner.ts`)
 
@@ -38,7 +38,7 @@ This is a single-tenant local/self-hosted app: an Express API (`server/`) that r
 4. Two enrichment layers run *after* the technical grade and never change the technical grade:
    - **FMP Institutional Edge** (`fmpInstitutionalEdge.ts`) — informational context only (financial scores, analyst grades, insider/ETF data). Never changes grade or Take/Avoid.
    - **Schwab Options Positioning** (`schwabPositioning.ts`) — conservative confirmation/context derived from scan-time call/put activity and a fixed-contract call-OI build from the immediately preceding trading session. Unsigned gamma concentration and bounded-strike max pain are informational; dark-pool and IV Rank remain unavailable. It never changes the technical grade or creates an `Avoid` mark.
-5. Results are sorted by setup score → grade → squeeze dot count, cached wholesale (`replaceScanResults`, full delete+reinsert, not a diff), and scan metadata (status, warnings, diagnostics, next refresh time) is written for the frontend to poll.
+5. Results are sorted by setup score → grade → squeeze dot count and replace the process-local snapshot wholesale. The frontend then saves full results and scan metadata in its compressed browser snapshot.
 
 `shouldIncludeResult()` is the single gate for what actually reaches the dashboard (universe pass, long direction, positive momentum, active daily squeeze, valid entry mode, grade A/B). `classifyFilteredResult()` back-derives *why* a result was filtered for the diagnostics panel — keep it in sync with `shouldIncludeResult()` and the layer/factor names in `shared/types.ts` when either changes.
 
@@ -55,15 +55,15 @@ This is a single-tenant local/self-hosted app: an Express API (`server/`) that r
 
 ### External data providers (`schwab.ts`, `schwabPositioning.ts`, `fmp.ts`, `fmpInstitutionalEdge.ts`)
 
-Scan providers expose an `enrich()` call and a `flush()` when they persist bounded state. FMP has call-budget and TTL settings in `config.ts`; Schwab positioning has a per-scan request cap and persists at most two snapshots of 40 call-OI cohort entries for 250 symbols. It never archives quotes, descriptions, raw chains, or trades. `httpRetry.ts` (`fetchWithRetry`) is the shared retry-with-backoff wrapper used across the HTTP clients for 429/5xx responses.
+Scan providers expose an `enrich()` call and a `flush()` when they update bounded state. FMP has call-budget and TTL settings in `config.ts`; Schwab positioning has a per-scan request cap and retains at most two snapshots of 40 call-OI cohort entries per enriched symbol. The non-secret provider caches are included in the browser snapshot so adjacent-session OI comparisons survive restarts. It never archives quotes, descriptions, raw chains, or trades. `httpRetry.ts` (`fetchWithRetry`) is the shared retry-with-backoff wrapper used across the HTTP clients for 429/5xx responses.
 
 Schwab is the only source of live quotes/history/options; FMP and demo data exist purely as fallbacks when Schwab is unavailable or omits a field — this waterfall ordering (Schwab → FMP → history-derived → demo) is threaded through `mergeFundamentals()`/`withCandleLiquidityFallback()` in `scanner.ts` and tracked per-field in `Fundamentals.sources` so the UI/warnings can say which source supplied a value.
 
-### Persistence (`server/sqlite.ts`)
+### Local state (`server/memoryStore.ts`, `src/browserCache.ts`)
 
-Every exported function in `sqlite.ts` has two implementations gated on `usePostgres` (true when `DATABASE_URL` is set): a `better-sqlite3` path (local dev, WAL mode, file at `data/screener.sqlite`) and a `pg` path (production, typically Supabase). When adding or changing a query here, both branches need to be updated — there's no query builder or migration framework abstracting this away. `migrateNullableFundamentals()` is an in-place SQLite schema migration run at startup (drop NOT NULL from `fundamentals` columns); Postgres was created with the nullable schema from the start so it doesn't need the equivalent.
+The server has no persistent data layer. `memoryStore.ts` exposes the asynchronous store contract used by the scanner and providers, but all values live only for the Node process lifetime. `browserCache.ts` gzip-compresses a versioned `LocalSessionSnapshot` into browser `localStorage`; `/api/session` returns a complete snapshot and `/api/session/restore` rehydrates an empty server before a new scan runs.
 
-Two Supabase-egress guards live here and should be preserved: `scan_results`/`watchlist` payloads are stored gzip+base64 (`serializePayload`/`parsePayload`, `gz:` prefix; pre-compression plain-JSON rows still parse), and the multi-megabyte provider caches in `LAZY_HYDRATION_KEYS` are excluded from startup cache hydration and only fetched from the database when a scan first asks for them (a new provider cache setting that grows large should be added to that set).
+The browser snapshot includes full results, watchlist, scan metadata, user settings, universe data, FMP caches, and bounded Schwab positioning cohorts. Schwab OAuth access/refresh tokens are intentionally excluded and remain server-memory-only. Never add token material or provider credentials to `LocalSessionSnapshot`.
 
 ### Universe management (`server/universe.ts`, `defaultUniverse.ts`, `etfUniverse.ts`)
 
@@ -71,7 +71,7 @@ The stock universe is always S&P 500 + Nasdaq 100 (no user-managed watchlist-as-
 
 ### Scheduling (`server/index.ts`)
 
-Scans are manual-only: the user triggers them from the dashboard via `POST /api/scan` (rate-limited). There is deliberately no scan cron and no automatic/opportunistic rescan on dashboard polls — recurring scans were removed to keep Supabase egress inside the free-tier quota, so don't reintroduce one without discussing it. The one remaining `node-cron` job is the monthly universe refresh: a check on the last few days of each month that fires on the actual last day (evaluated in `America/Chicago` via `isLastDayOfMonth`). The frontend still polls read-only endpoints while the market is open (`isMarketRefreshWindow` in `shared/refreshSchedule.ts`) to overlay live Schwab quote prices; those reads are served from the in-memory persistence cache and never touch the database.
+Scans are manual-only: the user triggers them from the dashboard via `POST /api/scan` (rate-limited). There is deliberately no scan cron and no automatic/opportunistic rescan on dashboard polls. The one remaining `node-cron` job is the monthly universe refresh: a check on the last few days of each month that fires on the actual last day (evaluated in `America/Chicago` via `isLastDayOfMonth`). The frontend polls read-only price overlays at most every 15 minutes while the market is open (`isMarketRefreshWindow` in `shared/refreshSchedule.ts`); those reads patch browser-held state and never start a scan.
 
 ### Frontend (`src/main.tsx`)
 

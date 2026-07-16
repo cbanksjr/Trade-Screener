@@ -8,7 +8,7 @@ import type {
   OptionsFlowSignal
 } from "../shared/types";
 import { fetchOptionsForPositioning } from "./schwab";
-import { getSetting, setSetting } from "./sqlite";
+import { getSetting, setSetting } from "./memoryStore";
 
 export type SchwabPositioningEnrichContext = {
   nearestExpirationDate?: string;
